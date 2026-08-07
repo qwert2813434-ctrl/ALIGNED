@@ -723,10 +723,23 @@ WebContent 45 秒必死→**全程活著**、螢幕連拍 0 變化→**12/12 全
 - 去背圖庫（Mac 直接把去背 PNG 拖進畫布即可，等效）、跨專案複製、
   iCloud 傳輸資料夾（Mac 有 Finder，等效）、設定頁／多語／Pro 金流。
 - `.alignproj` 重新打包的 iPad 匯入實測（只有 Armin 能做）
-- 工具間下載頁＋更新 feed（照 STB 的 stb-latest.json 模式）
+- ~~工具間下載頁＋更新 feed~~（✅ 2026-08-08 上線，見下面〈發版流程〉）
 
 （1.0.0 已簽名公證出貨：`release/ALIGNED_1.0.0_aarch64.dmg`，發版一鍵 `scripts/release-mac.sh`。
 新增／刪除元件、存檔、undo、拖放匯入、行內編輯都已在 1.0.0。）
+
+## 發版流程（2026-08-08 開源上架後的完整三步）
+
+1. **出版**：兩處版本號同步升（`package.json`＋`src-tauri/tauri.conf.json`）→
+   `npx tauri build --bundles app` → `scripts/release-mac.sh`（簽名→公證→DMG→驗收）。
+2. **上 GitHub**：`git add -f release/ALIGNED_<新版>_aarch64.dmg`（.gitignore 預設擋 *.dmg，
+   只收目前版）＋ README 下載連結改版號 → commit push。下載網址＝
+   `https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/…dmg`（STB 同款）。
+3. **餵 feed**：改 `37 - 工具間/上線/aligned-latest.json`（version／url／notes）→ push。
+   1.0.7 起 App 開機會查這份 feed，比版本後浮更新橫幅（`src/updatecheck.ts`，離線安靜跳過）。
+
+倉庫紅線：`public/samples/real/`（個人照片）永不入 repo（.gitignore 擋著）；
+新增內嵌資源前先想授權（字型清單在 `public/fonts/LICENSES.md`）。
 
 **貫穿全程的約束**：畫布／頁面膠捲／屬性檢視器三塊面板要獨立成元件，
 版面由尺寸級距決定，**絕不把手機版面寫死再回頭拆**（摺疊機與大螢幕適配的地基）。
