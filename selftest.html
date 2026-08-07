@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>ALIGN Core 自測</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font: 14px/1.9 ui-monospace, "SF Mono", monospace; }
+  #canvas { width: 900px; height: 420px; display: block; border-bottom: 1px solid #8884; touch-action: none; }
+  #out { padding: 18px 22px; }
+  .ok { color: #1a8a3f; }
+  .bad { color: #c0392b; font-weight: 600; }
+  #out span { opacity: .55; font-weight: 400; }
+  .sum { margin-top: 14px; padding-top: 12px; border-top: 1px solid #8884; font-weight: 700; }
+</style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="out">執行中…</div>
+  <script type="module" src="/src/selftest.ts"></script>
+</body>
+</html>

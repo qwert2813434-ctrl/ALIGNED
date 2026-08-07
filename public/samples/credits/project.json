@@ -1,0 +1,1765 @@
+{
+  "blocks" : [
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 54,
+            "fontWeightValue" : 4,
+            "kerning" : 59.400000000000006,
+            "text" : [
+              "作品名稱",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          64,
+          72
+        ],
+        [
+          108,
+          498.9600000000001
+        ]
+      ],
+      "id" : "941AB8DD-EF60-4053-BFEE-8F8C76EC222F",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 1
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "trailing",
+            "colorHex" : "8A8A8A",
+            "fontSize" : 24,
+            "fontWeightValue" : 3,
+            "kerningEm" : 0.4,
+            "lineHeightMultiple" : 1,
+            "manualWidth" : 380,
+            "text" : [
+              "CREDITS",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          636,
+          1204
+        ],
+        [
+          380,
+          30
+        ]
+      ],
+      "id" : "E2688292-32C6-4891-B309-386EC2674F13",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 2
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontSize" : 24,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.4,
+            "lineHeightMultiple" : 1,
+            "manualWidth" : 600,
+            "text" : [
+              "導演",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          1320,
+          260
+        ],
+        [
+          600,
+          30
+        ]
+      ],
+      "id" : "8889A553-BF39-4A63-907E-B55E7BF13433",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 3
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 57,
+            "fontWeightValue" : 4,
+            "kerningEm" : 0.1,
+            "lineHeightMultiple" : 1.4,
+            "manualWidth" : 600,
+            "text" : [
+              "＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          1320,
+          326
+        ],
+        [
+          600,
+          99.75
+        ]
+      ],
+      "id" : "CB4AE883-63BF-4D6D-941A-21958115D7F8",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 4
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontSize" : 24,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.4,
+            "lineHeightMultiple" : 1,
+            "manualWidth" : 600,
+            "text" : [
+              "監製",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          1320,
+          560
+        ],
+        [
+          600,
+          30
+        ]
+      ],
+      "id" : "00CEA1F9-5276-4173-AFDE-943739FAF71D",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 5
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 57,
+            "fontWeightValue" : 4,
+            "kerningEm" : 0.1,
+            "lineHeightMultiple" : 1.4,
+            "manualWidth" : 600,
+            "text" : [
+              "＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          1320,
+          626
+        ],
+        [
+          600,
+          99.75
+        ]
+      ],
+      "id" : "8F3E6C98-72A0-4FE1-AB3D-51EF30E58816",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 6
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontSize" : 24,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.4,
+            "lineHeightMultiple" : 1,
+            "manualWidth" : 600,
+            "text" : [
+              "攝影指導",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          1320,
+          860
+        ],
+        [
+          600,
+          30
+        ]
+      ],
+      "id" : "A10C214B-2F20-46EF-A2F5-EA01FFB9373D",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 7
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 57,
+            "fontWeightValue" : 4,
+            "kerningEm" : 0.1,
+            "lineHeightMultiple" : 1.4,
+            "manualWidth" : 600,
+            "text" : [
+              "＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          1320,
+          926
+        ],
+        [
+          600,
+          99.75
+        ]
+      ],
+      "id" : "E84A5F3D-61A5-4AB6-8A07-65705B627B68",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 8
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontSize" : 30,
+            "fontWeightValue" : 3,
+            "kerningEm" : 0.06,
+            "lineHeightMultiple" : 1.3,
+            "manualWidth" : 940,
+            "text" : [
+              "製片 Producer・＿＿＿　　執行製片 Line Producer・＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          2230,
+          340
+        ],
+        [
+          940,
+          48.75
+        ]
+      ],
+      "id" : "798E7DF2-E7E9-480D-9DEE-2028BB4FBD05",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 9
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "C8C8C8",
+            "fontSize" : 25.8,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.06,
+            "lineHeightMultiple" : 1.3,
+            "manualWidth" : 940,
+            "text" : [
+              "製片助理 Production Assistant・＿＿＿・＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.5775805,
+                    "green" : 0.5775805,
+                    "opacity" : 1,
+                    "red" : 0.5775805
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          2230,
+          418
+        ],
+        [
+          940,
+          41.925
+        ]
+      ],
+      "id" : "83AE4A30-1B7B-4249-A3B5-AFBF67BC32B5",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 10
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "C8C8C8",
+            "fontSize" : 22.8,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.06,
+            "lineHeightMultiple" : 1.3,
+            "manualWidth" : 940,
+            "text" : [
+              "攝影大助 1st AC・＿＿＿　　攝影二助 2nd AC・＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.5775805,
+                    "green" : 0.5775805,
+                    "opacity" : 1,
+                    "red" : 0.5775805
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          2230,
+          485.08
+        ],
+        [
+          940,
+          37.05
+        ]
+      ],
+      "id" : "F8B721EC-C0F6-4C9E-A7F7-B6913BDDDEE2",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 11
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "C8C8C8",
+            "fontSize" : 19.8,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.06,
+            "lineHeightMultiple" : 1.3,
+            "manualWidth" : 940,
+            "text" : [
+              "場務 Grip・＿＿＿　　行政 Admin・＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.5775805,
+                    "green" : 0.5775805,
+                    "opacity" : 1,
+                    "red" : 0.5775805
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          2230,
+          544.36
+        ],
+        [
+          940,
+          32.175000000000004
+        ]
+      ],
+      "id" : "EB41C649-E5CF-4466-BE91-06D20B2C994B",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 12
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontSize" : 32,
+            "fontWeightValue" : 3,
+            "kerningEm" : 0.3,
+            "lineHeightMultiple" : 1.6,
+            "manualWidth" : 600,
+            "text" : [
+              "製片・攝影",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          2400,
+          84
+        ],
+        [
+          600,
+          64
+        ]
+      ],
+      "id" : "C699385A-6B99-4DC7-B9D5-6D2491C5DF28",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 13
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontSize" : 32,
+            "fontWeightValue" : 3,
+            "kerningEm" : 0.3,
+            "lineHeightMultiple" : 1.6,
+            "manualWidth" : 600,
+            "text" : [
+              "燈光・美術",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          3480,
+          84
+        ],
+        [
+          600,
+          64
+        ]
+      ],
+      "id" : "306F6DA2-7897-4FD3-B234-79910CFD04A9",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 14
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 24,
+            "fontWeightValue" : 2,
+            "kerning" : 14.399999999999999,
+            "text" : [
+              "燈光師",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          4140,
+          216
+        ],
+        [
+          48,
+          126.72000000000003
+        ]
+      ],
+      "id" : "969F78AB-85C4-4C9C-BE44-C72033C19258",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 15
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 38,
+            "fontWeightValue" : 3,
+            "kerning" : 19,
+            "text" : [
+              "＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          4132,
+          594
+        ],
+        [
+          76,
+          188.10000000000002
+        ]
+      ],
+      "id" : "AA138056-D36A-4119-8529-AA2713FBC3F8",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 16
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 24,
+            "fontWeightValue" : 2,
+            "kerning" : 14.399999999999999,
+            "text" : [
+              "燈光助理",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          3968,
+          216
+        ],
+        [
+          48,
+          168.96000000000004
+        ]
+      ],
+      "id" : "DF633C64-ED71-4214-A11C-B4008E81AB0E",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 17
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 38,
+            "fontWeightValue" : 3,
+            "kerning" : 19,
+            "text" : [
+              "＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          3960,
+          594
+        ],
+        [
+          76,
+          188.10000000000002
+        ]
+      ],
+      "id" : "5208C2F8-1FDE-495A-A750-E2276ACCD23F",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 18
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 24,
+            "fontWeightValue" : 2,
+            "kerning" : 14.399999999999999,
+            "text" : [
+              "美術指導",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          3796,
+          216
+        ],
+        [
+          48,
+          168.96000000000004
+        ]
+      ],
+      "id" : "EBF8BAF4-6707-45A3-854F-74FE7274D348",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 19
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 38,
+            "fontWeightValue" : 3,
+            "kerning" : 19,
+            "text" : [
+              "＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          3788,
+          594
+        ],
+        [
+          76,
+          188.10000000000002
+        ]
+      ],
+      "id" : "FF6737C6-FCEC-454C-B7D4-C287924C8D42",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 20
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 24,
+            "fontWeightValue" : 2,
+            "kerning" : 14.399999999999999,
+            "text" : [
+              "道具",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          3624,
+          216
+        ],
+        [
+          48,
+          84.48000000000002
+        ]
+      ],
+      "id" : "68558ADF-0E33-4C69-837F-CB8E16350120",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 21
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 38,
+            "fontWeightValue" : 3,
+            "kerning" : 19,
+            "text" : [
+              "＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          3616,
+          594
+        ],
+        [
+          76,
+          188.10000000000002
+        ]
+      ],
+      "id" : "DE47827F-76A2-4131-93C5-D138314D755C",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 22
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 24,
+            "fontWeightValue" : 2,
+            "kerning" : 14.399999999999999,
+            "text" : [
+              "妝髮",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          3452,
+          216
+        ],
+        [
+          48,
+          84.48000000000002
+        ]
+      ],
+      "id" : "EC327BDA-757E-44DD-8E68-17582D5E3F8A",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 23
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 38,
+            "fontWeightValue" : 3,
+            "kerning" : 19,
+            "text" : [
+              "＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          3444,
+          594
+        ],
+        [
+          76,
+          188.10000000000002
+        ]
+      ],
+      "id" : "BED6EED5-54E2-40A1-9415-25F822FF152E",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 24
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontSize" : 32,
+            "fontWeightValue" : 3,
+            "kerningEm" : 0.3,
+            "lineHeightMultiple" : 1.6,
+            "manualWidth" : 600,
+            "text" : [
+              "後期",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          4560,
+          84
+        ],
+        [
+          600,
+          64
+        ]
+      ],
+      "id" : "DE45DBE0-B1B3-454C-9C8F-60DA3602D7B7",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 25
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "leading",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 51.300000000000004,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.2,
+            "lineHeightMultiple" : 1.4,
+            "text" : [
+              "剪輯　＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          4424,
+          320
+        ],
+        [
+          323.19,
+          89.775
+        ]
+      ],
+      "id" : "8C9A8765-B206-4786-941D-A3E8633A8108",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 26
+    },
+    {
+      "content" : {
+        "shape" : {
+          "_0" : {
+            "colorHex" : "3A3A3A",
+            "kind" : "rectangle"
+          }
+        }
+      },
+      "frame" : [
+        [
+          4424,
+          410
+        ],
+        [
+          40,
+          3
+        ]
+      ],
+      "id" : "A6D795EE-D461-42A6-A10B-E7899AE94757",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 27
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "leading",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 51.300000000000004,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.2,
+            "lineHeightMultiple" : 1.4,
+            "text" : [
+              "調光　＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          4424,
+          550
+        ],
+        [
+          323.19,
+          89.775
+        ]
+      ],
+      "id" : "ABB90C4C-039B-4FC7-BC94-1473306090E1",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 28
+    },
+    {
+      "content" : {
+        "shape" : {
+          "_0" : {
+            "colorHex" : "3A3A3A",
+            "kind" : "rectangle"
+          }
+        }
+      },
+      "frame" : [
+        [
+          4424,
+          640
+        ],
+        [
+          40,
+          3
+        ]
+      ],
+      "id" : "AA78EE8F-65DD-42B7-A145-69D2251540D7",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 29
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "leading",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 51.300000000000004,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.2,
+            "lineHeightMultiple" : 1.4,
+            "text" : [
+              "混音　＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          4424,
+          780
+        ],
+        [
+          323.19,
+          89.775
+        ]
+      ],
+      "id" : "1D1D6B2E-E988-4EE8-B8C7-6A86B110E511",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 30
+    },
+    {
+      "content" : {
+        "shape" : {
+          "_0" : {
+            "colorHex" : "3A3A3A",
+            "kind" : "rectangle"
+          }
+        }
+      },
+      "frame" : [
+        [
+          4424,
+          870
+        ],
+        [
+          40,
+          3
+        ]
+      ],
+      "id" : "C17373B0-0A22-45FA-9270-3BE3ADC9541D",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 31
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "leading",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 51.300000000000004,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.2,
+            "lineHeightMultiple" : 1.4,
+            "text" : [
+              "視覺特效　＿＿＿",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          4424,
+          1010
+        ],
+        [
+          430.9200000000001,
+          89.775
+        ]
+      ],
+      "id" : "5BEB9A79-3035-4BE9-95E0-1AA96692047D",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 32
+    },
+    {
+      "content" : {
+        "shape" : {
+          "_0" : {
+            "colorHex" : "3A3A3A",
+            "kind" : "rectangle"
+          }
+        }
+      },
+      "frame" : [
+        [
+          4424,
+          1100
+        ],
+        [
+          40,
+          3
+        ]
+      ],
+      "id" : "50C546CB-8BCA-40C6-839D-F3CA63686AA7",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 33
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "leading",
+            "colorHex" : "8A8A8A",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 88,
+            "fontWeightValue" : 4,
+            "kerningEm" : 0,
+            "lineHeightMultiple" : 1,
+            "text" : [
+              "“",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          5504,
+          351
+        ],
+        [
+          92.4,
+          110
+        ]
+      ],
+      "id" : "D67108EE-33E0-488F-B30E-2515F92F2504",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 34
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "leading",
+            "colorHex" : "8A8A8A",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 88,
+            "fontWeightValue" : 4,
+            "kerningEm" : 0,
+            "lineHeightMultiple" : 1,
+            "text" : [
+              "”",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          6316,
+          783
+        ],
+        [
+          92.4,
+          110
+        ]
+      ],
+      "id" : "25C90D89-6352-4F57-A3E9-F6A5231777FA",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 35
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 35.2,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.06,
+            "lineHeightMultiple" : 2,
+            "manualWidth" : 852,
+            "text" : [
+              "特別感謝\n名字・名字・名字\n以及每一位到場的朋友",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          5514,
+          486
+        ],
+        [
+          852,
+          264
+        ]
+      ],
+      "id" : "1B78F754-AB15-4781-9853-C50312954440",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 36
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "FFFFFF",
+            "fontName" : "GenYoMin2TC-R",
+            "fontSize" : 220,
+            "fontWeightValue" : 4,
+            "kerning" : 0,
+            "text" : [
+              "終",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 1,
+                    "green" : 1,
+                    "opacity" : 1,
+                    "red" : 1
+                  }
+                }
+              }
+            ],
+            "vertical" : true
+          }
+        }
+      },
+      "frame" : [
+        [
+          6910,
+          405
+        ],
+        [
+          440,
+          242.00000000000003
+        ]
+      ],
+      "id" : "7FA90774-EC60-4DD4-B214-7676AB7FA8A8",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 37
+    },
+    {
+      "content" : {
+        "text" : {
+          "_0" : {
+            "alignment" : "center",
+            "colorHex" : "8A8A8A",
+            "fontSize" : 24,
+            "fontWeightValue" : 2,
+            "kerningEm" : 0.3,
+            "lineHeightMultiple" : 1,
+            "manualWidth" : 600,
+            "text" : [
+              "製作公司名・2026",
+              {
+                "SwiftUI.ForegroundColor" : {
+                  "tag" : {
+                    "constant" : {
+
+                    }
+                  },
+                  "value" : {
+                    "blue" : 0.25415218,
+                    "green" : 0.25415218,
+                    "opacity" : 1,
+                    "red" : 0.25415218
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "frame" : [
+        [
+          6720,
+          1053
+        ],
+        [
+          600,
+          30
+        ]
+      ],
+      "id" : "8EB2015E-1CF3-431F-AB5C-10E487A30740",
+      "locked" : false,
+      "opacity" : 1,
+      "rotation" : 0,
+      "zIndex" : 38
+    }
+  ],
+  "canvasWidth" : 1080,
+  "createdAt" : "2026-07-12T10:48:39Z",
+  "group" : "範本",
+  "guidesX" : [
+    64,
+    1016
+  ],
+  "guidesY" : [
+    72,
+    1244
+  ],
+  "id" : "A3B139A4-F98B-4844-A409-2100AA7B4D00",
+  "name" : "17｜工作人員名單 Credits（7頁）",
+  "pageBackgroundHex" : {
+    "0" : "111111",
+    "1" : "111111",
+    "2" : "111111",
+    "3" : "111111",
+    "4" : "111111",
+    "5" : "111111",
+    "6" : "111111"
+  },
+  "pageCount" : 7,
+  "pageHeight" : 1350,
+  "updatedAt" : "2026-07-12T10:48:39Z"
+}

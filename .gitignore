@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.DS_Store
+src-tauri/target/
+src-tauri/gen/schemas
+
+# 個人照片樣本不進 repo（App 打包時 beforeBuildCommand 也會剝掉）
+public/samples/real/
+samples/real/
+
+# 發佈的 DMG 只收「目前版」：每次發版 git add -f 新檔（README 下載連結指向它）
+release/*.dmg

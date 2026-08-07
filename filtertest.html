@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>濾鏡比對</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin:0; font:13px/1.6 ui-monospace,"SF Mono",monospace; padding:16px; }
+  .row { display:flex; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid #8883; }
+  .label { width:270px; flex:none; }
+  .label span { opacity:.5; }
+  canvas { width:128px; height:128px; image-rendering:pixelated; border:1px solid #8884; }
+  .ok b { color:#1a8a3f; } .warn b { color:#b8860b; } .bad b { color:#c0392b; }
+  h1 { font-size:14px; margin:0 0 12px; }
+  .hdr { display:flex; gap:10px; padding-left:270px; opacity:.5; }
+  .hdr div { width:130px; }
+</style></head>
+<body>
+  <h1>濾鏡差分比對　TS 版 vs iOS FilterEngine</h1>
+  <div class="hdr"><div>我的</div><div>參考</div><div>差異×8</div></div>
+  <div id="out">執行中…</div>
+  <script type="module" src="/src/filtertest.ts"></script>
+</body></html>

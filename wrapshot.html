@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>排開示範 — 渲染樣張</title>
+<style>
+  body { margin: 0; background: #f2f3f5; font: 13px/1.6 ui-sans-serif, "PingFang TC", sans-serif; }
+  #grid { display: grid; grid-template-columns: repeat(2, 540px); gap: 24px; padding: 24px; width: max-content; }
+  figure { margin: 0; }
+  canvas { width: 540px; display: block; box-shadow: 0 1px 3px #0002, 0 8px 24px #0001; }
+</style>
+</head>
+<body>
+  <div id="grid"></div>
+  <script type="module" src="/src/wrapshot.ts"></script>
+</body>
+</html>

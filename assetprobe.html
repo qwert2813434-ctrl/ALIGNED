@@ -1,0 +1,9 @@
+<!doctype html>
+<!-- WKWebView 影片診斷探針（開發專用，不進包）：
+     ?path=<絕對路徑> → convertFileSrc → <video> 試播，狀態每 500ms 寫進視窗標題，
+     外部用 System Events 讀標題就拿得到結果，不用碰焦點。 -->
+<html lang="zh-Hant"><head><meta charset="utf-8"><title>probe:init</title></head>
+<body style="background:#111;color:#eee;font:13px monospace;padding:20px">
+<div id="log"></div>
+<script type="module" src="/src/assetprobe.ts"></script>
+</body></html>

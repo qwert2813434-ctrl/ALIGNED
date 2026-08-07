@@ -1,0 +1,47 @@
+{
+  "productName": "ALIGNED",
+  "version": "1.0.7",
+  "identifier": "com.arminkao.aligned.mac",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "bash videotool/build.sh && npm run build && rm -rf dist/samples/real dist/samples/_probe dist/samples/perf dist/filterref dist/assetprobe.html dist/videoprobe.html"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ALIGNED",
+        "width": 1380,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 620,
+        "backgroundThrottling": "disabled"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/**",
+          "$TEMP/**"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/icon.icns",
+      "icons/128x128.png",
+      "icons/32x32.png"
+    ],
+    "resources": [
+      "bin/alignvideo"
+    ]
+  }
+}

@@ -1,0 +1,750 @@
+{
+ "id": "WRAP-DEMO-0000-0000-000000000000",
+ "name": "排開示範",
+ "group": "示範",
+ "createdAt": "2026-08-04T09:00:00Z",
+ "updatedAt": "2026-08-04T09:00:00Z",
+ "canvasWidth": 1080,
+ "pageHeight": 1350,
+ "pageCount": 4,
+ "guidesX": [
+  90,
+  990
+ ],
+ "pageBackgroundHex": {
+  "0": "FFFFFF",
+  "1": "FFFFFF",
+  "2": "FFFFFF",
+  "3": "FFFFFF"
+ },
+ "blocks": [
+  {
+   "id": "WRAP-0000-0000-0000-000000000000",
+   "frame": [
+    [
+     90,
+     96
+    ],
+    [
+     620,
+     56
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 1,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "單側　side",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.010329823029626936,
+          "green": 0.010329823029626936,
+          "blue": 0.010329823029626936,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "1A1A1A",
+      "fontSize": 40,
+      "fontWeightValue": 4,
+      "alignment": "leading",
+      "kerningEm": 0.02
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0001-0000-0000-000000000000",
+   "frame": [
+    [
+     90,
+     168
+    ],
+    [
+     760,
+     34
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 2,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "圖站哪一側由圖的中心決定，那一側整條讓開",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.26225065752969623,
+          "green": 0.26225065752969623,
+          "blue": 0.26225065752969623,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "8C8C8C",
+      "fontSize": 21,
+      "fontWeightValue": 2,
+      "alignment": "leading",
+      "kerningEm": 0.06
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0002-0000-0000-000000000000",
+   "frame": [
+    [
+     90,
+     240
+    ],
+    [
+     900,
+     1000
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 3,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "文字遇到圖片的時候要怎麼走，其實是版面裡最看得出品味的地方。最省事的做法是讓圖片直接壓在文字上，但那只是把問題藏起來；好看的版面是文字自己知道要讓路，而且讓得剛剛好——不多不少，留下一圈厚度一致的空氣。\n單側是最安全的選擇。圖片站在哪一邊，文字就整段退到另一邊，閱讀的動線不會在句子中間被圖打斷，眼睛從上到下一路順下來。長篇說明、雜誌內頁、作品集的圖說段落，用單側幾乎不會出錯。\n兩側適合圖片本身就是主角的時候。文字像水一樣繞著它流過去，圓形的圖會被包成一座島嶼，弧線的地方文字也跟著彎。代價是每一行長度都不一樣，讀起來比較費力，所以段落別太長。\n上下最直接：圖佔住的那幾列整列讓開，上面一段、下面一段，中間夾著圖。它其實不算繞排，比較像把段落切開，但在圖很寬、或版面本來就走橫向切分的時候，這是最乾淨的答案。\n三種模式沒有優劣，只有適不適合。先問這張圖是配角還是主角，答案通常就自己出來了。",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.024157632448504756,
+          "green": 0.024157632448504756,
+          "blue": 0.024157632448504756,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "2B2B2B",
+      "fontSize": 28,
+      "fontWeightValue": 2,
+      "alignment": "leading",
+      "isBodyFrame": true,
+      "manualWidth": 900,
+      "manualHeight": 1000,
+      "fontName": "NotoSerifTC-Regular",
+      "lineHeightMultiple": 1.5,
+      "paragraphSpacingEm": 0.5
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0003-0000-0000-000000000000",
+   "frame": [
+    [
+     90,
+     430
+    ],
+    [
+     400,
+     300
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 4,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "image": {
+     "_0": {
+      "assetFileName": "wrap-a.jpg",
+      "cropRect": [
+       [
+        0,
+        0
+       ],
+       [
+        1,
+        1
+       ]
+      ],
+      "maskShape": "rectangle",
+      "excludesText": true,
+      "textWrapMode": "side",
+      "maskCornerRadius": 0.03
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0004-0000-0000-000000000000",
+   "frame": [
+    [
+     1170,
+     96
+    ],
+    [
+     620,
+     56
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 5,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "兩側　around",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.010329823029626936,
+          "green": 0.010329823029626936,
+          "blue": 0.010329823029626936,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "1A1A1A",
+      "fontSize": 40,
+      "fontWeightValue": 4,
+      "alignment": "leading",
+      "kerningEm": 0.02
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0005-0000-0000-000000000000",
+   "frame": [
+    [
+     1170,
+     168
+    ],
+    [
+     760,
+     34
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 6,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "橢圓用該列真實的弧寬——島嶼才像島嶼",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.26225065752969623,
+          "green": 0.26225065752969623,
+          "blue": 0.26225065752969623,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "8C8C8C",
+      "fontSize": 21,
+      "fontWeightValue": 2,
+      "alignment": "leading",
+      "kerningEm": 0.06
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0006-0000-0000-000000000000",
+   "frame": [
+    [
+     1170,
+     240
+    ],
+    [
+     900,
+     1000
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 7,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "文字遇到圖片的時候要怎麼走，其實是版面裡最看得出品味的地方。最省事的做法是讓圖片直接壓在文字上，但那只是把問題藏起來；好看的版面是文字自己知道要讓路，而且讓得剛剛好——不多不少，留下一圈厚度一致的空氣。\n單側是最安全的選擇。圖片站在哪一邊，文字就整段退到另一邊，閱讀的動線不會在句子中間被圖打斷，眼睛從上到下一路順下來。長篇說明、雜誌內頁、作品集的圖說段落，用單側幾乎不會出錯。\n兩側適合圖片本身就是主角的時候。文字像水一樣繞著它流過去，圓形的圖會被包成一座島嶼，弧線的地方文字也跟著彎。代價是每一行長度都不一樣，讀起來比較費力，所以段落別太長。\n上下最直接：圖佔住的那幾列整列讓開，上面一段、下面一段，中間夾著圖。它其實不算繞排，比較像把段落切開，但在圖很寬、或版面本來就走橫向切分的時候，這是最乾淨的答案。\n三種模式沒有優劣，只有適不適合。先問這張圖是配角還是主角，答案通常就自己出來了。",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.024157632448504756,
+          "green": 0.024157632448504756,
+          "blue": 0.024157632448504756,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "2B2B2B",
+      "fontSize": 28,
+      "fontWeightValue": 2,
+      "alignment": "leading",
+      "isBodyFrame": true,
+      "manualWidth": 900,
+      "manualHeight": 1000,
+      "fontName": "NotoSerifTC-Regular",
+      "lineHeightMultiple": 1.5,
+      "paragraphSpacingEm": 0.5
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0007-0000-0000-000000000000",
+   "frame": [
+    [
+     1420,
+     470
+    ],
+    [
+     400,
+     400
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 8,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "image": {
+     "_0": {
+      "assetFileName": "wrap-b.jpg",
+      "cropRect": [
+       [
+        0,
+        0
+       ],
+       [
+        1,
+        1
+       ]
+      ],
+      "maskShape": "ellipse",
+      "excludesText": true,
+      "textWrapMode": "around",
+      "maskCornerRadius": 0.0
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0008-0000-0000-000000000000",
+   "frame": [
+    [
+     2250,
+     96
+    ],
+    [
+     620,
+     56
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 9,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "上下　push",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.010329823029626936,
+          "green": 0.010329823029626936,
+          "blue": 0.010329823029626936,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "1A1A1A",
+      "fontSize": 40,
+      "fontWeightValue": 4,
+      "alignment": "leading",
+      "kerningEm": 0.02
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0009-0000-0000-000000000000",
+   "frame": [
+    [
+     2250,
+     168
+    ],
+    [
+     760,
+     34
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 10,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "圖佔到的每一列整列讓開，段落被切成上下兩塊",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.26225065752969623,
+          "green": 0.26225065752969623,
+          "blue": 0.26225065752969623,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "8C8C8C",
+      "fontSize": 21,
+      "fontWeightValue": 2,
+      "alignment": "leading",
+      "kerningEm": 0.06
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0010-0000-0000-000000000000",
+   "frame": [
+    [
+     2250,
+     240
+    ],
+    [
+     900,
+     1000
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 11,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "文字遇到圖片的時候要怎麼走，其實是版面裡最看得出品味的地方。最省事的做法是讓圖片直接壓在文字上，但那只是把問題藏起來；好看的版面是文字自己知道要讓路，而且讓得剛剛好——不多不少，留下一圈厚度一致的空氣。\n單側是最安全的選擇。圖片站在哪一邊，文字就整段退到另一邊，閱讀的動線不會在句子中間被圖打斷，眼睛從上到下一路順下來。長篇說明、雜誌內頁、作品集的圖說段落，用單側幾乎不會出錯。\n兩側適合圖片本身就是主角的時候。文字像水一樣繞著它流過去，圓形的圖會被包成一座島嶼，弧線的地方文字也跟著彎。代價是每一行長度都不一樣，讀起來比較費力，所以段落別太長。\n上下最直接：圖佔住的那幾列整列讓開，上面一段、下面一段，中間夾著圖。它其實不算繞排，比較像把段落切開，但在圖很寬、或版面本來就走橫向切分的時候，這是最乾淨的答案。\n三種模式沒有優劣，只有適不適合。先問這張圖是配角還是主角，答案通常就自己出來了。",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.024157632448504756,
+          "green": 0.024157632448504756,
+          "blue": 0.024157632448504756,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "2B2B2B",
+      "fontSize": 28,
+      "fontWeightValue": 2,
+      "alignment": "leading",
+      "isBodyFrame": true,
+      "manualWidth": 900,
+      "manualHeight": 1000,
+      "fontName": "NotoSerifTC-Regular",
+      "lineHeightMultiple": 1.5,
+      "paragraphSpacingEm": 0.5
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0011-0000-0000-000000000000",
+   "frame": [
+    [
+     2300,
+     520
+    ],
+    [
+     800,
+     300
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 12,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "image": {
+     "_0": {
+      "assetFileName": "wrap-c.jpg",
+      "cropRect": [
+       [
+        0,
+        0
+       ],
+       [
+        1,
+        1
+       ]
+      ],
+      "maskShape": "rectangle",
+      "excludesText": true,
+      "textWrapMode": "push",
+      "maskCornerRadius": 0.03
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0012-0000-0000-000000000000",
+   "frame": [
+    [
+     3330,
+     96
+    ],
+    [
+     620,
+     56
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 13,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "旋轉　bounds",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.010329823029626936,
+          "green": 0.010329823029626936,
+          "blue": 0.010329823029626936,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "1A1A1A",
+      "fontSize": 40,
+      "fontWeightValue": 4,
+      "alignment": "leading",
+      "kerningEm": 0.02
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0013-0000-0000-000000000000",
+   "frame": [
+    [
+     3330,
+     168
+    ],
+    [
+     760,
+     34
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 14,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "旋轉的洞用外接框擋字，逐角度輪廓不值得那個複雜度",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.26225065752969623,
+          "green": 0.26225065752969623,
+          "blue": 0.26225065752969623,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "8C8C8C",
+      "fontSize": 21,
+      "fontWeightValue": 2,
+      "alignment": "leading",
+      "kerningEm": 0.06
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0014-0000-0000-000000000000",
+   "frame": [
+    [
+     3330,
+     240
+    ],
+    [
+     900,
+     1000
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 15,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "text": {
+     "_0": {
+      "text": [
+       "文字遇到圖片的時候要怎麼走，其實是版面裡最看得出品味的地方。最省事的做法是讓圖片直接壓在文字上，但那只是把問題藏起來；好看的版面是文字自己知道要讓路，而且讓得剛剛好——不多不少，留下一圈厚度一致的空氣。\n單側是最安全的選擇。圖片站在哪一邊，文字就整段退到另一邊，閱讀的動線不會在句子中間被圖打斷，眼睛從上到下一路順下來。長篇說明、雜誌內頁、作品集的圖說段落，用單側幾乎不會出錯。\n兩側適合圖片本身就是主角的時候。文字像水一樣繞著它流過去，圓形的圖會被包成一座島嶼，弧線的地方文字也跟著彎。代價是每一行長度都不一樣，讀起來比較費力，所以段落別太長。\n上下最直接：圖佔住的那幾列整列讓開，上面一段、下面一段，中間夾著圖。它其實不算繞排，比較像把段落切開，但在圖很寬、或版面本來就走橫向切分的時候，這是最乾淨的答案。\n三種模式沒有優劣，只有適不適合。先問這張圖是配角還是主角，答案通常就自己出來了。",
+       {
+        "SwiftUI.ForegroundColor": {
+         "tag": {
+          "constant": {}
+         },
+         "value": {
+          "red": 0.024157632448504756,
+          "green": 0.024157632448504756,
+          "blue": 0.024157632448504756,
+          "opacity": 1
+         }
+        }
+       }
+      ],
+      "colorHex": "2B2B2B",
+      "fontSize": 28,
+      "fontWeightValue": 2,
+      "alignment": "leading",
+      "isBodyFrame": true,
+      "manualWidth": 900,
+      "manualHeight": 1000,
+      "fontName": "NotoSerifTC-Regular",
+      "lineHeightMultiple": 1.5,
+      "paragraphSpacingEm": 0.5
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0015-0000-0000-000000000000",
+   "frame": [
+    [
+     3800,
+     470
+    ],
+    [
+     380,
+     300
+    ]
+   ],
+   "rotation": -12,
+   "zIndex": 16,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "image": {
+     "_0": {
+      "assetFileName": "wrap-a.jpg",
+      "cropRect": [
+       [
+        0,
+        0
+       ],
+       [
+        1,
+        1
+       ]
+      ],
+      "maskShape": "rectangle",
+      "excludesText": true,
+      "textWrapMode": "side",
+      "maskCornerRadius": 0.03
+     }
+    }
+   }
+  },
+  {
+   "id": "WRAP-0016-0000-0000-000000000000",
+   "frame": [
+    [
+     3330,
+     900
+    ],
+    [
+     900,
+     60
+    ]
+   ],
+   "rotation": 0,
+   "zIndex": 17,
+   "locked": false,
+   "opacity": 1,
+   "content": {
+    "shape": {
+     "_0": {
+      "kind": "line",
+      "colorHex": "1A1A1A",
+      "lineWidth": 5,
+      "excludesText": true,
+      "textWrapMode": "push"
+     }
+    }
+   }
+  }
+ ]
+}

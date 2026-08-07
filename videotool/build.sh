@@ -1,0 +1,58 @@
+#!/bin/bash
+# 編譯 alignvideo（影片頁匯出器）。
+#
+# 濾鏡／紙張與合成器都是從 App 的**真原始檔**取的，只做機械式的平台調整——
+# iOS 端改了配方或合成順序，重跑這支就會同步，不會有手抄的近似品在旁邊漂移。
+# 產物 src-tauri/bin/alignvideo，會被 Tauri 當 externalBin 打包進 .app。
+set -e
+cd "$(dirname "$0")/.."
+APP="../ALIGN/ALIGN.swiftpm/Sources"
+GEN="videotool/generated"
+mkdir -p "$GEN" src-tauri/bin
+
+echo "→ 取 App 的 FilterEngine（剝掉 UIKit）"
+python3 - "$APP/Engines/FilterEngine.swift" <<'PY'
+import pathlib, re, sys
+s = pathlib.Path(sys.argv[1]).read_text()
+s = s.replace("import UIKit", "import CoreGraphics\nimport Foundation")
+for pat, what in [
+    (r"\n    /// 紙張纖維層快取.*?\n    private static var paperCache.*?\n", "paperCache"),
+    (r"\n    /// softLight 用的纖維噪點層.*?\n    static func paperFiber.*?\n    \}\n", "paperFiber"),
+    (r"\n    /// 套一顆濾鏡到 UIImage.*?\n    static func apply\(_ key: String\?, to image: UIImage\).*?\n    \}\n", "apply"),
+]:
+    before = s
+    s = re.sub(pat, "\n", s, flags=re.S)
+    assert s != before, f"{what} 沒被移除——App 端結構變了，回來看 build.sh"
+assert "UIImage" not in s, "還有殘留的 UIImage"
+pathlib.Path("videotool/generated/FilterEngine.mac.swift").write_text(s)
+PY
+
+echo "→ 取 App 的合成器（VideoPageExporter 裡 UIKit-free 的那一段）"
+python3 - "$APP/VideoPageExporter.swift" <<'PY'
+import pathlib, re, sys
+src = pathlib.Path(sys.argv[1]).read_text()
+start = src.index("enum CompositeLayer {")
+s = src[start:]
+assert "UIImage" not in s and "UIKit" not in s, "合成器那段混進了 UIKit，要重看切點"
+# 紙張：iOS 在主執行緒先把纖維烤成 UIImage 再餵給 compositor；工具改成現算
+# （applyPaperCILive 內部就是 grainLayer，同一組數學），所以 box 改存 key。
+s = s.replace("""    var paper: PagePaper?
+    var paperFiber: CIImage?""", """    var paperKey: String?""")
+s = s.replace("""            if let paper = box.paper {
+                composite = FilterEngine.applyPaperCI(paper, fiber: box.paperFiber,
+                                                      to: composite, pageRect: pageRect)
+            }""", """            if let key = box.paperKey {
+                composite = FilterEngine.applyPaperCILive(key, to: composite)
+            }""")
+assert "paperKey" in s and "applyPaperCILive" in s, "紙張改寫沒生效"
+
+s = "import AVFoundation\nimport CoreImage\nimport Foundation\n\n" + s
+pathlib.Path("videotool/generated/Compositor.mac.swift").write_text(s)
+PY
+
+echo "→ 編譯"
+swiftc -O -parse-as-library \
+  videotool/main.swift "$GEN/FilterEngine.mac.swift" "$GEN/Compositor.mac.swift" \
+  -o src-tauri/bin/alignvideo
+
+echo "✅ src-tauri/bin/alignvideo"

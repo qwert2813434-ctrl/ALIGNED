@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "預設權限：對話框＋核心",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:default"]
+}
