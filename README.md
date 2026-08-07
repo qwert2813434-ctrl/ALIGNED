@@ -9,6 +9,8 @@
 
 ![ALIGNED Mac 版編輯畫面](docs/screenshots/hero.png)
 
+▶︎ **[一分鐘說明影片](docs/demo.mp4)**（點進去直接播放；有新功能會隨版本更新）
+
 ## 下載
 
 👉 **[下載 ALIGNED for Mac（DMG）](https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/ALIGNED_1.0.7_aarch64.dmg)**（v1.0.7）
