@@ -13,7 +13,7 @@
 
 ## 下載
 
-👉 **[下載 ALIGNED for Mac（DMG）](https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/ALIGNED_1.0.8_aarch64.dmg)**（v1.0.8）
+👉 **[下載 ALIGNED for Mac（DMG）](https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/ALIGNED_1.0.9_aarch64.dmg)**（v1.0.9）
 
 📱 iPhone／iPad 版正在 App Store 審核中，上架後在這裡補連結。
 
@@ -746,6 +746,21 @@ WebContent 45 秒必死→**全程活著**、螢幕連拍 0 變化→**12/12 全
 
 > 順帶發現（資料問題，與程式無關）：`ClaudeForge/out/ALIGNED 說明輪播（8頁）.alignproj`
 > 打包時**沒把 aligned-guides.mp4 收進去**（解包只有海報）——要用那份示範前先重打包。
+
+## 已驗證（2026-08-09 第二十五輪：縮放卡＝rAF 半死不活 25Hz，看門狗升級）
+
+小高回報「有一點卡，縮放也會卡」。`?probe=zoom` 探針（2.5 秒正弦縮放掃描）在真
+WKWebView＋分鏡展示量到的數字推翻直覺：
+
+- **單張重畫只要 0.6ms、主執行緒最大堵塞 1ms**——成本毫無問題；
+- **2.5 秒只畫了 64 張＝約 25fps**——卡的是**拍率**：這台 WKWebView 的 rAF
+  沒死（所以 90ms 看門狗不出手）、但也只跑 ~25Hz，畫面就以慢動作跟手。
+
+修法＝看門狗規則升級：從「rAF 心跳停了才代打」改成「**有髒、且距上一次真正畫
+超過 15ms 就補拍**」（週期 8ms）。rAF 健康 60fps 時永遠輪不到它；慢心跳／死心跳
+一律自動補滿。量測：64 → 94（門檻 25ms）→ **156 張／2.5 秒＝62fps**，
+單張 0.9ms、主執行緒堵塞 2ms。影片播放的重畫節奏也一起受益（同一個 dirty 管線）。
+自測 118/118。`?probe=zoom` 留作常備診斷旗標。
 
 ## 還沒做
 

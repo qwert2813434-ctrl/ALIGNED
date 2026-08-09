@@ -1141,6 +1141,8 @@ export class Editor {
 
   /** rAF 上一次跳動的時刻——看門狗用它判斷 rAF 是不是被節流了。 */
   private lastBeat = 0;
+  /** 上一次「真正畫了」的時刻——看門狗用它補拍慢心跳（25Hz 那種半死不活）。 */
+  private lastPaintAt = 0;
 
   private frame = (): void => {
     requestAnimationFrame(this.frame);
@@ -1152,18 +1154,24 @@ export class Editor {
   /**
    * rAF 看門狗。Tauri 的 WKWebView 會把 rAF 節流到 **1Hz**（視窗在最前景、
    * document.visibilityState=visible 也一樣，2026-08-05 真機量到），
-   * 而 setInterval 完全正常——所以畫面更新不能把命押在 rAF 上。
-   * 心跳正常（Chromium）時這裡永遠不出手；心跳停了就以 ~60fps 代打。
+   * 而且就算沒死也可能只跑 **~25Hz**（2026-08-09 縮放探針量到：2.5 秒只畫 64 張、
+   * 單張才 0.6ms——卡的是拍率不是成本）。setInterval 完全正常——
+   * 所以畫面更新不能把命押在 rAF 上。
+   * 規則：有髒、且距**上一次真正畫**超過 25ms 就補拍——rAF 健康 60fps 時
+   * 這裡永遠輪不到（上次畫永遠很新），rAF 慢或死時自動補到 ~60fps。
    */
   private startWatchdog(): void {
     setInterval(() => {
-      if (performance.now() - this.lastBeat > 90) this.paint();
-    }, 16);
+      const now = performance.now();
+      if (this.dirty && now - this.lastPaintAt > 15) { this.paint(); return; }
+      if (now - this.lastBeat > 90) this.paint();
+    }, 8);
   }
 
   private paint = (): void => {
     if (!this.dirty || !this.project) return;
     this.dirty = false;
+    this.lastPaintAt = performance.now();
     const ft0 = performance.now();
 
     // 畫面中央換頁了就吼一聲（圖層清單跟著換）——只在真的變了才發，不是每格

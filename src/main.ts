@@ -1539,6 +1539,42 @@ window.addEventListener("keydown", (e) => {
   commit("nudge");
 });
 
+// ?probe=zoom＝縮放效能探針：開檔安定後做 2.5 秒正弦縮放掃描，
+// 回報重畫次數／平均重畫毫秒（EMA 峰值）／主執行緒最大卡頓。真環境量，不猜。
+function zoomProbe(): void {
+  const post = (o: Record<string, unknown>): void => {
+    try { navigator.sendBeacon("http://localhost:5199/", JSON.stringify(o)); } catch { /* 收端沒開就算了 */ }
+  };
+  setTimeout(() => {
+    const f0 = { paints: editor.frameStats.paints };
+    const t0 = performance.now();
+    let maxLag = 0, maxMs = 0;
+    let expect = performance.now() + 50;
+    const lagT = setInterval(() => {
+      const now = performance.now();
+      maxLag = Math.max(maxLag, now - expect);
+      maxMs = Math.max(maxMs, editor.frameStats.ms);
+      expect = now + 50;
+    }, 50);
+    const z0 = editor.zoom;
+    const sweep = setInterval(() => {
+      const t = (performance.now() - t0) / 2500;
+      if (t >= 1) {
+        clearInterval(sweep); clearInterval(lagT);
+        editor.setZoom(z0);
+        post({ probe: "zoom",
+               paints: editor.frameStats.paints - f0.paints,
+               paintAvgMs: Math.round(editor.frameStats.ms * 10) / 10,
+               paintMaxEmaMs: Math.round(maxMs * 10) / 10,
+               mainThreadMaxLagMs: Math.round(maxLag),
+               pool: { ...videos.stats } });
+      } else {
+        editor.setZoom(z0 * (1 + 0.8 * Math.sin(t * Math.PI * 4)));
+      }
+    }, 16);
+  }, 3000);
+}
+
 // ── 啟動 ──────────────────────────────────────────────────────────────
 (async () => {
   // 字型必須先載完再畫——canvas 對還沒載入的字型會靜默回落系統字型，不報錯只是全錯。
@@ -1628,6 +1664,7 @@ window.addEventListener("keydown", (e) => {
   // ?probe=filter＝濾鏡管線探針（真 WKWebView 診斷）：對第一個圖片與影片 block 套 a1，
   // 回報「變體有沒有生出來」「影片濾鏡影格有沒有出現」——taint／CORS 這類殼層差異只有真環境測得到
   const proj = current as Project | null;   // TS 在這裡把 current 窄化成 never（老雷），繞開
+  if (q.get("probe") === "zoom" && proj) zoomProbe();
   if (q.get("probe") === "filter" && proj) {
     const post = (o: Record<string, unknown>): void => {
       try { navigator.sendBeacon("http://localhost:5199/", JSON.stringify(o)); } catch { /* 收端沒開就算了 */ }
