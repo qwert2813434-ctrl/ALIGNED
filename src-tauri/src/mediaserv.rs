@@ -52,8 +52,12 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+// 所有回應（含錯誤）都帶 CORS 頭：WebKit 對 crossOrigin 資源只要有一個回應缺頭，
+// 整個載入就判失敗——2026-08-09 影片黑格的根因之一
+const CORS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Expose-Headers: Content-Range, Content-Length, Accept-Ranges\r\n";
+
 fn deny(mut s: TcpStream, code: &str) -> std::io::Result<()> {
-    s.write_all(format!("HTTP/1.1 {code}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n").as_bytes())
+    s.write_all(format!("HTTP/1.1 {code}\r\n{CORS}Connection: close\r\nContent-Length: 0\r\n\r\n").as_bytes())
 }
 
 fn serve(stream: TcpStream, token: &str) -> std::io::Result<()> {
@@ -72,6 +76,16 @@ fn serve(stream: TcpStream, token: &str) -> std::io::Result<()> {
             range = Some(v.trim().to_string());
         }
     }
+    // CORS preflight：WebKit 對帶 Range 的跨源影片請求會先發 OPTIONS——
+    // 不接這一手，crossOrigin 的 <video> 在真 WKWebView 直接載入失敗（黑格）
+    if method == "OPTIONS" {
+        let mut s = stream;
+        return s.write_all(format!(
+            "HTTP/1.1 204 No Content\r\n{CORS}\
+             Access-Control-Allow-Methods: GET, HEAD, OPTIONS\r\n\
+             Access-Control-Allow-Headers: Range, Accept, Accept-Encoding\r\n\
+             Access-Control-Max-Age: 86400\r\nConnection: close\r\n\r\n").as_bytes());
+    }
     if method != "GET" && method != "HEAD" { return deny(stream, "405 Method Not Allowed"); }
     let Some(rest) = target.strip_prefix(&format!("/{token}/")) else {
         return deny(stream, "403 Forbidden");
@@ -88,6 +102,13 @@ fn serve(stream: TcpStream, token: &str) -> std::io::Result<()> {
     let mime = match canon.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
         Some("mov") => "video/quicktime",
         Some("mp4") | Some("m4v") => "video/mp4",
+        // 圖片與字型也走這台（asset:// 在 WKWebView 會污染 canvas，全媒體統一從這裡出）
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("webp") => "image/webp",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
+        Some("ttc") => "font/collection",
         _ => "application/octet-stream",
     };
 
@@ -98,7 +119,7 @@ fn serve(stream: TcpStream, token: &str) -> std::io::Result<()> {
         Some(_) => {
             let mut s = stream;
             return s.write_all(format!(
-                "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{len}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                "HTTP/1.1 416 Range Not Satisfiable\r\n{CORS}Content-Range: bytes */{len}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
             ).as_bytes());
         }
         None => ("200 OK", 0, len.saturating_sub(1)),
@@ -106,7 +127,7 @@ fn serve(stream: TcpStream, token: &str) -> std::io::Result<()> {
     let nbytes = if len == 0 { 0 } else { end - start + 1 };
 
     let mut head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nAccept-Ranges: bytes\r\nContent-Length: {nbytes}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n"
+        "HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nAccept-Ranges: bytes\r\nContent-Length: {nbytes}\r\n{CORS}Connection: close\r\n"
     );
     if status.starts_with("206") {
         head.push_str(&format!("Content-Range: bytes {start}-{end}/{len}\r\n"));

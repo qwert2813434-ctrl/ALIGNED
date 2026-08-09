@@ -256,6 +256,8 @@ fn user_fonts_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     use tauri::Manager;
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("UserFonts");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // 字型檔也從媒體伺服器出（FontFace 的 fetch 是強制 CORS，asset:// 在 WKWebView 過不了）
+    mediaserv::register_root(&dir.to_string_lossy());
     Ok(dir)
 }
 

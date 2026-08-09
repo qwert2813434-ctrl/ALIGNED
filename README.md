@@ -13,7 +13,7 @@
 
 ## 下載
 
-👉 **[下載 ALIGNED for Mac（DMG）](https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/ALIGNED_1.0.7_aarch64.dmg)**（v1.0.7）
+👉 **[下載 ALIGNED for Mac（DMG）](https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/ALIGNED_1.0.8_aarch64.dmg)**（v1.0.8）
 
 📱 iPhone／iPad 版正在 App Store 審核中，上架後在這裡補連結。
 
@@ -715,6 +715,37 @@ WebContent 45 秒必死→**全程活著**、螢幕連拍 0 變化→**12/12 全
 
 驗證：tsc ✓、自測 113/113、CDP（首頁三態＋選單結構＋Esc）、截圖（空狀態／有卡片）。
 出版：**1.0.4** 已簽名公證（SHA `e5e54866…`），`/Applications` 已更新。
+
+## 已驗證（2026-08-09 第二十四輪：濾鏡全滅——兩顆 Chrome 測不出的 WKWebView 雷）
+
+小高回報 1.0.7「套濾鏡後預覽不顯示」。瀏覽器怎麼測都是好的（圖片＋濾鏡 ✓、影片＋濾鏡 ✓、
+零錯誤）——**問題只存在真 WKWebView**。用「`?probe=filter` 探針＋beacon 收端＋devUrl 暫帶參數」
+在 tauri dev 的真環境跑，一次揪出兩顆：
+
+1. **asset:// 的圖在 WKWebView 會污染 canvas**（Chrome 不會）。`filteredCanvas` 的
+   `getImageData` 直接 `SecurityError: The operation is insecure`＝**圖片濾鏡 100% 壞**。
+   連鎖：畫過 asset:// 圖的畫布都髒了，**⌘E 匯出 PNG 對任何磁碟專案其實從 1.0.0 就是壞的**
+   （之前匯出驗證都驗到影片頁 mp4，PNG 頁沒真環境測過）。
+2. **crossOrigin 影片全黑**：1.0.5 給 `<video>` 加了 `crossOrigin="anonymous"`（防污染，方向對），
+   但 **WebKit 對帶 Range 的跨源媒體請求會先發 CORS preflight（OPTIONS）**——媒體伺服器沒接
+   OPTIONS，整個載入判死（`err 4 / SRC_NOT_SUPPORTED`）＝影片從 1.0.5 起在真 App 只剩海報不會動。
+   Chrome 測不出（dev server 同源，根本不走 CORS）。
+
+修法＝**全媒體統一走 127.0.0.1 媒體伺服器、asset:// 退役**：
+
+- mediaserv 補整套 CORS：**OPTIONS preflight**（Allow-Headers 含 Range）、
+  **所有回應**（含 416／403／404）都帶 ACAO——WebKit 只要有一個回應缺頭就整條判死；
+  Expose-Headers 給 Content-Range；MIME 表補圖片與字型。
+- 前端 `localUrl()`＝磁碟路徑→媒體伺服器 URL 的唯一出口；`convertFileSrc` 全數移除。
+  `<img>`／`<video>`（含 capturePoster）對 http 來源一律 `crossOrigin="anonymous"`。
+- 使用者字型檔資料夾也註冊進媒體伺服器（FontFace 的 fetch 是強制 CORS）。
+
+驗證（真 WKWebView＋分鏡展示 15×4K）：圖片濾鏡變體 ✓、海報變體 ✓、**影片即時濾鏡影格 ✓**
+（修前連 plain 影格都是 false）、頁內 fetch 200／Range 206 ✓、自測 118/118。
+探針留作常備診斷旗標（`?probe=filter`，配 `?diag=1` 的 beacon）。
+
+> 順帶發現（資料問題，與程式無關）：`ClaudeForge/out/ALIGNED 說明輪播（8頁）.alignproj`
+> 打包時**沒把 aligned-guides.mp4 收進去**（解包只有海報）——要用那份示範前先重打包。
 
 ## 還沒做
 

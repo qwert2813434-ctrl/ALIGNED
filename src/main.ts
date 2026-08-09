@@ -2,7 +2,7 @@
 //
 // 同一份程式跑兩種環境：
 // - **Tauri（.app）**：開檔／匯出走原生對話框，`.alignproj` 由 Rust 端呼叫系統 `aa` 解包，
-//   素材用 convertFileSrc 從磁碟直載。
+//   素材一律走殼層的 127.0.0.1 媒體伺服器（CORS 乾淨，canvas 不污染）。
 // - **瀏覽器（npm run dev）**：開發與自測用。開檔只吃裸 project.json（讀不到同層
 //   assets/，LZFSE 也解不了）——那是開發便利，不是產品路徑。
 import { decodeProject, encodeProject, type Block, type Project } from "./core/schema";
@@ -23,7 +23,7 @@ import { VideoPool, hiddenHost } from "./videopool";
 import { Gallery } from "./gallery";
 import { openTrim } from "./trim";
 import { checkUpdate } from "./updatecheck";
-import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
@@ -113,9 +113,12 @@ async function loadAssets(
   const raw = new Map<string, HTMLImageElement>();
   await Promise.all([...new Set(entries.map(([, e]) => e.file))].map((file) => new Promise<void>((done) => {
     const img = new Image();
+    const src = resolve(file);
+    // 媒體伺服器跨源：CORS 乾淨載入——asset:// 在 WKWebView 會污染 canvas（濾鏡/匯出全滅）
+    if (src.startsWith("http")) img.crossOrigin = "anonymous";
     img.onload = () => { raw.set(file, img); done(); };
     img.onerror = () => done();
-    img.src = resolve(file);
+    img.src = src;
   })));
   const variants = new Map<string, CanvasImageSource>();
   for (const [key, { file, filter }] of entries) {
@@ -274,11 +277,11 @@ async function pickMediaForBlock(b: Block): Promise<void> {
   if (!assets) assets = { variants: new Map(), raw: new Map() };
   let assetKey = name;
   if (isVid) {
-    const poster = await capturePoster(convertFileSrc(`${dir}/${name}`));
+    const poster = await capturePoster(await localUrl(`${dir}/${name}`));
     await invoke("save_png", { path: `${dir}/${name}.poster.jpg`, data: poster });
     assetKey = `${name}.poster.jpg`;
   }
-  const img = await loadImg(convertFileSrc(`${dir}/${assetKey}`));
+  const img = await loadImg(await localUrl(`${dir}/${assetKey}`));
   assets.raw.set(assetKey, img);
   assets.variants.set(assetKey, img);
   const old = b.content.media;
@@ -315,7 +318,7 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
     try {
       const f = await invoke<DynamicFont>("import_font", { src });
       // 匯入檔走 url()，必須 await 載完才能量測（字型鐵則）
-      if (!f.path || !(await registerUserFont(f, convertFileSrc(f.path)))) {
+      if (!f.path || !(await registerUserFont(f, await localUrl(f.path)))) {
         meta.textContent = "這個字型檔讀不進來";
         return null;
       }
@@ -462,6 +465,21 @@ async function openNative(): Promise<void> {
   await openPath(path);
 }
 
+/** 媒體伺服器位址（App 內所有磁碟媒體的唯一出口），第一次用時抓。 */
+let mediaBasePromise: Promise<string> | null = null;
+
+/**
+ * 磁碟絕對路徑 → 可安全讀回的 URL。
+ * **App 內一律走 127.0.0.1 媒體伺服器、不走 asset://**——兩個屍體都驗過：
+ * ① asset:// 串流 range 回錯資料（綠色亂碼，README 第十九輪）；
+ * ② asset:// 的圖在 WKWebView 會污染 canvas，濾鏡 getImageData 與 ⌘E 匯出
+ *   直接 SecurityError（2026-08-09 探針證實，Chrome 測不出來）。
+ * 搭配 <img>/<video> 的 crossOrigin="anonymous"＋伺服器整套 CORS 頭（含 preflight）。
+ */
+async function localUrl(absPath: string): Promise<string> {
+  return `${await mediaBaseOnce()}/${encodeURIComponent(absPath)}`;
+}
+
 /** 開一個指定路徑的專案——⌘O 與 ?open=（診斷用旗標）共用同一條路。 */
 async function openPath(path: string): Promise<void> {
   const r = await invoke<{ json: string; asset_dir: string | null; root_dir: string }>("load_project", { path });
@@ -470,16 +488,17 @@ async function openPath(path: string): Promise<void> {
     ? { kind: "alignproj", path, root: r.root_dir }
     : { kind: "json", path };
   const dir = r.asset_dir;
-  const url = dir ? (f: string) => convertFileSrc(`${dir}/${f}`) : undefined;
-  // 影片不走 asset://——它串流特定 range 會回錯資料（固定位置綠色亂碼，
-  // 2026-08-06 驗屍見 README 第十九輪）。改走殼層的 127.0.0.1 媒體伺服器。
-  // 圖片與海報照舊 asset://（整檔一次載，沒有 range 問題）。
-  const mediaBase = dir ? await invoke<string>("media_base") : null;
-  const videoUrl = dir && mediaBase
-    ? (f: string) => `${mediaBase}/${encodeURIComponent(`${dir}/${f}`)}`
-    : url;
-  show(p, url ? await loadAssets(p, url, filterAssets) : undefined, videoUrl);
+  const base = dir ? await mediaBaseOnce() : null;
+  const fileUrl = dir && base
+    ? (f: string) => `${base}/${encodeURIComponent(`${dir}/${f}`)}`
+    : undefined;
+  show(p, fileUrl ? await loadAssets(p, fileUrl, filterAssets) : undefined, fileUrl);
   rememberRecent();
+}
+
+async function mediaBaseOnce(): Promise<string> {
+  mediaBasePromise ??= invoke<string>("media_base");
+  return mediaBasePromise;
 }
 
 function openBrowser(): void {
@@ -1132,6 +1151,8 @@ function assetsDir(): string | null {
 function loadImg(url: string): Promise<HTMLImageElement> {
   return new Promise((ok, err) => {
     const img = new Image();
+    // 媒體伺服器（127.0.0.1）跨源：CORS 乾淨載入，畫進 canvas 才不污染
+    if (url.startsWith("http")) img.crossOrigin = "anonymous";
     img.onload = () => ok(img);
     img.onerror = () => err(new Error("影像載入失敗"));
     img.src = url;
@@ -1150,6 +1171,7 @@ function capturePoster(url: string): Promise<string> {
   return new Promise((ok, err) => {
     const v = document.createElement("video");
     v.muted = true; v.playsInline = true; v.preload = "auto";
+    if (url.startsWith("http")) v.crossOrigin = "anonymous";   // toDataURL 需要乾淨的 canvas
     hiddenHost().append(v);
     const done = (fn: () => void): void => { clearTimeout(timer); v.remove(); fn(); };
     const timer = setTimeout(() => done(() => err(new Error("影片讀太久，抓不到海報"))), 15000);
@@ -1207,19 +1229,19 @@ async function importMediaFromPath(src: string, at?: { x: number; y: number }): 
   let assetKey: string;
   if (isImg) {
     assetKey = name;
-    img = await loadImg(convertFileSrc(`${dir}/${name}`));
+    img = await loadImg(await localUrl(`${dir}/${name}`));
   } else {
     // 長片軟提醒：Mac 不像 iPad 強制匯入就剪，但超過 30 秒回 iPad 會吃力，說一聲
     // （格式完全相容——30 秒只是 iPad 匯入 UI 的政策，見 trim.ts 檔頭）
-    const secs = await videoDuration(videoUrl ? videoUrl(name) : convertFileSrc(`${dir}/${name}`));
+    const secs = await videoDuration(videoUrl ? videoUrl(name) : await localUrl(`${dir}/${name}`));
     if (secs > 30) {
       meta.textContent = `這支 ${secs.toFixed(0)} 秒——右鍵可以修剪（回 iPad 匯出會比較慢）`;
       setTimeout(() => { if (meta.textContent?.startsWith("這支")) refreshMeta(); }, 5000);
     }
-    const poster = await capturePoster(convertFileSrc(`${dir}/${name}`));
+    const poster = await capturePoster(await localUrl(`${dir}/${name}`));
     await invoke("save_png", { path: `${dir}/${name}.poster.jpg`, data: poster });
     assetKey = `${name}.poster.jpg`;
-    img = await loadImg(convertFileSrc(`${dir}/${assetKey}`));
+    img = await loadImg(await localUrl(`${dir}/${assetKey}`));
   }
   assets.raw.set(assetKey, img);
   assets.variants.set(assetKey, img);
@@ -1242,7 +1264,7 @@ async function trimBlock(b: Block): Promise<void> {
   const file = b.content.media.assetFileName;
   if (!dir || !file) return;
   const src = `${dir}/${file}`;
-  const r = await openTrim(videoUrl ? videoUrl(file) : convertFileSrc(src), file);
+  const r = await openTrim(videoUrl ? videoUrl(file) : await localUrl(src), file);
   if (!r) return;
   meta.textContent = "修剪中…";
   try {
@@ -1250,10 +1272,10 @@ async function trimBlock(b: Block): Promise<void> {
     await invoke("trim_video", { src, dest: out, start: r.start, end: r.end });
     const name = out.split("/").pop()!;
     // 海報要重抓——修剪後的第一格通常不是原本那一格
-    const poster = await capturePoster(convertFileSrc(out));
+    const poster = await capturePoster(await localUrl(out));
     await invoke("save_png", { path: `${out}.poster.jpg`, data: poster });
     const key = `${name}.poster.jpg`;
-    const img = await loadImg(convertFileSrc(`${dir}/${key}`));
+    const img = await loadImg(await localUrl(`${dir}/${key}`));
     assets ??= { variants: new Map(), raw: new Map() };
     assets.raw.set(key, img);
     assets.variants.set(key, img);
@@ -1539,7 +1561,7 @@ window.addEventListener("keydown", (e) => {
         invoke<DynamicFont[]>("list_user_fonts"),
       ]);
       registerSystemFonts(sys);
-      await Promise.all(user.map((f) => (f.path ? registerUserFont(f, convertFileSrc(f.path)) : false)));
+      await Promise.all(user.map(async (f) => (f.path ? registerUserFont(f, await localUrl(f.path)) : false)));
     } catch { /* 字型枚舉失敗不擋開機——選單就只剩內建 */ }
   }
   // ?sample=… ＝載入指定樣本（驗證用；_probe 是帶真影片的探針專案）
@@ -1603,6 +1625,51 @@ window.addEventListener("keydown", (e) => {
   // ?open=<絕對路徑>＝直接開該專案（真 WKWebView 環境的診斷入口，跟 ⌘O 同一條路）
   const op = q.get("open");
   if (op && inApp) await openPath(op);
+  // ?probe=filter＝濾鏡管線探針（真 WKWebView 診斷）：對第一個圖片與影片 block 套 a1，
+  // 回報「變體有沒有生出來」「影片濾鏡影格有沒有出現」——taint／CORS 這類殼層差異只有真環境測得到
+  const proj = current as Project | null;   // TS 在這裡把 current 窄化成 never（老雷），繞開
+  if (q.get("probe") === "filter" && proj) {
+    const post = (o: Record<string, unknown>): void => {
+      try { navigator.sendBeacon("http://localhost:5199/", JSON.stringify(o)); } catch { /* 收端沒開就算了 */ }
+    };
+    const img = proj.blocks.find((b) => b.content.type === "image" && b.content.media.assetFileName);
+    const vid = proj.blocks.find((b) => b.content.type === "video" && b.content.media.assetFileName);
+    for (const b of [img, vid]) {
+      if (!b || (b.content.type !== "image" && b.content.type !== "video")) continue;
+      b.content.media.filterKey = "a1";
+      try {
+        await ensureVariantFor(b);
+        const m = b.content.media;
+        const file = b.content.type === "video" ? `${m.assetFileName}.poster.jpg` : m.assetFileName!;
+        post({ probe: b.content.type, variant: assets?.variants.has(`${file}|a1`) ?? false });
+      } catch (x) {
+        post({ probe: b.content.type, error: String(x) });
+      }
+    }
+    editor.refresh();
+    videos.attach(videoUrl ?? null);
+    if (vid && vid.content.type === "video" && vid.content.media.assetFileName) {
+      const f = vid.content.media.assetFileName;
+      editor.focusPage(pageIndexForX(proj, vid.frame.x + vid.frame.w / 2));   // 影片要在視野內才會播
+      setTimeout(() => {
+        void (async () => {
+          const els = [...hiddenHost().querySelectorAll("video")].map((v) => ({
+            src: v.src, ready: v.readyState, err: v.error?.code ?? null,
+            w: v.videoWidth, t: Math.round(v.currentTime * 10) / 10, paused: v.paused,
+          }));
+          // 同網址直接 fetch：不帶 Range＝簡單請求；帶 Range＝逼出 preflight——分清楚死在哪一層
+          let plainFetch = "", rangeFetch = "";
+          if (els[0]) {
+            plainFetch = await fetch(els[0].src).then((r) => `${r.status}`, (e) => `ERR ${e}`);
+            rangeFetch = await fetch(els[0].src, { headers: { Range: "bytes=0-99" } })
+              .then((r) => `${r.status}`, (e) => `ERR ${e}`);
+          }
+          post({ probe: "videoFrame", filtered: videos.frames.has(`${f}|a1`),
+                 plain: videos.frames.has(f), stats: { ...videos.stats }, els, plainFetch, rangeFetch });
+        })();
+      }, 4000);
+    }
+  }
   // ?diag=1＝把影片池儀表寫進狀態列（每秒更新），螢幕截圖就讀得到
   if (q.has("diag")) {
     let lastPaints = 0, lastRaf = 0;
