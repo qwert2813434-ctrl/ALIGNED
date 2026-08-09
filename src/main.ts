@@ -1665,6 +1665,110 @@ function zoomProbe(): void {
   // 回報「變體有沒有生出來」「影片濾鏡影格有沒有出現」——taint／CORS 這類殼層差異只有真環境測得到
   const proj = current as Project | null;   // TS 在這裡把 current 窄化成 never（老雷），繞開
   if (q.get("probe") === "zoom" && proj) zoomProbe();
+  // ?probe=vf＝VideoFrame 載具評估：量四個關鍵成本（建格／轉移／工人讀回／主緒 putImageData）
+  if (q.get("probe") === "vf" && proj) {
+    const post = (o: Record<string, unknown>): void => {
+      try { navigator.sendBeacon("http://localhost:5199/", JSON.stringify(o)); } catch { /* */ }
+    };
+    setTimeout(() => {
+      void (async () => {
+        const el = document.querySelector<HTMLVideoElement>("#videopool-host video");
+        if (!el || !el.videoWidth) { post({ probe: "vf", error: "no playing video" }); return; }
+        const out: Record<string, unknown> = { probe: "vf", hasVF: "VideoFrame" in window };
+        try {
+          // ① 建 VideoFrame 的同步成本
+          const t0 = performance.now();
+          const vf = new VideoFrame(el);
+          out.newVFMs = Math.round((performance.now() - t0) * 10) / 10;
+          out.fmt = vf.format;
+          // ② 轉移給工人＋③ 工人 copyTo 讀回（工人回報自己量的）
+          const w = new Worker(URL.createObjectURL(new Blob([`
+            self.onmessage = async (e) => {
+              const vf = e.data.vf;
+              const t0 = performance.now();
+              const size = vf.allocationSize({ format: "RGBA" });
+              const buf = new ArrayBuffer(size);
+              await vf.copyTo(buf, { format: "RGBA" });
+              const copyMs = Math.round((performance.now() - t0) * 10) / 10;
+              vf.close();
+              self.postMessage({ copyMs, size });
+            };`], { type: "text/javascript" })));
+          const t1 = performance.now();
+          w.postMessage({ vf }, [vf as unknown as Transferable]);
+          out.postMs = Math.round((performance.now() - t1) * 10) / 10;
+          const reply = await new Promise<Record<string, number>>((ok, err) => {
+            w.onmessage = (ev) => ok(ev.data as Record<string, number>);
+            w.onerror = (ev) => err(new Error(String(ev.message)));
+            setTimeout(() => err(new Error("worker timeout")), 8000);
+          });
+          out.workerCopyMs = reply.copyMs;
+          out.copySize = reply.size;
+          w.terminate();
+        } catch (x) { out.vfError = String(x); }
+        // ④ 主緒 putImageData 512×288 的孤立成本
+        const c = document.createElement("canvas");
+        c.width = 512; c.height = 288;
+        const cx = c.getContext("2d")!;
+        const d = new ImageData(512, 288);
+        const t2 = performance.now();
+        cx.putImageData(d, 0, 0);
+        out.putMs = Math.round((performance.now() - t2) * 10) / 10;
+        // ⑤ 把那張 canvas 畫上另一張（顯示路徑）的成本
+        const c2 = document.createElement("canvas");
+        c2.width = 512; c2.height = 288;
+        const t3 = performance.now();
+        c2.getContext("2d")!.drawImage(c, 0, 0);
+        out.drawMs = Math.round((performance.now() - t3) * 10) / 10;
+        post(out);
+      })();
+    }, 5000);
+  }
+  // ?probe=filterlag＝濾鏡穩態負載探針：全部影片套 a1，量 3 秒
+  // 主執行緒卡頓／池轉檔耗時／轉檔率——「開著濾鏡會卡」的基準線
+  if (q.get("probe") === "filterlag" && proj) {
+    const post = (o: Record<string, unknown>): void => {
+      try { navigator.sendBeacon("http://localhost:5199/", JSON.stringify(o)); } catch { /* */ }
+    };
+    if (!q.has("nofilter")) {   // &nofilter=1＝同一套量測但不套濾鏡（分辨堵塞來源）
+      for (const b of proj.blocks) {
+        if (b.content.type === "video" && b.content.media.assetFileName) {
+          b.content.media.filterKey = "a1";
+          await ensureVariantFor(b);
+        }
+      }
+    }
+    editor.refresh();
+    videos.attach(videoUrl ?? null);
+    setTimeout(() => {
+      const p0 = editor.frameStats.paints;
+      const w0 = performance.now();
+      let maxLag = 0, maxTick = 0, convSum = 0, ticks = 0;
+      const lagEvents: number[] = [];   // 堵塞 >30ms 發生在窗內第幾毫秒（分暫態或常態）
+      let lastConv = -1;
+      let expect = performance.now() + 20;
+      const t = setInterval(() => {
+        const now = performance.now();
+        const lag = now - expect;
+        if (lag > 30) lagEvents.push(Math.round(now - w0));
+        maxLag = Math.max(maxLag, lag);
+        maxTick = Math.max(maxTick, videos.stats.tickMs);
+        // stats.converts 每拍歸零：取樣間隔 20ms < 拍距 50ms，同值不重複累計
+        if (videos.stats.converts !== lastConv) { convSum += videos.stats.converts; ticks++; lastConv = videos.stats.converts; }
+        expect = now + 20;
+      }, 20);
+      setTimeout(() => {
+        clearInterval(t);
+        post({ probe: "filterlag",
+               filteredFps: Math.round(convSum / 3),
+               paintsPerSec: Math.round((editor.frameStats.paints - p0) / 3),
+               maxTickMs: maxTick,
+               mainThreadMaxLagMs: Math.round(maxLag),
+               lagEventsAtMs: lagEvents.slice(0, 12),
+               paintAvgMs: Math.round(editor.frameStats.ms * 10) / 10,
+               pool: { ...videos.stats } });
+      }, 3000);
+    }, 2500);
+  }
   if (q.get("probe") === "filter" && proj) {
     const post = (o: Record<string, unknown>): void => {
       try { navigator.sendBeacon("http://localhost:5199/", JSON.stringify(o)); } catch { /* 收端沒開就算了 */ }

@@ -13,7 +13,7 @@
 
 ## 下載
 
-👉 **[下載 ALIGNED for Mac（DMG）](https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/ALIGNED_1.0.9_aarch64.dmg)**（v1.0.9）
+👉 **[下載 ALIGNED for Mac（DMG）](https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/ALIGNED_1.0.10_aarch64.dmg)**（v1.0.10）
 
 📱 iPhone／iPad 版正在 App Store 審核中，上架後在這裡補連結。
 
@@ -761,6 +761,33 @@ WKWebView＋分鏡展示量到的數字推翻直覺：
 一律自動補滿。量測：64 → 94（門檻 25ms）→ **156 張／2.5 秒＝62fps**，
 單張 0.9ms、主執行緒堵塞 2ms。影片播放的重畫節奏也一起受益（同一個 dirty 管線）。
 自測 118/118。`?probe=zoom` 留作常備診斷旗標。
+
+## 已驗證（2026-08-09 第二十六輪：「開著濾鏡會卡」——GPU 邊界大狩獵，VideoFrame 終局）
+
+小高回報濾鏡開著會卡。`?probe=filterlag`（全影片套 a1、3 秒穩態）基準線：
+**單次轉檔堵主執行緒 125ms、規律如節拍器（每 125ms 一次）**；對照組（無濾鏡）乾淨如水
+＝毒 100% 在濾鏡路。接下來是一場「把影片像素送去做濾鏡」的載具淘汰賽——
+**主執行緒上凡是讓像素跨越 CPU↔GPU 邊界的操作，全部都是同步等 GPU 沖洗管線**：
+
+| 載具 | 主執行緒同步成本 | 結果 |
+|---|---|---|
+| `getImageData`（畫完立刻讀） | ~110–170ms | ✗ |
+| `createImageBitmap(video)` | **453ms** | ✗ |
+| GPU 位圖 `postMessage` 轉移給工人 | 155ms | ✗ |
+| `getImageData` 延後一拍再讀（GPU 該完工了吧？） | 還是 171ms | ✗ 理論被推翻 |
+| 主緒 `putImageData`（512px） | 18ms | ✗ 連上屏都毒 |
+| **`new VideoFrame(video)`（WebCodecs）** | **1ms**＋轉移 1ms | ✅ 唯一的門 |
+
+終局架構＝**主執行緒每格只做「包影格＋寄出」（~2ms）**：
+`new VideoFrame(el)` → 轉移給濾鏡工人 → 工人 `drawImage(vf→512)`＋`getImageData`
+＋`applyFilter`＋`putImageData`，直接畫進 **`transferControlToOffscreen` 移交過去的
+顯示畫布**——連結果都不運回主執行緒，渲染端對那張 DOM canvas `drawImage` 合成（0ms 級）。
+`vf.close()` 必須做（VideoFrame 是解碼器資源，不還會堵死解碼管線）。
+
+量測（分鏡展示 15×4K、全部套濾鏡）：主執行緒堵塞 **121ms → 1ms、節拍器事件歸零**，
+濾鏡影格 66 → **89 格/秒**（工人單格 123ms 全在工人執行緒燒，UI 無感）。
+特性檢查（VideoFrame＋transferControlToOffscreen＋OffscreenCanvas）不過就退回同步舊路。
+瀏覽器回歸：濾鏡像素真的變了、自測 118/118。
 
 ## 還沒做
 

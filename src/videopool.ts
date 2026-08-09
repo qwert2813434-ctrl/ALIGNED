@@ -52,6 +52,8 @@ interface LiveVideo {
   plain?: HTMLCanvasElement;
   /** 濾鏡代號 → 套好濾鏡的縮小影格。 */
   scratch: Map<string, HTMLCanvasElement>;
+  /** 濾鏡代號 → 顯示畫布（控制權已移交濾鏡工人；主執行緒只拿它合成）。 */
+  display: Map<string, HTMLCanvasElement>;
 }
 
 
@@ -94,14 +96,51 @@ export class VideoPool {
   readonly frames = new Map<string, CanvasImageSource>();
   /** 轉檔輪替的起點——預算用完時，下一拍從沒輪到的那支開始。 */
   private rotate = 0;
-  /** 診斷儀表（?diag=1 用）：上一拍的轉檔耗時／本秒轉了幾格／目前活著幾支。 */
-  readonly stats = { tickMs: 0, converts: 0, playing: 0, files: 0 };
+  /** 診斷儀表（?diag=1 用）：上一拍的轉檔耗時／本秒轉了幾格／目前活著幾支。
+   *  bmpSyncMs＝createImageBitmap **呼叫本身**的同步耗時峰值（抓 WebKit 偷偷同步讀回）。 */
+  readonly stats: {
+    tickMs: number; converts: number; playing: number; files: number;
+    bmpSyncMs: number; bmpAwaitMs: number; workerMs?: Record<string, number>;
+    postMs?: number; replyMs?: number; readMs?: number; workerFrameMs?: number;
+  } = { tickMs: 0, converts: 0, playing: 0, files: 0, bmpSyncMs: 0, bmpAwaitMs: 0 };
   /** rVFC 當下拷貝的張數（兩拍之間累計，pump 收進 stats.converts）。 */
   private rvfcConverts = 0;
   /** 檔名 → 播放器。**一個檔一個播放器**，同檔不同濾鏡共用同一條解碼。 */
   private pool = new Map<string, LiveVideo>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private url: ((file: string) => string) | null = null;
+  /** 濾鏡工人。undefined＝還沒試著建；null＝這環境建不起來（走同步舊路）。 */
+  private worker: Worker | null | undefined;
+  /** 已發包、還沒回貨的 token（file|filter）——同一格不重複發，天然掉格。 */
+  private inFlight = new Set<string>();
+
+  /**
+   * 建濾鏡工人（一次）。成功＝逐像素運算全部離開主執行緒
+   * （同步路一次轉檔堵 125ms，是「開著濾鏡會卡」的元兇——2026-08-09 探針）。
+   * OffscreenCanvas／createImageBitmap 不支援就回 null，走原本的同步路。
+   */
+  private ensureWorker(): Worker | null {
+    if (this.worker !== undefined) return this.worker;
+    try {
+      if (typeof OffscreenCanvas === "undefined" || typeof VideoFrame === "undefined"
+          || typeof HTMLCanvasElement.prototype.transferControlToOffscreen !== "function") {
+        throw new Error("環境不支援工人管線");
+      }
+      const w = new Worker(new URL("./filterworker.ts", import.meta.url), { type: "module" });
+      w.postMessage({ type: "assets", assets: this.filters() });
+      w.onmessage = (e: MessageEvent<{ token: string; ms: number }>) => {
+        // 工人已直接畫進顯示畫布（控制權在它手上）——這裡只解鎖＋請編輯器合成一次
+        this.inFlight.delete(e.data.token);
+        this.stats.workerFrameMs = Math.max(this.stats.workerFrameMs ?? 0, e.data.ms);
+        this.onFrame();
+      };
+      w.onerror = () => { this.worker = null; };   // 工人掛了＝之後全走同步舊路
+      this.worker = w;
+    } catch {
+      this.worker = null;
+    }
+    return this.worker;
+  }
 
   constructor(
     private project: () => Project | null,
@@ -127,7 +166,10 @@ export class VideoPool {
     if (this.timer) { clearInterval(this.timer); this.timer = undefined; }
     for (const v of this.pool.values()) this.release(v);
     this.pool.clear();
+    for (const f of this.frames.values()) if (f instanceof ImageBitmap) f.close();
     this.frames.clear();
+    this.inFlight.clear();   // 換專案＝路上的包裹全作廢，別讓舊 token 擋住新發包
+    this.worker?.postMessage({ type: "reset" });   // 工人那邊的顯示畫布表也清掉
   }
 
   private release(v: LiveVideo): void {
@@ -222,7 +264,7 @@ export class VideoPool {
         el.src = src;
         hiddenHost().append(el);     // 必須進 DOM，理由見 hiddenHost
         el.play().catch(() => {});   // 靜音自動播放瀏覽器允許；真失敗就維持海報圖
-        const v: LiveVideo = { el, lastTime: -1, newFrame: false, rvfc: false, scratch: new Map() };
+        const v: LiveVideo = { el, lastTime: -1, newFrame: false, rvfc: false, scratch: new Map(), display: new Map() };
         if ("requestVideoFrameCallback" in el) {
           v.rvfc = true;
           const arm = (): void => {
@@ -268,23 +310,53 @@ export class VideoPool {
       // 有濾鏡：逐格套在 512 上限的暫存畫布；空間性效果用 scale 對齊輸出頻率
       // （rVFC 路的濾鏡版也走這裡＝上限 20fps，逐像素濾鏡跟原生節奏跑不動）
       for (const [fk, geo] of n.filters) {
+        const k = Math.min(1, FILTER_CAP / Math.max(el.videoWidth, el.videoHeight));
+        const sw = Math.max(2, Math.round(el.videoWidth * k));
+        const sh = Math.max(2, Math.round(el.videoHeight * k));
+        // scale＝「暫存畫布的一像素」對「輸出的一像素」：輸出把裁切區縮放到 block
+        // 像素寬（bakeClip 的 target），暫存畫布上同一段裁切區是 cropW×sw 寬
+        const cropW = (geo.cropW === 1 && sw && sh)
+          ? aspectFillCrop(el.videoWidth, el.videoHeight, geo.frameW, geo.frameH).w
+          : geo.cropW;
+        const scale = (cropW * sw) / geo.frameW;   // >1 也成立（大影片塞小 block）
+
+        // 首選：VideoFrame 直送濾鏡工人。主執行緒每格只花 ~2ms（包影格＋轉移）；
+        // 讀回／濾鏡／上屏全在工人，結果直接畫進控制權已移交的顯示畫布。
+        // 為什麼不走別條（全部量過、全是毒）：主緒 getImageData ~170ms、
+        // createImageBitmap(video) 453ms、GPU 位圖轉移 155ms、主緒 putImageData 18ms。
+        const w = this.ensureWorker();
+        if (w) {
+          const token = `${file}|${fk}`;
+          if (this.inFlight.has(token)) continue;   // 上一格還在路上＝這格自然掉，不排隊
+          let disp = live.display.get(fk);
+          if (!disp) {
+            // 顯示畫布：建一次、控制權移交工人；frames 直接掛它，渲染端 drawImage 合成（0ms 級）
+            disp = document.createElement("canvas");
+            disp.width = sw; disp.height = sh;
+            const off = disp.transferControlToOffscreen();
+            w.postMessage({ type: "canvas", token, off }, [off]);
+            live.display.set(fk, disp);
+          }
+          if (this.frames.get(token) !== disp) this.frames.set(token, disp);
+          try {
+            const vf = new VideoFrame(el);
+            this.inFlight.add(token);
+            w.postMessage({ type: "frame", token, key: fk, scale, sw, sh, vf }, [vf as unknown as Transferable]);
+            converts++;
+          } catch { /* 這格抓不到就下一拍再來 */ }
+          continue;
+        }
+
+        // 退路（老 WebKit 沒有 OffscreenCanvas）：原本的同步路
         let sc = live.scratch.get(fk);
         if (!sc) {
           sc = document.createElement("canvas");
-          const k = Math.min(1, FILTER_CAP / Math.max(el.videoWidth, el.videoHeight));
-          sc.width = Math.max(2, Math.round(el.videoWidth * k));
-          sc.height = Math.max(2, Math.round(el.videoHeight * k));
+          sc.width = sw; sc.height = sh;
           live.scratch.set(fk, sc);
         }
         const cx = sc.getContext("2d", { willReadFrequently: true })!;
         cx.drawImage(el, 0, 0, sc.width, sc.height);
         const d = cx.getImageData(0, 0, sc.width, sc.height);
-        // scale＝「暫存畫布的一像素」對「輸出的一像素」：輸出把裁切區縮放到 block
-        // 像素寬（bakeClip 的 target），暫存畫布上同一段裁切區是 cropW×sc.width 寬
-        const cropW = (geo.cropW === 1 && sc.width && sc.height)
-          ? aspectFillCrop(el.videoWidth, el.videoHeight, geo.frameW, geo.frameH).w
-          : geo.cropW;
-        const scale = (cropW * sc.width) / geo.frameW;   // >1 也成立（大影片塞小 block）
         applyFilter(fk, d, this.filters(), scale);
         cx.putImageData(d, 0, 0);
         this.frames.set(`${file}|${fk}`, sc);
