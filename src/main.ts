@@ -1586,7 +1586,7 @@ function zoomProbe(): void {
     // 真實專案樣本含個人照片，不隨 App 打包（beforeBuildCommand 會剝掉）——
     // App 開場給範本，自己的專案走首頁／⌘O
     sample.querySelector('option[value="/samples/real"]')?.remove();
-    sample.value = "/samples/credits";
+    sample.value = "/samples/intro";   // 開場墊底＝8 頁說明輪播（小高手調版，全功能自我示範）
     // 樣本切換器是開發用的；App 內首頁已提供範例入口，上排收掉這一組
     sample.style.display = "none";
     $<HTMLSpanElement>("#sampleGlyph").style.display = "none";

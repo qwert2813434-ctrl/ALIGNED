@@ -1,0 +1,2794 @@
+{
+  "canvasWidth": 1080,
+  "createdAt": "2026-08-07T15:41:16Z",
+  "group": "Claude",
+  "guidesX": [
+    64,
+    1016
+  ],
+  "guidesY": [
+    72,
+    1244
+  ],
+  "id": "FFFA43B3-CC5B-4A9F-BAF9-AC2C3B1AF589",
+  "name": "ALIGNED 說明輪播（8頁）",
+  "pageBackgroundHex": {
+    "0": "EFEEE8",
+    "1": "131312",
+    "2": "131312",
+    "3": "EFEEE8",
+    "4": "EFEEE8",
+    "5": "EFEEE8",
+    "6": "EFEEE8",
+    "7": "EFEEE8"
+  },
+  "pageCount": 8,
+  "pageHeight": 1350,
+  "updatedAt": "2026-08-07T16:31:32Z",
+  "blocks": [
+    {
+      "id": "86BA0CEA-AE5F-4A77-8105-DDADE5485FC4",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 1,
+      "frame": [
+        [
+          64,
+          96
+        ],
+        [
+          640,
+          20.925000000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.28,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "ALIGNED",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1B27817F-5398-4C6A-8177-34CF152AA1D5",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 2,
+      "frame": [
+        [
+          716,
+          96
+        ],
+        [
+          300,
+          26.268750000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "trailing",
+            "colorHex": "6B6659",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.2,
+            "lineHeightMultiple": 1,
+            "manualWidth": 300,
+            "text": [
+              "01 / 08",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "D29F37B6-6930-4442-A638-6BF69C6CEBEC",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 3,
+      "frame": [
+        [
+          64,
+          1228
+        ],
+        [
+          640,
+          22.1875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 24,
+            "fontWeightValue": 2,
+            "kerningEm": 0.22,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "ALIGNED · 跨頁對齊排版工作檯",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1A899A7E-757C-41EB-BAFA-FD763ABA8B27",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 4,
+      "frame": [
+        [
+          766,
+          1238
+        ],
+        [
+          250,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "DAD5C6",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "C0CA1E1B-EB86-44A4-825C-31E0128C01C3",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 5,
+      "frame": [
+        [
+          766,
+          1238
+        ],
+        [
+          31.25,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "26251F",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "17CA62BE-E831-467E-B71A-47333828CA80",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 6,
+      "frame": [
+        [
+          64,
+          260
+        ],
+        [
+          769,
+          262.35375
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontSize": 94,
+            "fontWeightValue": 4,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1.32,
+            "text": [
+              "八頁輪播\n其實是一張長畫布",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "31FF5007-1393-4997-A016-F36F19C6DFCF",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 7,
+      "frame": [
+        [
+          64,
+          620
+        ],
+        [
+          952,
+          135.03125
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 40,
+            "fontWeightValue": 2,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1.75,
+            "manualWidth": 952,
+            "text": [
+              "這份輪播用到的每個功能，\n都由那一頁自己示範。",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "40760048-2CD0-4F34-981D-CD71CBF93C51",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 8,
+      "frame": [
+        [
+          64,
+          880
+        ],
+        [
+          120,
+          12
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "26251F",
+            "kind": "line",
+            "lineWidth": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "D60F0758-C0AB-4ACE-A5C4-813AB265CDE7",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 9,
+      "frame": [
+        [
+          1144,
+          96
+        ],
+        [
+          640,
+          25.737500000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "F4F1E8",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.28,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "跨頁 · CROSS-PAGE",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.9046611743911496,
+                    "green": 0.8796223968878317,
+                    "blue": 0.8069522576692516,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "33BB9FD1-23D7-4865-BB13-2A74295E45DA",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 10,
+      "frame": [
+        [
+          1796,
+          96
+        ],
+        [
+          300,
+          26.268750000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "trailing",
+            "colorHex": "A8A19B",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.2,
+            "lineHeightMultiple": 1,
+            "manualWidth": 300,
+            "text": [
+              "02 / 08",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.39157247774972326,
+                    "green": 0.3564001441459435,
+                    "blue": 0.3277780980565422,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "8299EC44-EF09-4B75-8953-D48779BA1342",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 11,
+      "frame": [
+        [
+          1144,
+          1228
+        ],
+        [
+          640,
+          22.1875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "A8A19B",
+            "fontSize": 24,
+            "fontWeightValue": 2,
+            "kerningEm": 0.22,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "ALIGNED · 跨頁對齊排版工作檯",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.39157247774972326,
+                    "green": 0.3564001441459435,
+                    "blue": 0.3277780980565422,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "E26A7394-C68E-4BAF-BE39-DDB72B8A1C6C",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 12,
+      "frame": [
+        [
+          1846,
+          1238
+        ],
+        [
+          250,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "3A3833",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "A860B3D8-DABD-4345-BC1F-DA389EA31D1B",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 13,
+      "frame": [
+        [
+          1846,
+          1238
+        ],
+        [
+          62.5,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "F4F1E8",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "491C9E78-E46E-48B5-91F5-CAE606286A9B",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 14,
+      "frame": [
+        [
+          2224,
+          96
+        ],
+        [
+          640,
+          25.815625000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "F4F1E8",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.28,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.9046611743911496,
+                    "green": 0.8796223968878317,
+                    "blue": 0.8069522576692516,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "63F11E81-607F-4510-9355-51319ECD24D1",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 15,
+      "frame": [
+        [
+          2876,
+          96
+        ],
+        [
+          300,
+          26.268750000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "trailing",
+            "colorHex": "A8A19B",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.2,
+            "lineHeightMultiple": 1,
+            "manualWidth": 300,
+            "text": [
+              "03 / 08",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.39157247774972326,
+                    "green": 0.3564001441459435,
+                    "blue": 0.3277780980565422,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "5B87D98E-557B-475E-8CD2-B5BDCCBC8298",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 16,
+      "frame": [
+        [
+          2224,
+          1228
+        ],
+        [
+          640,
+          22.1875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "A8A19B",
+            "fontSize": 24,
+            "fontWeightValue": 2,
+            "kerningEm": 0.22,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "ALIGNED · 跨頁對齊排版工作檯",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.39157247774972326,
+                    "green": 0.3564001441459435,
+                    "blue": 0.3277780980565422,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "7F8F9780-1275-4DB5-A579-FD2F35C3E0D7",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 17,
+      "frame": [
+        [
+          2926,
+          1238
+        ],
+        [
+          250,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "3A3833",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "DC74D847-4325-4221-8DCA-A4DE88EF0B15",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 18,
+      "frame": [
+        [
+          2926,
+          1238
+        ],
+        [
+          93.75,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "F4F1E8",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "E52E261B-F38C-451C-93C3-5F011254A5A7",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 19,
+      "frame": [
+        [
+          1080,
+          0
+        ],
+        [
+          2160,
+          1350
+        ]
+      ],
+      "content": {
+        "image": {
+          "_0": {
+            "assetFileName": "aligned-spread.png",
+            "cropRect": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "8E0DE450-B8AB-444F-8707-6B1238708A45",
+      "locked": false,
+      "opacity": 0.38,
+      "rotation": 0,
+      "zIndex": 20,
+      "frame": [
+        [
+          1080,
+          900
+        ],
+        [
+          2160,
+          450
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "000000",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "BF219313-1E58-4054-9529-A56E34F26565",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 21,
+      "frame": [
+        [
+          1360,
+          300
+        ],
+        [
+          1600,
+          80.671875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "center",
+            "colorHex": "F4F1E8",
+            "fontSize": 88,
+            "fontWeightValue": 0,
+            "kerningEm": 0.4,
+            "lineHeightMultiple": 1,
+            "manualWidth": 1600,
+            "shadowStyle": "soft",
+            "text": [
+              "字可以騎在頁縫上",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.9046611743911496,
+                    "green": 0.8796223968878317,
+                    "blue": 0.8069522576692516,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "0EC7AF55-13E2-41A2-A2E8-4E4A1DD06FE0",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 22,
+      "frame": [
+        [
+          1144,
+          1020
+        ],
+        [
+          500,
+          19.856250000000003
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "A8A19B",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 24,
+            "fontWeightValue": 2,
+            "kerningEm": 0.2,
+            "lineHeightMultiple": 1,
+            "manualWidth": 500,
+            "text": [
+              "SEAM x = 2160",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.39157247774972326,
+                    "green": 0.3564001441459435,
+                    "blue": 0.3277780980565422,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "2DB3EB86-C4CB-4B93-BF3A-9ADB55C6383B",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 23,
+      "frame": [
+        [
+          2224,
+          1020
+        ],
+        [
+          952,
+          126.3375
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "F4F1E8",
+            "fontSize": 38,
+            "fontWeightValue": 2,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1.7,
+            "manualWidth": 952,
+            "text": [
+              "整個專案是一條連續座標，匯出時才按頁裁切——\n所以圖與字都能跨頁。",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.9046611743911496,
+                    "green": 0.8796223968878317,
+                    "blue": 0.8069522576692516,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "91B4990F-4F44-4D40-B529-8EF25FA65C52",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 24,
+      "frame": [
+        [
+          3304,
+          96
+        ],
+        [
+          640,
+          25.925000000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.28,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "直排 · VERTICAL",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "9DA0DBE2-22E6-4050-8D36-3E40FDBFEBDE",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 25,
+      "frame": [
+        [
+          3956,
+          96
+        ],
+        [
+          300,
+          26.268750000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "trailing",
+            "colorHex": "6B6659",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.2,
+            "lineHeightMultiple": 1,
+            "manualWidth": 300,
+            "text": [
+              "04 / 08",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "DC115421-7A97-4FE2-A36A-B5FB2043F1E6",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 26,
+      "frame": [
+        [
+          3304,
+          1228
+        ],
+        [
+          640,
+          22.1875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 24,
+            "fontWeightValue": 2,
+            "kerningEm": 0.22,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "ALIGNED · 跨頁對齊排版工作檯",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "90789771-8EA6-44FE-A7CA-C7BEE8F90953",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 27,
+      "frame": [
+        [
+          4006,
+          1238
+        ],
+        [
+          250,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "DAD5C6",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "044F793F-6477-4A4E-8DEF-0DB2A7BBBE78",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 28,
+      "frame": [
+        [
+          4006,
+          1238
+        ],
+        [
+          125,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "26251F",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "74CABCF2-EDC3-42C1-94E6-912196698B0E",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 29,
+      "frame": [
+        [
+          3953,
+          300
+        ],
+        [
+          143,
+          431
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "center",
+            "colorHex": "26251F",
+            "fontSize": 64,
+            "fontWeightValue": 2,
+            "kerning": 28.8,
+            "vertical": true,
+            "text": [
+              "跨頁對齊\n排版工作檯",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "D3B2DD50-636B-4C63-960A-C074386CF408",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 30,
+      "frame": [
+        [
+          3670,
+          300
+        ],
+        [
+          86.4,
+          202
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "center",
+            "colorHex": "6B6659",
+            "fontSize": 30,
+            "fontWeightValue": 2,
+            "kerning": 13.5,
+            "vertical": true,
+            "text": [
+              "由右到左\n或由左到右",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "15F1781C-8BF3-46E2-9C86-0E9C54F7C4A4",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 31,
+      "frame": [
+        [
+          3304,
+          1020
+        ],
+        [
+          460,
+          106.28125
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 32,
+            "fontWeightValue": 2,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1.7,
+            "manualWidth": 460,
+            "text": [
+              "直排用點制字距，\n黑體宋體同一節奏。",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "F6C1C135-69BD-4658-B9A0-32B41AA7B7FC",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 32,
+      "frame": [
+        [
+          4384,
+          96
+        ],
+        [
+          640,
+          26.050000000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.28,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "排開文字 · TEXT WRAP",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "364C3EEC-6DD3-48D9-9339-D7F23D4CCE24",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 33,
+      "frame": [
+        [
+          5036,
+          96
+        ],
+        [
+          300,
+          26.268750000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "trailing",
+            "colorHex": "6B6659",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.2,
+            "lineHeightMultiple": 1,
+            "manualWidth": 300,
+            "text": [
+              "05 / 08",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "6925C7FD-0357-4A1D-A8E7-2BC501619FD6",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 34,
+      "frame": [
+        [
+          4384,
+          1228
+        ],
+        [
+          640,
+          22.1875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 24,
+            "fontWeightValue": 2,
+            "kerningEm": 0.22,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "ALIGNED · 跨頁對齊排版工作檯",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "C0EE5A84-3461-47E9-9E11-4BA5613C41E2",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 35,
+      "frame": [
+        [
+          5086,
+          1238
+        ],
+        [
+          250,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "DAD5C6",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "851A57D4-2BB1-4349-9A71-57107408309A",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 36,
+      "frame": [
+        [
+          5086,
+          1238
+        ],
+        [
+          156.25,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "26251F",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "845B75B4-9540-4BAE-8DFF-0F8C29B5D052",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 37,
+      "frame": [
+        [
+          4384,
+          200
+        ],
+        [
+          777,
+          71.796875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontSize": 76,
+            "fontWeightValue": 4,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1,
+            "text": [
+              "文字排開，繞著圖走。",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "AEA3D044-DE06-4BAA-9964-ED66358069B9",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 38,
+      "frame": [
+        [
+          4384,
+          360
+        ],
+        [
+          952,
+          780
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontSize": 35,
+            "fontWeightValue": 1,
+            "isBodyFrame": true,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1.95,
+            "manualHeight": 780,
+            "manualWidth": 952,
+            "text": [
+              "長文框負責閱讀，標題文字負責排版——這是 ALIGNED 的分工。圖片、影片或色塊打開「排開文字」，長文就會自動讓位：單側、兩側、上下，三種模式。現在這段字，就正繞著中間那顆圓走。它是一張圖，套了橢圓遮罩，加一條髮絲描邊；遮罩、描邊、濾鏡、裁切都是區塊自己的屬性，換一張圖，版面不動。",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1046F380-E751-4535-BE68-4C02FE791535",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 39,
+      "frame": [
+        [
+          4640,
+          540
+        ],
+        [
+          440,
+          440
+        ]
+      ],
+      "content": {
+        "image": {
+          "_0": {
+            "assetFileName": "aligned-pebble.png",
+            "excludesText": true,
+            "maskShape": "ellipse",
+            "strokeHex": "26251F",
+            "strokeWidth": 0.005,
+            "textWrapMode": "around",
+            "cropRect": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "DCE58D13-194A-45DD-B557-60C7DCF8A33E",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 40,
+      "frame": [
+        [
+          5464,
+          96
+        ],
+        [
+          640,
+          25.909375000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.28,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "吸附 · SNAPPING",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "FAC691A2-51D8-4008-B3C9-09C006C84784",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 41,
+      "frame": [
+        [
+          6116,
+          96
+        ],
+        [
+          300,
+          26.268750000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "trailing",
+            "colorHex": "6B6659",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.2,
+            "lineHeightMultiple": 1,
+            "manualWidth": 300,
+            "text": [
+              "06 / 08",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "5015409B-7883-4E14-9348-54700A6FB034",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 42,
+      "frame": [
+        [
+          5464,
+          1228
+        ],
+        [
+          640,
+          22.1875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 24,
+            "fontWeightValue": 2,
+            "kerningEm": 0.22,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "ALIGNED · 跨頁對齊排版工作檯",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1930F951-7CAF-4567-9356-15F4F8EC7A64",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 43,
+      "frame": [
+        [
+          6166,
+          1238
+        ],
+        [
+          250,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "DAD5C6",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "9354B326-B898-4199-8BF4-852951668745",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 44,
+      "frame": [
+        [
+          6166,
+          1238
+        ],
+        [
+          187.5,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "26251F",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "DB4F7E03-F8BF-4C66-953B-F0D46D31551C",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 45,
+      "frame": [
+        [
+          5464,
+          200
+        ],
+        [
+          466,
+          211.24375
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontSize": 76,
+            "fontWeightValue": 4,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1.3,
+            "text": [
+              "每個字身外緣\n都能吸附",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "9099E506-32E4-4306-95D5-2B7D19210990",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 46,
+      "frame": [
+        [
+          5464,
+          480
+        ],
+        [
+          2,
+          620
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "C9C3B4",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "F6F01A85-EECC-4675-9E8D-D8AF84412961",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 47,
+      "frame": [
+        [
+          6414,
+          480
+        ],
+        [
+          2,
+          620
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "C9C3B4",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "7FBAD128-9A45-44C6-B237-6820EA3B7B49",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 48,
+      "frame": [
+        [
+          5464,
+          444
+        ],
+        [
+          100,
+          17.771875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 22,
+            "fontWeightValue": 2,
+            "kerningEm": 0.1,
+            "lineHeightMultiple": 1,
+            "manualWidth": 100,
+            "text": [
+              "64",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "AE0F046C-9A98-4B4D-89F8-BAF4DFC7EDDC",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 49,
+      "frame": [
+        [
+          6316,
+          444
+        ],
+        [
+          100,
+          17.771875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "trailing",
+            "colorHex": "6B6659",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 22,
+            "fontWeightValue": 2,
+            "kerningEm": 0.1,
+            "lineHeightMultiple": 1,
+            "manualWidth": 100,
+            "text": [
+              "1016",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "13477AC1-4F9E-465F-8B38-128553D0961E",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 50,
+      "frame": [
+        [
+          5464,
+          520
+        ],
+        [
+          386,
+          50.640625
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontSize": 54,
+            "fontWeightValue": 3,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1,
+            "text": [
+              "標題貼齊這條線",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "A46AE3B1-63F1-4C1D-A1A0-A1D056341F41",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 51,
+      "frame": [
+        [
+          5464,
+          630
+        ],
+        [
+          257,
+          33.390625
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 36,
+            "fontWeightValue": 2,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1,
+            "text": [
+              "內文的左緣也是",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "A5CE305E-FED8-44B7-B44F-D2D5B3452984",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 52,
+      "frame": [
+        [
+          5464,
+          710
+        ],
+        [
+          120,
+          23.9375
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.2,
+            "lineHeightMultiple": 1,
+            "text": [
+              "標籤也是",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "E14A3950-3766-465D-8846-9E855EFC0901",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 53,
+      "frame": [
+        [
+          5464,
+          790
+        ],
+        [
+          300,
+          170
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "D8D8D8",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "30AAE33A-13B8-49F8-91F3-2E21AA57291B",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 54,
+      "frame": [
+        [
+          6016,
+          520
+        ],
+        [
+          400,
+          33.203125
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "trailing",
+            "colorHex": "6B6659",
+            "fontSize": 36,
+            "fontWeightValue": 2,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1,
+            "manualWidth": 400,
+            "text": [
+              "右緣同一條",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "50C4A036-608D-4A65-AC80-D9763DCEAA08",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 55,
+      "frame": [
+        [
+          5464,
+          1020
+        ],
+        [
+          952,
+          106.25
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 32,
+            "fontWeightValue": 2,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1.7,
+            "manualWidth": 952,
+            "text": [
+              "拖曳時自動吸附參考線與其他區塊的邊緣；\n這一頁的所有東西，都掛在這兩條軸上。",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "8EE7EC81-BF36-45FB-A575-5B6D3DF2E660",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 56,
+      "frame": [
+        [
+          6544,
+          96
+        ],
+        [
+          640,
+          25.503125000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.28,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "上手 · 21 SEC",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "669737EB-D2DE-4237-ACB5-65478DC2780D",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 57,
+      "frame": [
+        [
+          7196,
+          96
+        ],
+        [
+          300,
+          26.268750000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "trailing",
+            "colorHex": "6B6659",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.2,
+            "lineHeightMultiple": 1,
+            "manualWidth": 300,
+            "text": [
+              "07 / 08",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "9094D874-F589-4DFC-B242-7B54690ABF75",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 58,
+      "frame": [
+        [
+          6544,
+          1228
+        ],
+        [
+          640,
+          22.1875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 24,
+            "fontWeightValue": 2,
+            "kerningEm": 0.22,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "ALIGNED · 跨頁對齊排版工作檯",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "C89FDC68-D0B0-4A21-A4AC-4A2EA2EA71BC",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 59,
+      "frame": [
+        [
+          7246,
+          1238
+        ],
+        [
+          250,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "DAD5C6",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "94209D06-19EA-45B3-8221-2288F6C2A68B",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 60,
+      "frame": [
+        [
+          7246,
+          1238
+        ],
+        [
+          218.75,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "26251F",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "C4E07BA3-406F-4FF0-91DC-DDEAF8E78327",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 61,
+      "frame": [
+        [
+          6544,
+          200
+        ],
+        [
+          732,
+          71.5
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontSize": 76,
+            "fontWeightValue": 4,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1,
+            "text": [
+              "參考線，21 秒上手。",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "7D063957-A151-4ADF-9CE5-D234FC65EC1A",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 62,
+      "frame": [
+        [
+          6789.375,
+          340.3359375
+        ],
+        [
+          461.25,
+          820
+        ]
+      ],
+      "content": {
+        "video": {
+          "_0": {
+            "assetFileName": "aligned-guides.mp4",
+            "maskShape": "rectangle",
+            "maskCornerRadius": 0.25,
+            "strokeWidth": 0.005,
+            "cropRect": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ]
+            ],
+            "strokeHex": "26251F"
+          }
+        }
+      }
+    },
+    {
+      "id": "83BEA1F3-E4C3-496C-93D3-0D022D874FE7",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 63,
+      "frame": [
+        [
+          7624,
+          96
+        ],
+        [
+          640,
+          20.925000000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.28,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "ALIGNED",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "9820B89F-1DEF-49D2-ABF9-D26B8634DC1A",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 64,
+      "frame": [
+        [
+          8276,
+          96
+        ],
+        [
+          300,
+          26.268750000000004
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "trailing",
+            "colorHex": "6B6659",
+            "fontName": "FiraCode-Regular",
+            "fontSize": 26,
+            "fontWeightValue": 2,
+            "kerningEm": 0.2,
+            "lineHeightMultiple": 1,
+            "manualWidth": 300,
+            "text": [
+              "08 / 08",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "7E5E8A0E-0F1E-471D-BBA1-3432144EFFD0",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 65,
+      "frame": [
+        [
+          7624,
+          1228
+        ],
+        [
+          640,
+          22.1875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 24,
+            "fontWeightValue": 2,
+            "kerningEm": 0.22,
+            "lineHeightMultiple": 1,
+            "manualWidth": 640,
+            "text": [
+              "ALIGNED · 跨頁對齊排版工作檯",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "AC3E44AC-F70D-454E-846F-AD9AFE1B4C64",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 66,
+      "frame": [
+        [
+          8326,
+          1238
+        ],
+        [
+          250,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "DAD5C6",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "88E5265B-12A6-4E3B-8C52-BBDEBF8D23DD",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 67,
+      "frame": [
+        [
+          8326,
+          1238
+        ],
+        [
+          250,
+          10
+        ]
+      ],
+      "content": {
+        "shape": {
+          "_0": {
+            "colorHex": "26251F",
+            "kind": "rectangle"
+          }
+        }
+      }
+    },
+    {
+      "id": "5E38668A-FDBC-404E-8B72-026B41783DFE",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 68,
+      "frame": [
+        [
+          7624,
+          200
+        ],
+        [
+          769,
+          263.47875
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "26251F",
+            "fontSize": 94,
+            "fontWeightValue": 4,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1.32,
+            "text": [
+              "這份輪播的專案檔\n就是說明書",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.019382360956935723,
+                    "green": 0.018500220128379697,
+                    "blue": 0.013702083047289686,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "AA1F52C5-3E5A-4BC2-9061-C211C8F7D630",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 69,
+      "frame": [
+        [
+          7624,
+          660
+        ],
+        [
+          952,
+          135.265625
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 40,
+            "fontWeightValue": 2,
+            "kerningEm": 0.02,
+            "lineHeightMultiple": 1.75,
+            "manualWidth": 952,
+            "text": [
+              "初稿由 Claude 直接鑄成專案檔，\n微調與匯出在 ALIGNED 完成。",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "8E4BCC83-B179-4294-A611-B9C5E4E6317A",
+      "locked": false,
+      "opacity": 1,
+      "rotation": 0,
+      "zIndex": 70,
+      "frame": [
+        [
+          7624,
+          1120
+        ],
+        [
+          174,
+          27.703125
+        ]
+      ],
+      "content": {
+        "text": {
+          "_0": {
+            "alignment": "leading",
+            "colorHex": "6B6659",
+            "fontSize": 30,
+            "fontWeightValue": 2,
+            "kerningEm": 0.2,
+            "lineHeightMultiple": 1,
+            "text": [
+              "小高工具間",
+              {
+                "SwiftUI.ForegroundColor": {
+                  "tag": {
+                    "constant": {}
+                  },
+                  "value": {
+                    "red": 0.14702726649759498,
+                    "green": 0.13286832155381798,
+                    "blue": 0.09989872824711389,
+                    "opacity": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

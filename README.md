@@ -13,7 +13,7 @@
 
 ## 下載
 
-👉 **[下載 ALIGNED for Mac（DMG）](https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/ALIGNED_1.0.10_aarch64.dmg)**（v1.0.10）
+👉 **[下載 ALIGNED for Mac（DMG）](https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/ALIGNED_1.0.11_aarch64.dmg)**（v1.0.11）
 
 📱 iPhone／iPad 版正在 App Store 審核中，上架後在這裡補連結。
 
