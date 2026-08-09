@@ -56,3 +56,36 @@ spctl -a -t exec -vv "$WORK/qapp" 2>&1 | grep -q "Notarized Developer ID" \
 
 cp "$WORK/out.dmg" "$DMG"
 echo "✅ v${VER} 全綠，已蓋 ${DMG}（SHA $(shasum -a 256 "$DMG" | cut -c1-8)…）"
+
+# ── 發佈到 GitHub Releases（2026-08-10 起）───────────────────────────────
+# 為什麼不再 git add DMG：每版 ~95MB 會永久留在 git 歷史（換之前 .git 已 556MB）。
+# asset 用固定檔名，releases/latest/download/ 才會是永久網址，README 與
+# aligned-latest.json 的 url 從此不用改版號。
+# ⚠️ release/ 舊檔凍結兜底，勿刪——1.0.11 以前發出去的直連還指著它們。
+ASSET="ALIGNED-macOS-arm64.dmg"
+REPO="qwert2813434-ctrl/ALIGNED"
+TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p')
+[ -n "${TOKEN}" ] || { echo "⚠️  拿不到 GitHub 憑證，Release 未建立（DMG 已蓋好，可稍後手動補）"; exit 0; }
+
+api() { curl -sS -H "Authorization: Bearer ${TOKEN}" -H "Accept: application/vnd.github+json" "$@"; }
+
+echo "▸ 建 GitHub Release v${VER}"
+RELID=$(api -X POST "https://api.github.com/repos/${REPO}/releases" \
+  -d "{\"tag_name\":\"v${VER}\",\"name\":\"ALIGNED ${VER}\",\"body\":\"See README for requirements. Apple Silicon + macOS 13+.\"}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))')
+[ -n "${RELID}" ] || { echo "❌ Release 建立失敗（tag v${VER} 可能已存在）"; exit 1; }
+
+echo "▸ 上傳 ${ASSET}（$(du -h "$DMG" | cut -f1)）"
+api -X POST -H "Content-Type: application/octet-stream" --data-binary @"${DMG}" \
+  "https://uploads.github.com/repos/${REPO}/releases/${RELID}/assets?name=${ASSET}" \
+  | grep -q '"state": "uploaded"' || { echo "❌ asset 上傳失敗"; exit 1; }
+
+# 抓回來比對，確認 CDN 上的檔案跟本機同一份（不是只看 HTTP 200）
+echo "▸ 驗證永久網址"
+URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+REMOTE=$(curl -sSL "${URL}" | shasum -a 256 | cut -d' ' -f1)
+LOCAL=$(shasum -a 256 "${DMG}" | cut -d' ' -f1)
+[ "${REMOTE}" = "${LOCAL}" ] || { echo "❌ 遠端 SHA 不符（remote ${REMOTE:0:8} vs local ${LOCAL:0:8}）"; exit 1; }
+
+echo "✅ 已發佈 ${URL}"
+echo "   還要手動做的只剩：改 37 - 工具間/上線/aligned-latest.json 的 version 與 notes（url 不用動）後 push"

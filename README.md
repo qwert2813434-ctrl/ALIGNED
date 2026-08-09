@@ -13,7 +13,9 @@
 
 ## 下載
 
-👉 **[下載 ALIGNED for Mac（DMG）](https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/ALIGNED_1.0.11_aarch64.dmg)**（v1.0.11）
+👉 **[下載 ALIGNED for Mac（DMG）](https://github.com/qwert2813434-ctrl/ALIGNED/releases/latest/download/ALIGNED-macOS-arm64.dmg)**
+
+這個連結**永遠指向最新版**，發新版不用改。想看各版本更新內容或抓舊版 → [Releases](https://github.com/qwert2813434-ctrl/ALIGNED/releases)。
 
 📱 iPhone／iPad 版正在 App Store 審核中，上架後在這裡補連結。
 
@@ -803,15 +805,29 @@ WKWebView＋分鏡展示量到的數字推翻直覺：
 （1.0.0 已簽名公證出貨：`release/ALIGNED_1.0.0_aarch64.dmg`，發版一鍵 `scripts/release-mac.sh`。
 新增／刪除元件、存檔、undo、拖放匯入、行內編輯都已在 1.0.0。）
 
-## 發版流程（2026-08-08 開源上架後的完整三步）
+## 發版流程（2026-08-10 起改走 GitHub Releases，剩兩步）
 
 1. **出版**：兩處版本號同步升（`package.json`＋`src-tauri/tauri.conf.json`）→
-   `npx tauri build --bundles app` → `scripts/release-mac.sh`（簽名→公證→DMG→驗收）。
-2. **上 GitHub**：`git add -f release/ALIGNED_<新版>_aarch64.dmg`（.gitignore 預設擋 *.dmg，
-   只收目前版）＋ README 下載連結改版號 → commit push。下載網址＝
-   `https://raw.githubusercontent.com/qwert2813434-ctrl/ALIGNED/main/release/…dmg`（STB 同款）。
-3. **餵 feed**：改 `37 - 工具間/上線/aligned-latest.json`（version／url／notes）→ push。
-   1.0.7 起 App 開機會查這份 feed，比版本後浮更新橫幅（`src/updatecheck.ts`，離線安靜跳過）。
+   `npx tauri build --bundles app` → `scripts/release-mac.sh`。
+   腳本現在一路做完：簽名→公證→DMG→驗收→**開 Release→上傳 asset→抓回來比對 SHA**。
+2. **餵 feed**：改 `37 - 工具間/上線/aligned-latest.json` 的 `version` 與 `notes` → push。
+   **`url` 不用動了**，它是永久網址。App 開機查這份 feed 比版本後浮更新橫幅
+   （`src/updatecheck.ts`，離線安靜跳過）。
+
+下載網址固定為
+`https://github.com/qwert2813434-ctrl/ALIGNED/releases/latest/download/ALIGNED-macOS-arm64.dmg`
+——asset 用不帶版號的固定檔名，`releases/latest/download/` 永遠導到最新版，
+所以 README 連結與 feed 的 url **發新版都不用改**。
+
+**為什麼從 `raw/main/release/` 換過來**（2026-08-10）：
+- raw 直連**沒有任何下載計數**，發了不知道成效；Release asset 有 `download_count`，還能分版本看。
+- 每版 ~95MB 的 DMG 進 git 就**永久留在歷史裡**，換之前 `.git` 已經 556MB。Release asset 不進 git。
+- 固定檔名在 raw 上不可行（CDN 快取會給到舊檔），在 Releases 上可行（302 導到新 asset）。
+
+🔴 **`release/` 裡的舊 DMG 凍結兜底，勿刪**——1.0.11 之前發出去的 raw 直連還指著它們
+（AutoDM 送的是 repo 首頁不是直連，所以私訊那條沒事，但 README 舊版本、書籤、轉貼都可能還在用）。
+`.git` 歷史裡那 556MB 也**不要回頭清**：要 rewrite history ＋ force push，會弄壞別人已經 clone 的
+副本，不划算。停止繼續加就好。
 
 倉庫紅線：`public/samples/real/`（個人照片）永不入 repo（.gitignore 擋著）；
 新增內嵌資源前先想授權（字型清單在 `public/fonts/LICENSES.md`）。
