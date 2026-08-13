@@ -408,7 +408,9 @@ async function run(): Promise<void> {
             `${f.w.toFixed(1)}×${f.h.toFixed(1)} @ ${f.x.toFixed(1)},${f.y.toFixed(1)}`);
     }
 
-    // (e) 文字不給縮放手把——文字的框是貼字盒，拉角是移動整塊
+    // (e) 文字手把長在框外——抓在字身**中央**仍是整塊移動，不會被手把吃掉
+    //    （2026-08-14 起文字有自己的手把了：角＝字級、右緣＝欄寬，見 18b 案例；
+    //    這裡守住的是反面：手把只住在框外緣，塊身的拖曳語意不變。）
     {
       const p = project([]);
       p.blocks.push({
@@ -417,15 +419,13 @@ async function run(): Promise<void> {
       });
       editor.load(p); editor.snapStrength = "none"; editor.select("t");
       const f0 = { ...p.blocks[0].frame };          // load 內已重算成貼字盒
-      // 抓在角內側 2px：手把的抓取半徑涵蓋這裡，但邊界正上方的命中是四捨五入的擲筊
-      // （見上面「邊界精度」案例），所以往內一點才測得到「該落到拖曳」這件事
-      const br = { x: f0.x + f0.w - 2, y: f0.y + f0.h - 2 };
-      pointer("pointerdown", br.x, br.y);
-      pointer("pointermove", br.x + 200, br.y + 200);
+      const c = { x: f0.x + f0.w / 2, y: f0.y + f0.h / 2 };
+      pointer("pointerdown", c.x, c.y);
+      pointer("pointermove", c.x + 200, c.y + 200);
       const f1 = { ...p.blocks[0].frame };
-      pointer("pointerup", br.x + 200, br.y + 200);
-      check("文字不給縮放手把（拉角＝整塊移動）",
-            near(f1.w, f0.w) && near(f1.h, f0.h) && f1.x > f0.x + 100,
+      pointer("pointerup", c.x + 200, c.y + 200);
+      check("文字抓中央＝整塊移動（手把只住在框外緣，字級不被誤改）",
+            near(f1.w, f0.w) && near(f1.h, f0.h) && near(f1.x, f0.x + 200) && near(f1.y, f0.y + 200),
             `${f0.w.toFixed(1)}×${f0.h.toFixed(1)} → ${f1.w.toFixed(1)}×${f1.h.toFixed(1)}　x ${f0.x.toFixed(1)}→${f1.x.toFixed(1)}`);
     }
   }
@@ -987,6 +987,94 @@ async function run(): Promise<void> {
       pointer("pointerup", 800, 800);
       check("群組縮放：手把長在旋轉後外接框的角上（轉過的成員也含進去）",
             near(missed, 200) && a.w > 200, `誤抓後寬=${missed} 真抓後寬=${a.w.toFixed(1)}`);
+    }
+  }
+
+  // ── 18b. 文字手把（2026-08-14）：字級／欄寬／長文框框高 ─────────────────
+  {
+    const v = (editor as unknown as { view: { scale: number } }).view;
+    const tap = (x: number, y: number) => { pointer("pointerdown", x, y); pointer("pointerup", x, y); };
+    const textOf = (b: Block): TextBlock | null => b.content.type === "text" ? b.content.text : null;
+
+    // (a) 右下角＝字級縮放：沿對角線拉到兩倍，字級 50→100、框照貼字盒重排
+    {
+      const p = project([{
+        id: "t", frame: { x: 100, y: 100, w: 300, h: 60 }, rotation: 0, zIndex: 1,
+        locked: false, opacity: 1,
+        content: { type: "text", text: { text: "字級縮放測試", alignment: "leading", fontSize: 50, colorHex: "000000" } },
+      }]);
+      editor.load(p);   // load 會 autoFitText——手把位置要照重排後的框抓
+      editor.snapStrength = "none";
+      const b = p.blocks[0];
+      tap(b.frame.x + 10, b.frame.y + b.frame.h / 2);
+      const f = { ...b.frame };
+      const off = 7 / v.scale;
+      pointer("pointerdown", f.x + f.w + off, f.y + f.h + off);
+      pointer("pointermove", f.x + f.w * 2 + off, f.y + f.h * 2 + off);   // 對角線上正好兩倍
+      const t = textOf(b);
+      pointer("pointerup", f.x + f.w * 2 + off, f.y + f.h * 2 + off);
+      check("文字手把：右下角沿對角線拉兩倍＝字級 50→100、框跟著長",
+            !!t && near(t.fontSize ?? 0, 100, 0.5) && b.frame.w > f.w * 1.8,
+            `fontSize=${t?.fontSize?.toFixed(1)} 框寬 ${f.w.toFixed(0)}→${b.frame.w.toFixed(0)}`);
+    }
+
+    // (b) 右緣＝欄寬：往左收字往下摺；往右拉停在「單行自然寬」（貼住最後一個字）
+    {
+      const p = project([{
+        id: "t", frame: { x: 100, y: 100, w: 400, h: 60 }, rotation: 0, zIndex: 1,
+        locked: false, opacity: 1,
+        content: { type: "text", text: { text: "換行寬度測試換行寬度測試換行寬度測試",
+                                         alignment: "leading", fontSize: 40, manualWidth: 400, colorHex: "000000" } },
+      }]);
+      editor.load(p);
+      editor.snapStrength = "none";
+      const b = p.blocks[0];
+      tap(b.frame.x + 10, b.frame.y + 5);
+      const f = { ...b.frame };
+      const off = 7 / v.scale;
+      pointer("pointerdown", f.x + f.w + off, f.y + f.h / 2);
+      pointer("pointermove", f.x + f.w - 200 + off, f.y + f.h / 2);   // 往左收 200
+      const t = textOf(b)!;
+      pointer("pointerup", f.x + f.w - 200 + off, f.y + f.h / 2);
+      check("文字手把：右緣往左收 200＝欄寬 400→200、多摺幾行框變高",
+            near(t.manualWidth ?? 0, 200, 1) && near(b.frame.w, 200, 1) && b.frame.h > f.h * 1.5,
+            `manualWidth=${t.manualWidth} 框=${b.frame.w.toFixed(0)}×${b.frame.h.toFixed(0)}（起手 ${f.w.toFixed(0)}×${f.h.toFixed(0)}）`);
+
+      const f2 = { ...b.frame };
+      pointer("pointerdown", f2.x + f2.w + off, f2.y + f2.h / 2);
+      pointer("pointermove", f2.x + f2.w + 2000 + off, f2.y + f2.h / 2);   // 拉爆
+      pointer("pointerup", f2.x + f2.w + 2000 + off, f2.y + f2.h / 2);
+      // 18 個字 × 40px ≈ 720＝單行自然寬；再拉只會多空白，手把要停在那
+      check("文字手把：欄寬上限＝單行自然寬（拉爆不會出現右側空白帶）",
+            (t.manualWidth ?? 0) < 900 && near(b.frame.w, t.manualWidth ?? 0, 1),
+            `manualWidth=${t.manualWidth}（拉了 +2000）`);
+    }
+
+    // (c) 長文框＝固定容器：下緣手把改框高，可以比內容矮，但有不會縮沒的地板
+    {
+      const p = project([{
+        id: "t", frame: { x: 100, y: 100, w: 300, h: 200 }, rotation: 0, zIndex: 1,
+        locked: false, opacity: 1,
+        content: { type: "text", text: { text: "長文框高度測試", alignment: "leading", fontSize: 40,
+                                         isBodyFrame: true, manualWidth: 300, manualHeight: 200, colorHex: "000000" } },
+      }]);
+      editor.load(p);   // 長文框是固定容器，autoFitText 會跳過＝框保持 300×200
+      editor.snapStrength = "none";
+      const b = p.blocks[0];
+      tap(150, 150);
+      const off = 7 / v.scale;
+      pointer("pointerdown", 250, 300 + off);
+      pointer("pointermove", 250, 450 + off);   // 往下 150
+      const t = textOf(b)!;
+      pointer("pointerup", 250, 450 + off);
+      const grew = near(t.manualHeight ?? 0, 350, 1) && near(b.frame.h, 350, 1);
+      pointer("pointerdown", 250, b.frame.y + b.frame.h + off);
+      pointer("pointermove", 250, 110);          // 往上拉到快沒有
+      pointer("pointerup", 250, 110);
+      const floor = Math.round(1080 * 0.06);     // 地板＝6% 頁寬
+      check("長文框手把：下緣 +150＝框高 200→350；縮到底停在地板不縮沒",
+            grew && near(t.manualHeight ?? 0, floor, 1) && near(b.frame.h, floor, 1),
+            `拉大後=${grew ? "350 ✓" : "錯"}　縮到底=${t.manualHeight}（地板 ${floor}）`);
     }
   }
 

@@ -11,7 +11,7 @@ import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema"
 import { hex, resolvedFontSize, resolvedKerning } from "./core/schema";
 import { aspectFillCrop, pageIndexForX, pageRect, stageBounds } from "./core/geometry";
 import { cssFont } from "./core/fonts";
-import { autoFitText, naturalSize, renderStage } from "./core/render";
+import { autoFitText, naturalSize, naturalTextSize, renderStage } from "./core/render";
 import type { FilterAssets } from "./core/filters";
 import { resolvePosition, rotatedBounds, equalSpacingBadges, snapGuide, snapResizingEdge, type GuideLine, type SnapStrength, type SpacingBadge } from "./core/align";
 
@@ -22,8 +22,10 @@ interface View { scale: number; tx: number; ty: number }
 //   **角＝等比縮放**——對角錨定、不動 cropRect，同一塊畫面只是變大變小。
 //   **邊＝真裁切**——拉哪邊裁哪邊，**照片本身不動**（frame 與 cropRect 同步收放，
 //   所以錨定側看到的畫面一模一樣）；往外拉可以把藏起來的部分露回來，到圖的邊緣為止。
-// 邊的手把只給未旋轉的媒體（錨定邊的算式假設軸對齊），文字則兩種都不給——
-// 文字的框是貼字盒，尺寸由字級與內容決定（iOS 也是給 textScaleHandle 改字級）。
+// 邊的手把只給未旋轉的媒體（錨定邊的算式假設軸對齊）。
+// 文字另有一套（2026-08-14 補上，iOS 語意逐條照搬）：右下角＝字級縮放
+// （textScaleHandle）、右緣＝欄寬（widthHandle）、下緣＝框高（heightHandle，
+// 長文框限定）——文字的框是貼字盒，所以「調大小」調的是字級與換行寬，不是框。
 
 type Corner = "tl" | "tr" | "bl" | "br";
 type Edge = "left" | "right" | "top" | "bottom";
@@ -96,8 +98,14 @@ export class Editor {
   private sizing: {
     id: string; key: HandleKey; startFrame: Rect;
     anchor: { x: number; y: number };          // 角：對角的專案座標
-    from: { x: number; y: number };            // 邊：起手的指標位置（累計位移用）
+    from: { x: number; y: number };            // 邊：邊手把起手的指標位置（累計位移用）
     crop?: Rect;                               // 邊：起手的 cropRect
+  } | null = null;
+  /** 文字手把拖曳：br＝字級縮放、right＝欄寬、bottom＝框高（長文框限定）。 */
+  private textSizing: {
+    id: string; key: "br" | "right" | "bottom";
+    startFrame: Rect; startFontSize: number;
+    from: { x: number; y: number };
   } | null = null;
   /** 群組等比縮放（多選右下角那顆手把）。左上固定，整組連字級一起放大縮小。 */
   private groupSizing: {
@@ -168,7 +176,7 @@ export class Editor {
       this.onContextMenu?.(b, { x: e.clientX, y: e.clientY });
     });
     canvas.addEventListener("pointermove", (e) => {
-      if (this.drag || this.sizing || this.pan || this.marquee || this.content || this.rotating) return;
+      if (this.drag || this.sizing || this.textSizing || this.pan || this.marquee || this.content || this.rotating) return;
       const p = this.at(e);
       const hk = this.hitHandle(p);
       // 游標就是說明書：手把上顯示縮放/裁切/旋轉，物件上顯示可搬動
@@ -307,7 +315,19 @@ export class Editor {
       return [{ key: "group", x: box.x + box.w, y: box.y + box.h }];
     }
     const b = this.getSelected();
-    if (!b || this.editing || this.multi.size > 1 || !resizable(b)) return [];
+    if (!b || this.editing || this.multi.size > 1) return [];
+    // 文字手把（iOS 語意）：手把長在框外一點點（iOS 同款 +7），一行字再細
+    // 也不會手把疊手把；也因此**不設**「螢幕上太小就藏」的門檻——文字列天生矮。
+    if (b.content.type === "text" && !b.locked) {
+      const t = b.content.text, f = b.frame;
+      const off = 7 / this.view.scale;
+      const ox = 1 + off / Math.max(f.w, 1), oy = 1 + off / Math.max(f.h, 1);
+      const out: Handle[] = [{ key: "br", ...cornerPoint(f, b.rotation, ox, oy) }];
+      if (!t.vertical) out.push({ key: "right", ...cornerPoint(f, b.rotation, ox, 0.5), bar: "v" });
+      if (t.isBodyFrame) out.push({ key: "bottom", ...cornerPoint(f, b.rotation, 0.5, oy), bar: "h" });
+      return out;
+    }
+    if (!resizable(b)) return [];
     const onScreen = Math.min(b.frame.w, b.frame.h) * this.view.scale;
     if (onScreen < 28) return [];
     const out: Handle[] = CORNERS.map((k) => ({
@@ -517,6 +537,62 @@ export class Editor {
     this.dirty = true;
   }
 
+  /**
+   * 文字手把拖曳（iOS EditorViewModel+Text 的移植）：
+   *   br＝字級縮放——位移投影到起手框的對角線算倍率（iOS scaledFont 同式），
+   *      字級夾 8–500；重排走 autoFitText＝檢視器「字級」欄位同一條路，
+   *      沒有新的幾何數學（長文框在裡面被跳過＝容器不動、字在框內重排）。
+   *   right＝欄寬 manualWidth——夾在 8% 頁寬與「單行自然寬」之間：再拉寬
+   *      只會多出空白、破壞外緣吸附，所以手把停在最後一個字上（iOS 同款上限，
+   *      文字夠長就能跨頁）。左緣釘住，右緣跟著指標。
+   *   bottom＝框高 manualHeight——長文框限定；容器可以比內容矮（限制文字
+   *      範圍就是長文框的用途），只留一個不會整個縮沒的小地板。
+   * 只有拖曳中的這一個 block 被改動，鬆手走 onCommit → 快照 undo。
+   */
+  private textResizeTo(at: { x: number; y: number }): void {
+    const p = this.project, s = this.textSizing;
+    if (!p || !s) return;
+    const b = p.blocks.find((k) => k.id === s.id);
+    if (!b || b.content.type !== "text") return;
+    const t = b.content.text;
+    const f0 = s.startFrame;
+    // 位移轉回未旋轉的本地座標（iOS localDelta 同款）——旋轉過的文字照樣能拉
+    const r = (-b.rotation * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r);
+    const vx = at.x - s.from.x, vy = at.y - s.from.y;
+    const dx = vx * c - vy * sn, dy = vx * sn + vy * c;
+
+    this.guides = [];
+    const snapEdge = (v: number, axis: "vertical" | "horizontal"): number => {
+      if (b.rotation || this.snapStrength === "none") return v;
+      const others = p.blocks.filter((k) => k.id !== b.id)
+        .map((k) => rotatedBounds(inkFrame(k, k.frame), k.rotation));
+      const home = pageRect(p, pageIndexForX(p, f0.x + f0.w / 2));
+      const rr = snapResizingEdge(v, axis, others, home, stageBounds(p), this.snapStrength,
+                                  axis === "vertical" ? (p.guidesX ?? []) : (p.guidesY ?? []));
+      if (rr.snapped) this.guides = rr.guides;
+      return rr.value;
+    };
+
+    if (s.key === "br") {
+      const diag = Math.max(Math.hypot(f0.w, f0.h), 1);
+      const ratio = Math.max((diag + (dx * f0.w + dy * f0.h) / diag) / diag, 0.1);
+      t.fontSize = Math.min(Math.max(s.startFontSize * ratio, 8), 500);
+      autoFitText(this.ctx, p);
+    } else if (s.key === "right") {
+      const w = snapEdge(f0.x + f0.w + dx, "vertical") - f0.x;
+      const minW = p.canvasWidth * 0.08;
+      const nat = naturalTextSize(this.ctx, { ...t, manualWidth: undefined }, p.canvasWidth, p.pageHeight);
+      t.manualWidth = Math.round(Math.min(Math.max(w, minW), Math.max(nat.w, minW)));
+      if (t.isBodyFrame) b.frame = { ...b.frame, w: t.manualWidth };
+      else autoFitText(this.ctx, p);
+    } else {
+      const h = snapEdge(f0.y + f0.h + dy, "horizontal") - f0.y;
+      t.manualHeight = Math.round(Math.max(h, p.canvasWidth * 0.06));
+      b.frame = { ...b.frame, h: t.manualHeight };
+    }
+    this.dirty = true;
+  }
+
   /** 起手：記下外框與每個成員的 frame／排版數值。鎖住的成員不收＝縮放時原地不動。 */
   private beginGroupScale(): void {
     const box = this.groupBox();
@@ -611,6 +687,16 @@ export class Editor {
       if (this.rKey) {
         // 按住 R 拉角＝繞中心旋轉（⇧ 卡 15°）。Mac 上滑鼠不必先切工具，這是桌面該有的效率
         this.rotating = { id: sel.id, start: sel.rotation, from: p };
+        this.dirty = true;
+        return;
+      }
+      // 文字的手把是自己的一套語意（字級／欄寬／框高），不進媒體的裁切與等比路徑
+      if (sel.content.type === "text" && (hk === "br" || hk === "right" || hk === "bottom")) {
+        this.textSizing = {
+          id: sel.id, key: hk, startFrame: { ...sel.frame },
+          startFontSize: resolvedFontSize(sel.content.text, this.project.canvasWidth),
+          from: p,
+        };
         this.dirty = true;
         return;
       }
@@ -745,6 +831,7 @@ export class Editor {
     if (this.content) { this.panContent(this.at(e)); return; }
     if (this.rotating) { this.rotateTo(this.at(e), e.shiftKey); return; }
     if (this.groupSizing) { this.groupResizeTo(this.at(e)); return; }
+    if (this.textSizing) { this.textResizeTo(this.at(e)); return; }
     if (this.sizing) {
       const at = this.at(e);
       if (isEdge(this.sizing.key)) this.cropTo(at); else this.resizeTo(at);
@@ -825,9 +912,10 @@ export class Editor {
       this.onGuidesChanged?.();
     }
     const dragged = this.drag != null || this.sizing != null || this.content != null
-                    || this.rotating != null || this.guideDrag != null || this.groupSizing != null;
+                    || this.rotating != null || this.guideDrag != null || this.groupSizing != null
+                    || this.textSizing != null;
     const marqueed = this.marquee != null;
-    this.groupSizing = null;
+    this.groupSizing = null; this.textSizing = null;
     this.drag = null; this.sizing = null; this.pan = null; this.marquee = null;
     this.content = null; this.rotating = null; this.guideDrag = null;
     if (marqueed) this.emitSelection();
