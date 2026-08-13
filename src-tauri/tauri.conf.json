@@ -1,6 +1,6 @@
 {
   "productName": "ALIGNED",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "identifier": "com.arminkao.aligned.mac",
   "build": {
     "frontendDist": "../dist",

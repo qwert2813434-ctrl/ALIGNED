@@ -25,6 +25,22 @@ const LAYER_ICON: Record<Block["content"]["type"], string> = {
 const LOCK_ON = svg('<rect x="4" y="8" width="10" height="6.4" rx="1.4"/><path d="M6.4 8V6.2a2.6 2.6 0 015.2 0V8"/>');
 const LOCK_OFF = svg('<rect x="4" y="8" width="10" height="6.4" rx="1.4"/><path d="M6.4 8V6.2a2.6 2.6 0 015-1.1"/>');
 
+/** 對齊按鈕圖示（2026-08-14 icon 化）：頁面／群組對齊＝基準線＋方塊，
+ *  文字對齊＝橫杠（行的形狀）。單色線性，titles 照樣講人話。 */
+const ALIGN_ICON: Record<GroupAlign, string> = {
+  left:    svg('<path d="M3.5 3v12"/><rect x="6" y="6.2" width="8" height="5.6" rx="1"/>'),
+  hCenter: svg('<path d="M9 3v12"/><rect x="5" y="6.2" width="8" height="5.6" rx="1"/>'),
+  right:   svg('<path d="M14.5 3v12"/><rect x="4" y="6.2" width="8" height="5.6" rx="1"/>'),
+  top:     svg('<path d="M3 3.5h12"/><rect x="6.2" y="6" width="5.6" height="8" rx="1"/>'),
+  vCenter: svg('<path d="M3 9h12"/><rect x="6.2" y="5" width="5.6" height="8" rx="1"/>'),
+  bottom:  svg('<path d="M3 14.5h12"/><rect x="6.2" y="4" width="5.6" height="8" rx="1"/>'),
+};
+const TEXT_ALIGN_ICON: Record<TextAlign, string> = {
+  leading:  svg('<path d="M3 4.5h12"/><path d="M3 9h7"/><path d="M3 13.5h10"/>'),
+  center:   svg('<path d="M3 4.5h12"/><path d="M5.5 9h7"/><path d="M4 13.5h10"/>'),
+  trailing: svg('<path d="M3 4.5h12"/><path d="M8 9h7"/><path d="M5 13.5h10"/>'),
+};
+
 /** 圖層列要顯示的名字。文字用內容前幾個字——那才是他認得出來的東西。 */
 function layerName(b: Block): string {
   const c = b.content;
@@ -153,7 +169,9 @@ export class Inspector {
       const row = this.row(s, label);
       const seg = document.createElement("div");
       seg.className = "seg";
-      for (const [edge, text] of opts) seg.append(this.btn(text, () => this.hooks.group.align(edge)));
+      for (const [edge, text] of opts) {
+        seg.append(this.iconBtn(ALIGN_ICON[edge], text, () => this.hooks.group.align(edge)));
+      }
       row.append(seg);
     }
 
@@ -236,7 +254,7 @@ export class Inspector {
       const curAlign = same((t) => t.alignment);
       const aligns: [TextAlign, string][] = [["leading", __("左")], ["center", __("中")], ["trailing", __("右")]];
       for (const [val, label] of aligns) {
-        const abtn = this.btn(label, () => {
+        const abtn = this.iconBtn(TEXT_ALIGN_ICON[val], label, () => {
           applyAll((t) => { t.alignment = val; });
           for (const el of alignBox.children) el.classList.toggle("on", el === abtn);
         });
@@ -467,7 +485,7 @@ export class Inspector {
       const seg = document.createElement("div");
       seg.className = "seg";
       for (const [edge, label] of opts) {
-        seg.append(this.btn(label, () => {
+        seg.append(this.iconBtn(ALIGN_ICON[edge], label, () => {
           alignToPage(blocks(), edge, p.canvasWidth, p.pageHeight);
           this.emit();
           if (this.block) this.rebuild();   // 單選面板有位置數值，對齊完要刷新
@@ -476,8 +494,8 @@ export class Inspector {
       return seg;
     };
     row.append(
-      mk([["left", __("左")], ["hCenter", __("中")], ["right", __("右")]]),
-      mk([["top", __("上")], ["vCenter", __("中")], ["bottom", __("下")]]),
+      mk([["left", __("貼左頁邊")], ["hCenter", __("頁面水平置中")], ["right", __("貼右頁邊")]]),
+      mk([["top", __("貼頁頂")], ["vCenter", __("頁面垂直置中")], ["bottom", __("貼頁底")]]),
     );
   }
 
@@ -549,7 +567,7 @@ export class Inspector {
     alignBox.className = "seg";
     const aligns: [TextAlign, string][] = [["leading", __("左")], ["center", __("中")], ["trailing", __("右")]];
     for (const [val, label] of aligns) {
-      const btn = this.btn(label, () => {
+      const btn = this.iconBtn(TEXT_ALIGN_ICON[val], label, () => {
         t.alignment = val;
         for (const el of alignBox.children) el.classList.toggle("on", el === btn);
         this.emit(true);
@@ -938,6 +956,18 @@ export class Inspector {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = label;
+    b.addEventListener("click", fn);
+    return b;
+  }
+
+  /** icon 按鈕：圖示進 innerHTML、人話進 title/aria-label（滑過仍查得到意思）。 */
+  private iconBtn(icon: string, label: string, fn: () => void): HTMLButtonElement {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "icon";
+    b.innerHTML = icon;
+    b.title = label;
+    b.setAttribute("aria-label", label);
     b.addEventListener("click", fn);
     return b;
   }

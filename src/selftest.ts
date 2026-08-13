@@ -775,11 +775,11 @@ async function run(): Promise<void> {
             `t1=${t1.colorHex}/${t1.inkColor} t2=${t2.colorHex}/${t2.inkColor}`);
 
       // 對齊按鈕列：找「文字區段」裡的「中」——群組水平對齊也有一顆「中」，
-      // 用 label=對齊 那一列來鎖定範圍
+      // 用 label=對齊 那一列來鎖定範圍（按鈕已 icon 化，認 title 不認字面）
       const alignRow = [...host.querySelectorAll(".row")]
         .find((r) => r.querySelector("label")?.textContent === "對齊");
       const centerBtn = [...(alignRow?.querySelectorAll("button") ?? [])]
-        .find((b) => b.textContent === "中");
+        .find((b) => b.title === "中");
       centerBtn!.click();
       const shape = p.blocks[0];
       check("多選文字：對齊套到全部、形狀成員不受影響",
@@ -793,12 +793,14 @@ async function run(): Promise<void> {
             weight!.value === "3" && !!font,
             `字重=${weight!.value}`);
 
-      // 多選面板也要有「對齊頁面」六顆（左中右＋上中下）
+      // 多選面板也要有「對齊頁面」六顆（左中右＋上中下），
+      // 且全部 icon 化：有 SVG 圖示、title 講人話（不是文字按鈕也不是 emoji）
       const pageRow = [...host.querySelectorAll(".row")]
         .find((r) => r.querySelector("label")?.textContent === "對齊頁面");
-      check("多選面板有「對齊頁面」六顆",
-            (pageRow?.querySelectorAll("button").length ?? 0) === 6,
-            `${pageRow?.querySelectorAll("button").length ?? 0} 顆`);
+      const pageBtns = [...(pageRow?.querySelectorAll("button") ?? [])];
+      check("多選面板「對齊頁面」六顆、全 icon 化（SVG＋title）",
+            pageBtns.length === 6 && pageBtns.every((b) => !!b.querySelector("svg") && !!b.title),
+            `${pageBtns.length} 顆`);
     }
 
     // (f) 對齊頁面：單選對到**自己那一頁**、多選整組平移（相對不變）、鎖定不動

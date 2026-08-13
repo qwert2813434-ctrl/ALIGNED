@@ -224,13 +224,22 @@ export function renderStage(
     ctx.restore();
   }
 
+  // 等距徽章畫成藥丸（Figma 同款）：拖曳中要一眼讀到間距值，
+  // 裸字 11px 疊在畫面上小到看不見（2026-08-14 使用者回報），改 14px 白字＋色底
   for (const b of overlay.badges ?? []) {
     ctx.save();
+    ctx.font = `600 ${14 * px}px system-ui, sans-serif`;
+    const label = String(b.value);
+    const tw = ctx.measureText(label).width;
+    const padX = 5 * px, ph = 19 * px;
     ctx.fillStyle = accent;
-    ctx.font = `${11 * px}px system-ui, sans-serif`;
+    ctx.beginPath();
+    ctx.roundRect(b.x - tw / 2 - padX, b.y - ph / 2, tw + padX * 2, ph, 5 * px);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(String(b.value), b.x, b.y);
+    ctx.fillText(label, b.x, b.y);
     ctx.restore();
   }
 }

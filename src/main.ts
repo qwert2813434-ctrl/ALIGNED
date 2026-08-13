@@ -75,7 +75,11 @@ editor.onSelect = (b: Block | null) => {
     + (b.rotation ? `　${Math.round(b.rotation)}°` : "");
 };
 editor.onCommit = () => {
-  inspector.show(current, editor.getSelected());   // 拖完刷新位置數值
+  // ⇧ 點選多選的 up 也走這裡——不分流的話會用「最後點的那個」蓋掉多選面板
+  // （2026-08-14 實案：點選多選批次欄位永遠被單選面板頂掉，框選反而正常）
+  const sel = editor.selectionBlocks();
+  if (current && sel.length > 1) inspector.showGroup(current, sel);
+  else inspector.show(current, editor.getSelected());   // 拖完刷新位置數值
   scheduleThumbs();
   commit("drag");
 };
