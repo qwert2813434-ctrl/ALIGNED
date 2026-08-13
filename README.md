@@ -815,8 +815,15 @@ WKWebView＋分鏡展示量到的數字推翻直覺：
    （`src/updatecheck.ts`，離線安靜跳過）。
 3. **順手更新小高本機**（2026-08-14 定案，小高交代「以後都順便」）：
    掛載剛出爐的 `release/ALIGNED_<版本>_aarch64.dmg` → `ditto` 蓋掉
-   `/Applications/ALIGNED.app` → detach → 讀 Info.plist 驗版本＋`spctl -a` 驗簽。
-   動手前先確認 App 沒在跑（`pgrep -x ALIGNED`），在跑就先請它正常退出。
+   `/Applications/ALIGNED.app` → detach → **`xattr -dr com.apple.quarantine`**
+   → 讀 Info.plist 驗版本＋`spctl -a` 驗簽。
+   兩個當天踩過的坑：
+   - **程序名是 `aligned-mac` 不是 ALIGNED**——查沒在跑要用 `pgrep -f aligned-mac`
+     （`pgrep -x ALIGNED` 永遠回「沒在跑」，會在使用者開著 App 時蓋檔）。
+     在跑就先 `osascript -e 'tell application "ALIGNED" to quit'` 請它正常退出。
+   - **DMG 帶著驗收蓋的 `RELEASE-TEST` quarantine 標記**，`ditto` 會原樣帶進
+     /Applications，之後 `open` 會被 Gatekeeper 搬去 AppTranslocation 跑——
+     所以裝完必清 quarantine。
 
 下載網址固定為
 `https://github.com/qwert2813434-ctrl/ALIGNED/releases/latest/download/ALIGNED-macOS-arm64.dmg`
