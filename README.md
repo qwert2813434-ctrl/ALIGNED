@@ -805,7 +805,7 @@ WKWebView＋分鏡展示量到的數字推翻直覺：
 （1.0.0 已簽名公證出貨：`release/ALIGNED_1.0.0_aarch64.dmg`，發版一鍵 `scripts/release-mac.sh`。
 新增／刪除元件、存檔、undo、拖放匯入、行內編輯都已在 1.0.0。）
 
-## 發版流程（2026-08-10 起改走 GitHub Releases，剩兩步）
+## 發版流程（2026-08-10 起改走 GitHub Releases，剩兩步＋順手一步）
 
 1. **出版**：兩處版本號同步升（`package.json`＋`src-tauri/tauri.conf.json`）→
    `npx tauri build --bundles app` → `scripts/release-mac.sh`。
@@ -813,6 +813,10 @@ WKWebView＋分鏡展示量到的數字推翻直覺：
 2. **餵 feed**：改 `37 - 工具間/上線/aligned-latest.json` 的 `version` 與 `notes` → push。
    **`url` 不用動了**，它是永久網址。App 開機查這份 feed 比版本後浮更新橫幅
    （`src/updatecheck.ts`，離線安靜跳過）。
+3. **順手更新小高本機**（2026-08-14 定案，小高交代「以後都順便」）：
+   掛載剛出爐的 `release/ALIGNED_<版本>_aarch64.dmg` → `ditto` 蓋掉
+   `/Applications/ALIGNED.app` → detach → 讀 Info.plist 驗版本＋`spctl -a` 驗簽。
+   動手前先確認 App 沒在跑（`pgrep -x ALIGNED`），在跑就先請它正常退出。
 
 下載網址固定為
 `https://github.com/qwert2813434-ctrl/ALIGNED/releases/latest/download/ALIGNED-macOS-arm64.dmg`
