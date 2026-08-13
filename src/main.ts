@@ -33,6 +33,21 @@ import { getVersion } from "@tauri-apps/api/app";
 
 declare const __BUILD_STAMP__: string;
 
+// ── 檔案對話框「分類記憶」：開專案／放媒體／匯出／字型各記各的起始資料夾 ──
+// macOS 面板的位置記憶是全 App 一份，匯出去過哪、開專案面板就被帶去哪（2026-08-14 Armin 指正）。
+const dirKey = (k: string) => `align.lastDir.${k}`;
+const lastDir = (k: string) => localStorage.getItem(dirKey(k)) ?? undefined;
+const rememberDir = (k: string, picked: string) => {
+  const i = picked.lastIndexOf("/");
+  if (i > 0) localStorage.setItem(dirKey(k), picked.slice(0, i));
+};
+const rememberDirExact = (k: string, dir: string) => localStorage.setItem(dirKey(k), dir);
+/** 存檔框的 defaultPath：帶上該分類記憶的資料夾 */
+const inDir = (k: string, name: string) => {
+  const d = lastDir(k);
+  return d ? `${d}/${name}` : name;
+};
+
 const $ = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const title = $<HTMLSpanElement>("#title");
 const meta = $<HTMLSpanElement>("#meta");
@@ -318,9 +333,11 @@ async function pickMediaForBlock(b: Block): Promise<void> {
   if (!dir || !current) return;
   const src = await openDialog({
     multiple: false,
+    defaultPath: lastDir("media"),
     filters: [{ name: __("影像或影片"), extensions: [...IMG_EXT, ...VID_EXT] }],
   });
   if (typeof src !== "string") return;
+  rememberDir("media", src);
   const ext = src.split(".").pop()?.toLowerCase() ?? "";
   const isVid = VID_EXT.includes(ext);
   const name = await invoke<string>("copy_asset", { src, destDir: dir });
@@ -361,9 +378,11 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
     if (!inApp) { meta.textContent = __("匯入字型要在 App 內用（瀏覽器只是開發預覽）"); return null; }
     const src = await openDialog({
       multiple: false,
+      defaultPath: lastDir("font"),
       filters: [{ name: __("字型檔"), extensions: ["ttf", "otf", "ttc"] }],
     });
     if (typeof src !== "string") return null;
+    rememberDir("font", src);
     try {
       const f = await invoke<DynamicFont>("import_font", { src });
       // 匯入檔走 url()，必須 await 載完才能量測（字型鐵則）
@@ -509,9 +528,11 @@ async function openSample(base: string): Promise<void> {
 async function openNative(): Promise<void> {
   const path = await openDialog({
     multiple: false,
+    defaultPath: lastDir("open"),
     filters: [{ name: __("ALIGN 專案"), extensions: ["alignproj", "json"] }],
   });
   if (typeof path !== "string") return;
+  rememberDir("open", path);
   await openPath(path);
 }
 
@@ -890,10 +911,11 @@ async function exportTemplate(): Promise<void> {
   if (!current) return;
   if (!inApp) { meta.textContent = __("匯出範本要在 App 內用"); return; }
   const path = await saveDialog({
-    defaultPath: __f("{name}_範本.alignproj", { name: current.name }),
+    defaultPath: inDir("export", __f("{name}_範本.alignproj", { name: current.name })),
     filters: [{ name: __("ALIGN 範本"), extensions: ["alignproj"] }],
   });
   if (typeof path !== "string") return;
+  rememberDir("export", path);
   const json = JSON.stringify(encodeProject(stripToTemplate(current)), null, 2);
   await invoke("pack_template", { json, dest: path });
   meta.textContent = __f("已匯出範本　{file}", { file: path.split("/").pop() ?? "" });
@@ -1098,10 +1120,11 @@ async function pngBase64(s: ExportedPage): Promise<string> {
 async function saveOne(s: ExportedPage): Promise<void> {
   if (inApp && current && pageHasVideo(current, s.index)) {
     const path = await saveDialog({
-      defaultPath: s.name.replace(/\.png$/, ".mp4"),
+      defaultPath: inDir("export", s.name.replace(/\.png$/, ".mp4")),
       filters: [{ name: __("影片"), extensions: ["mp4"] }],
     });
     if (typeof path !== "string") return;
+    rememberDir("export", path);
     const title = $<HTMLSpanElement>("#sheetSub");
     const base = title.textContent ?? "";
     title.textContent = __f("{base}　合成影片中…", { base });
@@ -1110,8 +1133,8 @@ async function saveOne(s: ExportedPage): Promise<void> {
     return;
   }
   if (inApp) {
-    const path = await saveDialog({ defaultPath: s.name, filters: [{ name: "PNG", extensions: ["png"] }] });
-    if (path) await invoke("save_png", { path, data: await pngBase64(s) });
+    const path = await saveDialog({ defaultPath: inDir("export", s.name), filters: [{ name: "PNG", extensions: ["png"] }] });
+    if (path) { rememberDir("export", path); await invoke("save_png", { path, data: await pngBase64(s) }); }
     return;
   }
   const url = URL.createObjectURL(await toBlob(stillCanvas(s)));
@@ -1127,8 +1150,9 @@ $<HTMLButtonElement>("#saveCur").addEventListener("click", () => {
 $<HTMLButtonElement>("#saveAll").addEventListener("click", async () => {
   if (inApp) {
     // 選一個資料夾、整批寫入——這才是桌面的語意，逐張跳存檔框是折磨
-    const dir = await openDialog({ directory: true });
+    const dir = await openDialog({ directory: true, defaultPath: lastDir("export") });
     if (typeof dir !== "string") return;
+    rememberDirExact("export", dir);
     const title = $<HTMLSpanElement>("#sheetSub");
     const base = title.textContent ?? "";
     for (const s of shots) {
@@ -1357,9 +1381,11 @@ async function addPhoto(): Promise<Block | null> {
   if (!dir) return null;
   const src = await openDialog({
     multiple: false,
+    defaultPath: lastDir("media"),
     filters: [{ name: __("影像或影片"), extensions: [...IMG_EXT, ...VID_EXT] }],
   });
   if (typeof src !== "string") return null;
+  rememberDir("media", src);
   return importMediaFromPath(src);
 }
 
@@ -1506,9 +1532,10 @@ async function saveProject(): Promise<void> {
     await invoke("save_text", { path: `${origin.root}/project.json`, contents: json });
     await invoke("pack_alignproj", { dir: origin.root, dest: origin.path });
   } else {
-    // 範本／瀏覽器來源：另存新檔
-    const path = await saveDialog({ defaultPath: `${current.name}.json`, filters: [{ name: __("ALIGN 專案"), extensions: ["json"] }] });
+    // 範本／瀏覽器來源：另存新檔（專案檔跟「開專案」記同一個位置）
+    const path = await saveDialog({ defaultPath: inDir("open", `${current.name}.json`), filters: [{ name: __("ALIGN 專案"), extensions: ["json"] }] });
     if (typeof path !== "string") return;
+    rememberDir("open", path);
     await invoke("save_text", { path, contents: json });
     origin = { kind: "json", path };
     localStorage.removeItem(DRAFT_KEY);   // 落地了——草稿功成身退
