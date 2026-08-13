@@ -23,15 +23,18 @@ export function isNewer(remote: string, local: string): boolean {
   return false;
 }
 
-export async function checkUpdate(): Promise<void> {
+/** 開機自動檢查安靜跳過一切；`manual`（齒輪選單的「檢查更新」）要回結果給人看，
+ *  且無視「略過此版」——人主動按了就是想知道。 */
+export async function checkUpdate(manual = false): Promise<"update" | "latest" | "error"> {
   try {
     const [r, local] = await Promise.all([fetch(FEED, { cache: "no-store" }), getVersion()]);
-    if (!r.ok) return;
+    if (!r.ok) return "error";
     const d = (await r.json()) as Feed;
-    if (!d.version || !isNewer(d.version, local)) return;
-    if (localStorage.getItem(SKIP_KEY) === d.version) return;
+    if (!d.version || !isNewer(d.version, local)) return "latest";
+    if (!manual && localStorage.getItem(SKIP_KEY) === d.version) return "update";
     banner(d.version, d.notes ?? "", d.url);
-  } catch { /* 離線或網路不通：安靜跳過 */ }
+    return "update";
+  } catch { return "error"; /* 離線或網路不通：開機路徑安靜跳過 */ }
 }
 
 function banner(version: string, notes: string, dmgUrl?: string): void {

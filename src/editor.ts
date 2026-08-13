@@ -1070,6 +1070,17 @@ export class Editor {
   }
 
   /** 目前選取的 block（沒有＝null）。屬性檢視器用。 */
+  /** 一個 block 目前在螢幕上的位置（CSS px）——操作導覽的藍框要框它。 */
+  screenRect(b: Block): { x: number; y: number; w: number; h: number } {
+    const r = this.canvas.getBoundingClientRect();
+    return {
+      x: r.left + this.view.tx + b.frame.x * this.view.scale,
+      y: r.top + this.view.ty + b.frame.y * this.view.scale,
+      w: b.frame.w * this.view.scale,
+      h: b.frame.h * this.view.scale,
+    };
+  }
+
   getSelected(): Block | null {
     return this.project?.blocks.find((b) => b.id === this.selected) ?? null;
   }

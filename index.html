@@ -258,6 +258,27 @@
   #trimcard button.icon { padding: 4px 9px; display: inline-flex; align-items: center; }
 
   /* 右鍵選單：浮起的小卡，行高鬆、快捷鍵靠右——照 macOS 的語彙 */
+  /* 操作導覽的藍框：框住現在要動的那個東西，其餘用大陰影壓一層淡的；
+     pointer-events 穿透——框只是指路，動作照常落在底下的真介面上 */
+  #tourspot { position: fixed; z-index: 14; pointer-events: none; display: none;
+    border: 2px solid #2F7CF6; border-radius: 12px;
+    box-shadow: 0 0 0 100vmax rgba(18,18,24,.14), 0 0 0 5px rgba(47,124,246,.22);
+    transition: left .15s ease-out, top .15s ease-out, width .15s ease-out, height .15s ease-out;
+    animation: tourpulse 1.7s ease-in-out infinite; }
+  @keyframes tourpulse {
+    50% { box-shadow: 0 0 0 100vmax rgba(18,18,24,.14), 0 0 0 11px rgba(47,124,246,.09); } }
+  /* 操作導覽的教練卡：浮在頁面條上方置中，安靜的一條——說明在卡上，動作在畫布上 */
+  #tourcard { position: fixed; left: 50%; transform: translateX(-50%); bottom: 118px; z-index: 15;
+    display: flex; align-items: center; gap: 12px; max-width: min(700px, calc(100vw - 48px));
+    padding: 11px 13px 11px 18px; background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; box-shadow: 0 1px 1px rgba(0,0,0,.04), 0 14px 30px -16px rgba(0,0,0,.35); }
+  #tourcard .tourn { font-size: 11.5px; color: var(--ink2); letter-spacing: .08em; flex: none; }
+  #tourcard .tourtxt { font-size: 13px; color: var(--ink); line-height: 1.65; }
+  #tourcard button { flex: none; border: 1px solid var(--line); background: none; color: var(--ink);
+    border-radius: 8px; padding: 6px 12px; font-size: 12.5px; cursor: pointer; }
+  #tourcard .tourgo:hover { background: #2F7CF6; border-color: #2F7CF6; color: #fff; }
+  #tourcard .tourquit { border: none; color: var(--ink2); }
+  #tourcard .tourquit:hover { color: var(--ink); }
   #ctxmenu { position: fixed; z-index: 20; display: none; min-width: 178px; padding: 5px;
              background: color-mix(in srgb, var(--card) 96%, transparent);
              border: 1px solid var(--line); border-radius: 10px;
@@ -402,6 +423,7 @@
       </select>
       <button id="zoomfit" title="縮放至整台 stage">100%</button>
     </span>
+    <span class="island"><button id="gearBtn" title="說明・版本・回報問題"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button></span>
   </header>
   <div id="body">
     <canvas id="canvas"></canvas>

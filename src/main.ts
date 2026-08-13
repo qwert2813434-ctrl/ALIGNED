@@ -25,7 +25,10 @@ import { openTrim } from "./trim";
 import { checkUpdate } from "./updatecheck";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-dialog";
+import { startTour, tourActive, tourNotify, type Rect as TourRect, type TourStep } from "./tour";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getVersion } from "@tauri-apps/api/app";
 
 declare const __BUILD_STAMP__: string;
 
@@ -153,7 +156,9 @@ type Origin =
   | { kind: "alignproj"; path: string; root: string };
 
 let current: Project | null = null;
-let assets: LoadedAssets | undefined;
+// 素材表整個 session 只換不補洞：editor.load 拿的是 variants 的**參照**，
+// 這裡若在匯入時才 new 一顆新 Map，畫布永遠看不到新圖（只剩虛線框，重開才好——1.0.11 實際踩到）
+let assets: LoadedAssets = { variants: new Map(), raw: new Map() };
 let filterAssets: FilterAssets;
 let origin: Origin = { kind: "sample" };
 
@@ -179,6 +184,7 @@ function commit(tag: string): void {
   committed = now; lastTag = tag; lastPush = Date.now();
   redoStack = [];
   updateDirty();
+  tourNotify(tag);   // 導覽靠這裡知道「那個動作做到了」
 }
 
 function applySnapshot(s: string): void {
@@ -205,6 +211,47 @@ function updateDirty(): void {
   if (!current) return;
   const dirty = committed !== savedState;
   title.textContent = current.name + (dirty ? "　●" : "");
+  if (dirty) scheduleAutosave();   // 所有改動（commit／undo／redo）都經過這裡——自動保存掛這個漏斗
+}
+
+// ── 自動保存 ──────────────────────────────────────────────────────────
+// 「編輯的不見了」不該發生（2026-08-13 真實回報）。三道防線：
+// ① 已落地專案（json/alignproj）＝改完 2.5 秒閒置就靜默存檔；
+// ② 未落地專案（⌘S 之前）＝寫 localStorage 草稿，開機時問要不要接續
+//    （落地前不可能有匯入素材——assetsDir 擋著——所以 JSON 草稿就是完整備份）；
+// ③ 關視窗前一律 flush，沒存完不放行。
+const DRAFT_KEY = "align.draft";
+let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+let autosaving = false;
+
+function scheduleAutosave(): void {
+  if (!inApp) return;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => { void autosaveNow(); }, 2500);
+}
+
+async function autosaveNow(): Promise<void> {
+  if (!current || autosaving || committed === savedState) return;
+  if (origin.kind === "sample") {
+    if (tourActive()) return;   // 導覽在樣本上亂玩是設計的一部分——別把人家真正的草稿蓋掉
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(
+      { json: encodeProject(current), name: current.name, when: Date.now() }));
+    return;
+  }
+  autosaving = true;
+  try { await saveProject(); } catch { /* 磁碟不順就等下一次改動再試——自動存檔不彈錯誤 */ }
+  autosaving = false;
+}
+
+if (inApp) {
+  void getCurrentWindow().onCloseRequested(async (e) => {
+    if (!current || committed === savedState) return;   // 沒有未存的變更：直接關
+    e.preventDefault();                                 // 要在任何 await 之前擋下
+    clearTimeout(autosaveTimer);
+    while (autosaving) await new Promise((ok) => setTimeout(ok, 50));   // 在途的那筆先讓它寫完
+    await autosaveNow();
+    void getCurrentWindow().destroy();
+  });
 }
 const measureCtx = document.createElement("canvas").getContext("2d")!;   // 貼字盒重算用
 
@@ -251,7 +298,7 @@ function afterPageChange(focus: number): void {
 async function ensureVariantFor(b: Block): Promise<void> {
   if (b.content.type !== "image" && b.content.type !== "video") return;
   const m = b.content.media;
-  if (!m.assetFileName || !assets) return;
+  if (!m.assetFileName) return;
   const file = b.content.type === "video" ? `${m.assetFileName}.poster.jpg` : m.assetFileName;
   const key = file + (m.filterKey ? `|${m.filterKey}` : "");
   if (assets.variants.has(key)) return;
@@ -274,7 +321,6 @@ async function pickMediaForBlock(b: Block): Promise<void> {
   const ext = src.split(".").pop()?.toLowerCase() ?? "";
   const isVid = VID_EXT.includes(ext);
   const name = await invoke<string>("copy_asset", { src, destDir: dir });
-  if (!assets) assets = { variants: new Map(), raw: new Map() };
   let assetKey = name;
   if (isVid) {
     const poster = await capturePoster(await localUrl(`${dir}/${name}`));
@@ -374,7 +420,7 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
       const m = b.content.media;
       if (!m.assetFileName) return undefined;
       const file = b.content.type === "video" ? `${m.assetFileName}.poster.jpg` : m.assetFileName;
-      return assets?.variants.get(file + (m.filterKey ? `|${m.filterKey}` : ""));
+      return assets.variants.get(file + (m.filterKey ? `|${m.filterKey}` : ""));
     },
     toggleLock: (id) => {
       const b = current?.blocks.find((k) => k.id === id);
@@ -413,11 +459,11 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
 let videoUrl: ((file: string) => string) | undefined;
 
 function show(p: Project, a?: LoadedAssets, videoSrc?: (file: string) => string): void {
-  current = p; assets = a; videoUrl = videoSrc;
+  current = p; assets = a ?? { variants: new Map(), raw: new Map() }; videoUrl = videoSrc;
   closeHome();   // 有專案上台，首頁退場
   title.textContent = p.name;
   refreshMeta();   // 素材數比對的是不重複素材，拿 block 數當分母會誤報載不齊
-  editor.load(p, a?.variants);
+  editor.load(p, assets.variants);
   // undo／dirty 基準在 load **之後**取——load 會跑 autoFitText 重算貼字盒，
   // 先取基準的話使用者一動就被誤標「未存變更」
   undoStack = []; redoStack = [];
@@ -430,7 +476,7 @@ function show(p: Project, a?: LoadedAssets, videoSrc?: (file: string) => string)
 }
 
 function renderOpts() {
-  return { images: assets?.variants, filters: filterAssets, placeholderForMissingMedia: true };
+  return { images: assets.variants, filters: filterAssets, placeholderForMissingMedia: true };
 }
 
 /**
@@ -450,6 +496,7 @@ function scheduleThumbs(): void {
 }
 
 async function openSample(base: string): Promise<void> {
+  await autosaveNow();   // 換專案前 flush 手上的——別讓 2.5 秒 debounce 空窗吃掉最後一筆
   const p = decodeProject(await (await fetch(`${base}/project.json`)).json());
   origin = { kind: "sample" };
   const url = (f: string) => `${base}/assets/${encodeURIComponent(f)}`;
@@ -482,6 +529,7 @@ async function localUrl(absPath: string): Promise<string> {
 
 /** 開一個指定路徑的專案——⌘O 與 ?open=（診斷用旗標）共用同一條路。 */
 async function openPath(path: string): Promise<void> {
+  await autosaveNow();   // 換專案前 flush，理由同 openSample
   const r = await invoke<{ json: string; asset_dir: string | null; root_dir: string }>("load_project", { path });
   const p = decodeProject(JSON.parse(r.json));
   origin = path.endsWith(".alignproj")
@@ -818,7 +866,8 @@ function closeNewSheet(): void { newSheet.classList.remove("on"); }
 $<HTMLButtonElement>("#newproj").addEventListener("click", openNewSheet);
 $<HTMLButtonElement>("#newcancel").addEventListener("click", closeNewSheet);
 newSheet.addEventListener("click", (e) => { if (e.target === newSheet) closeNewSheet(); });
-$<HTMLButtonElement>("#newok").addEventListener("click", () => {
+$<HTMLButtonElement>("#newok").addEventListener("click", async () => {
+  await autosaveNow();   // 開新專案前 flush 手上的，理由同 openSample
   const { w, h } = newSheetSize();
   const p = newProject(
     $<HTMLInputElement>("#newname").value.trim() || "未命名專案",
@@ -1207,7 +1256,7 @@ function refreshMeta(): void {
   if (!showInfo) { meta.textContent = ""; return; }
   const want = assetNames(current).size;
   meta.textContent = `${current.pageCount} 頁 · ${current.canvasWidth}×${current.pageHeight} · ${current.blocks.length} 個 block`
-    + (want ? `（素材 ${assets?.variants.size ?? 0}/${want}）` : "")
+    + (want ? `（素材 ${assets.variants.size}/${want}）` : "")
     + `　build ${__BUILD_STAMP__}`;
 }
 
@@ -1223,7 +1272,6 @@ async function importMediaFromPath(src: string, at?: { x: number; y: number }): 
   const dir = assetsDir();
   if (!dir || !current) return null;
   const name = await invoke<string>("copy_asset", { src, destDir: dir });
-  if (!assets) assets = { variants: new Map(), raw: new Map() };
 
   let img: HTMLImageElement;
   let assetKey: string;
@@ -1231,6 +1279,14 @@ async function importMediaFromPath(src: string, at?: { x: number; y: number }): 
     assetKey = name;
     img = await loadImg(await localUrl(`${dir}/${name}`));
   } else {
+    // 新專案的第一支影片：show() 當時沒有 assets/，videoUrl 還沒接——
+    // 現在資料夾有了就把影片池接上，否則畫布只剩靜止海報直到重開
+    if (!videoUrl) {
+      const base = await mediaBaseOnce();
+      videoUrl = (f) => `${base}/${encodeURIComponent(`${dir}/${f}`)}`;
+      videos.attach(videoUrl);
+      editor.setVideos(videos.frames);
+    }
     // 長片軟提醒：Mac 不像 iPad 強制匯入就剪，但超過 30 秒回 iPad 會吃力，說一聲
     // （格式完全相容——30 秒只是 iPad 匯入 UI 的政策，見 trim.ts 檔頭）
     const secs = await videoDuration(videoUrl ? videoUrl(name) : await localUrl(`${dir}/${name}`));
@@ -1276,7 +1332,6 @@ async function trimBlock(b: Block): Promise<void> {
     await invoke("save_png", { path: `${out}.poster.jpg`, data: poster });
     const key = `${name}.poster.jpg`;
     const img = await loadImg(await localUrl(`${dir}/${key}`));
-    assets ??= { variants: new Map(), raw: new Map() };
     assets.raw.set(key, img);
     assets.variants.set(key, img);
     b.content.media.assetFileName = name;
@@ -1376,7 +1431,10 @@ $<HTMLButtonElement>("#save").addEventListener("click", () => {
 $<HTMLButtonElement>("#undoBtn").addEventListener("click", () => undo());
 $<HTMLButtonElement>("#redoBtn").addEventListener("click", () => redo());
 $<HTMLButtonElement>("#zoomfit").addEventListener("click", () => editor.fitAll());
-editor.onZoom = (z) => { $<HTMLButtonElement>("#zoomfit").textContent = `${Math.round(z * 100)}%`; };
+editor.onZoom = (z) => {
+  $<HTMLButtonElement>("#zoomfit").textContent = `${Math.round(z * 100)}%`;
+  tourNotify("zoom");   // 導覽第 2 步「縮放一下試試」的訊號
+};
 // 平移到別頁時，圖層清單跟著換頁（不換的話會一直停在剛開面板的那一頁）
 editor.onPageInView = () => {
   if (inspector.activePanel === "layers") inspector.show(current, editor.getSelected());
@@ -1424,6 +1482,9 @@ function deleteSelected(): void {
 // ── 存檔 ──────────────────────────────────────────────────────────────
 async function saveProject(): Promise<void> {
   if (!current) return;
+  // 存檔 marker 對齊「寫進檔案的內容」——await 期間 committed 可能已前進，
+  // 用當下的 committed 當 marker 會把沒寫進去的變更誤標成已存
+  const wrote = snapshot();
   const json = JSON.stringify(encodeProject(current), null, 2);
   if (!inApp) {
     // 瀏覽器：下載 project.json（開發便利，不是產品路徑）
@@ -1431,7 +1492,7 @@ async function saveProject(): Promise<void> {
     const a = document.createElement("a");
     a.href = url; a.download = "project.json"; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    savedState = committed; updateDirty();
+    savedState = wrote; updateDirty();
     return;
   }
   if (origin.kind === "json") {
@@ -1446,11 +1507,125 @@ async function saveProject(): Promise<void> {
     if (typeof path !== "string") return;
     await invoke("save_text", { path, contents: json });
     origin = { kind: "json", path };
+    localStorage.removeItem(DRAFT_KEY);   // 落地了——草稿功成身退
   }
-  savedState = committed; updateDirty();
+  savedState = wrote; updateDirty();
   rememberRecent();   // 存檔＝這份專案值得進「最近專案」（另存後 origin 已更新）
   meta.textContent = `已儲存　${new Date().toLocaleTimeString()}`;
 }
+
+// ── 齒輪：說明・回報・版本（快速回報 bug 的入口，2026-08-13）──────────
+// 選單機直接借右鍵選單那套（buildMenu/openMenu），不另造輪子。
+const REPO = "https://github.com/qwert2813434-ctrl/ALIGNED";
+let appVersion = "";   // 開機抓一次（getVersion 是 async，選單組字串要同步拿）
+
+function reportBugMail(): void {
+  const subject = `ALIGNED Mac ${appVersion} 問題回報`;
+  const body = "發生了什麼事：\n\n\n怎麼重現（做了哪幾步）：\n1. \n\n———\n"
+    + `版本 ${appVersion}（build ${__BUILD_STAMP__}）`;
+  void invoke("open_url", { url: `mailto:alignediosapp@gmail.com`
+    + `?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` });
+}
+
+/** 導覽步驟表：說什麼／藍框框誰／怎麼算做到。目標挑「看得到、狀態還沒開」的，
+ *  用 id 記（undo 會換掉整個 blocks 陣列，抓參照會斷）。
+ *  排開那兩步是招牌：先把一段與圖重疊的文字開成長文框，再到圖上開排開，字當場繞著圖流。 */
+function buildTour(): TourStep[] {
+  const byId = (id?: string) => (id && current?.blocks.find((b) => b.id === id)) || null;
+  const rectOf = (b: Block | null): TourRect | null => (b ? editor.screenRect(b) : null);
+  const domRect = (sel: string): TourRect | null => {
+    const r = document.querySelector(sel)?.getBoundingClientRect();
+    return r ? { x: r.left, y: r.top, w: r.width, h: r.height } : null;
+  };
+  /** 檢視器裡某一列開關的位置（選對元件後藍框跳到開關上） */
+  const rowRect = (label: string): TourRect | null => {
+    for (const l of document.querySelectorAll<HTMLLabelElement>("#inspector .row label")) {
+      if (l.textContent === label) {
+        const r = l.closest(".row")!.getBoundingClientRect();
+        return { x: r.left, y: r.top, w: r.width, h: r.height };
+      }
+    }
+    return null;
+  };
+  const overlap = (a: Block, b: Block) =>
+    a.frame.x < b.frame.x + b.frame.w && a.frame.x + a.frame.w > b.frame.x &&
+    a.frame.y < b.frame.y + b.frame.h && a.frame.y + a.frame.h > b.frame.y;
+  const textOf = (b: Block | null) => (b?.content.type === "text" ? b.content.text : null);
+  const wrapOn = (b: Block | null): boolean =>
+    b?.content.type === "shape" ? b.content.shape.excludesText === true
+    : b?.content.type === "image" || b?.content.type === "video" ? b.content.media.excludesText === true
+    : false;
+  /** 「畫布上的元件 → 選起來之後改框檢視器那顆開關」的雙態目標 */
+  const blockThenRow = (id: string | undefined, label: string) => (): TourRect | null => {
+    const b = byId(id);
+    if (!b) return null;
+    return editor.getSelected()?.id === id ? (rowRect(label) ?? rectOf(b)) : rectOf(b);
+  };
+
+  const blocks = current?.blocks ?? [];
+  const texts = blocks.filter((b) => b.content.type === "text");
+  const medias = blocks.filter((b) => ["image", "shape", "video"].includes(b.content.type));
+  const inView = (b: Block) => { const v = editor.visibleRect(); return overlap(b, { frame: v } as Block); };
+  const dragB = medias.find(inView) ?? medias[0];
+  const textB = texts.find(inView) ?? texts[0];
+  // 排開主角：挑「最長的文字 × 跟它疊最大的媒材」——長文才看得出繞流，小標籤教不了人。
+  const cut = (a: Block, b: Block) =>
+    Math.max(0, Math.min(a.frame.x + a.frame.w, b.frame.x + b.frame.w) - Math.max(a.frame.x, b.frame.x)) *
+    Math.max(0, Math.min(a.frame.y + a.frame.h, b.frame.y + b.frame.h) - Math.max(a.frame.y, b.frame.y));
+  let wrapT: Block | undefined, wrapM: Block | undefined;
+  for (const t of texts) {
+    const m = medias.filter((k) => cut(t, k) > 0).sort((a, b) => cut(t, b) - cut(t, a))[0];
+    if (m && (textOf(t)?.text.length ?? 0) > (textOf(wrapT ?? null)?.text.length ?? -1)) { wrapT = t; wrapM = m; }
+  }
+  // 說明輪播的排開示範頁兩個開關本來就是開的——關回去，讓人親手開一次、看字當場重新流動。
+  // 不走 commit：這是導覽佈景，不進 undo、不髒存檔旗標
+  if (wrapT && wrapM && textOf(wrapT)?.isBodyFrame && wrapOn(wrapM)) {
+    textOf(wrapT)!.isBodyFrame = false;
+    if (wrapM.content.type === "shape") wrapM.content.shape.excludesText = false;
+    else if (wrapM.content.type === "image" || wrapM.content.type === "video") wrapM.content.media.excludesText = false;
+    editor.refresh(); scheduleThumbs();
+  }
+
+  return [
+    { say: "歡迎。照著藍框走——每一步做到了會自動前進，這幾頁隨你玩壞。" },
+    { say: "先動視角：在畫布上雙指捲動（或 ⌘＋滾輪）縮放一下；按住空白處拖曳＝平移。",
+      target: () => domRect("#canvas"), done: (t) => t === "zoom" },
+    { say: "搬東西：把藍框這個元件拖去別的位置——靠近別的元件會跳出吸附線，貼齊了有磁力。",
+      target: () => rectOf(byId(dragB?.id)), done: (t) => t === "drag" },
+    { say: "改字：雙擊藍框這段文字，改幾個字，點外面完成。",
+      target: () => rectOf(byId(textB?.id)), done: (t) => t === "textedit" },
+    { say: "加東西：從上排這排工具加一個新元件——按 T 加文字，或按矩形。",
+      target: () => domRect("#addbar"), done: (t) => t === "add" },
+    { say: "招牌來了。點選藍框這段文字，到右側把「長文框」打開——固定容器，這是排開的前提。",
+      target: blockThenRow(wrapT?.id, "長文框"),
+      done: () => textOf(byId(wrapT?.id))?.isBodyFrame === true },
+    { say: "再選旁邊被框住的圖，打開「排開文字」——長文會當場繞著它重新流動。開完拖拖看那張圖。",
+      target: blockThenRow(wrapM?.id, "排開文字"),
+      done: () => wrapOn(byId(wrapM?.id)) },
+    { say: "就這樣。⌘S 存檔、⌘Z 反悔；之後隨時從右上齒輪回到這份導覽。",
+      target: () => domRect("#gearBtn") },
+  ];
+}
+
+$<HTMLButtonElement>("#gearBtn").addEventListener("click", (e) => {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  openMenu([
+    { label: "操作導覽（帶著做一次）", run: () => {
+      openSample("/samples/intro").then(() => startTour(buildTour())).catch(() => { /* 開不到樣本就不開導覽 */ });
+    } },
+    { label: "線上說明", run: () => { void invoke("open_url", { url: `${REPO}#readme` }); } },
+    "-",
+    { label: "回報問題（Email）", run: reportBugMail },
+    { label: "回報問題（GitHub Issues）", run: () => { void invoke("open_url", { url: `${REPO}/issues/new` }); } },
+    "-",
+    { label: "檢查更新", key: `v${appVersion}`, run: () => {
+      void checkUpdate(true).then((got) => {
+        if (got === "latest") meta.textContent = `已是最新版（${appVersion}）`;
+        if (got === "error") meta.textContent = "連不上更新來源——檢查網路後再試";
+      });
+    } },
+  ], { x: r.right - 210, y: r.bottom + 8 });
+});
 
 // 工具列的兩顆面板開關。面板釘在側欄上方，屬性照樣在下面——不用互相讓位。
 function syncPanelButtons(): void {
@@ -1583,6 +1758,7 @@ function zoomProbe(): void {
 
   const sample = $<HTMLSelectElement>("#sample");
   if (inApp) {
+    appVersion = await getVersion().catch(() => "");   // 齒輪選單與回報信要用
     // 真實專案樣本含個人照片，不隨 App 打包（beforeBuildCommand 會剝掉）——
     // App 開場給範本，自己的專案走首頁／⌘O
     sample.querySelector('option[value="/samples/real"]')?.remove();
@@ -1645,6 +1821,22 @@ function zoomProbe(): void {
     showHome();
   }
   if (inApp) void checkUpdate();   // 出新版時浮橫幅（離線安靜跳過）
+  // 未落地就關掉的草稿：問一聲要不要接續。接續＝草稿留著（看一眼就關也不會丟）；
+  // 捨棄或壞檔才清。落地（⌘S 另存成功）時 saveProject 會清。
+  const draftRaw = inApp ? localStorage.getItem(DRAFT_KEY) : null;
+  if (draftRaw && !q.has("open") && !q.has("export") && !q.has("new") && !q.has("diag")) {
+    try {
+      const d = JSON.parse(draftRaw) as { json: unknown; name?: string; when?: number };
+      const when = d.when ? new Date(d.when).toLocaleString("zh-TW") : "";
+      if (await ask(`「${d.name ?? "未命名專案"}」上次關掉時還沒存檔（${when}）。要接續編輯嗎？`,
+          { title: "未儲存的草稿", okLabel: "接續編輯", cancelLabel: "捨棄" })) {
+        show(decodeProject(d.json));
+        origin = { kind: "sample" };   // 還是未落地——⌘S 走「另存」
+      } else {
+        localStorage.removeItem(DRAFT_KEY);
+      }
+    } catch { localStorage.removeItem(DRAFT_KEY); }
+  }
   // ?export=1／?new=1 ＝載入後直接開該面板（截圖驗證用，不牽動 App 的正常路徑）
   if (q.has("export")) {
     $<HTMLButtonElement>("#export").click();
@@ -1654,6 +1846,8 @@ function zoomProbe(): void {
     }
   }
   if (q.has("new")) openNewSheet();
+  // ?tour=N＝直接開操作導覽、從第 N 步起（截圖驗證用，1-based）
+  if (q.has("tour")) startTour(buildTour(), (parseInt(q.get("tour") ?? "1", 10) || 1) - 1);
   const pn = q.get("panel");
   if (pn === "guides" || pn === "layers") { inspector.setPanel(pn); syncPanelButtons(); }
   const th = q.get("theme");
@@ -1782,7 +1976,7 @@ function zoomProbe(): void {
         await ensureVariantFor(b);
         const m = b.content.media;
         const file = b.content.type === "video" ? `${m.assetFileName}.poster.jpg` : m.assetFileName!;
-        post({ probe: b.content.type, variant: assets?.variants.has(`${file}|a1`) ?? false });
+        post({ probe: b.content.type, variant: assets.variants.has(`${file}|a1`) });
       } catch (x) {
         post({ probe: b.content.type, error: String(x) });
       }

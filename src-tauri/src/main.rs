@@ -301,11 +301,12 @@ fn import_font(app: tauri::AppHandle, src: String) -> Result<FontEntry, String> 
     describe_font(&dest).ok_or_else(|| "複製後讀取失敗".to_string())
 }
 
-/// 在使用者的預設瀏覽器開網址（更新橫幅用）。只放行 http(s)，不當萬用開檔器。
+/// 在使用者的預設瀏覽器開網址（更新橫幅／齒輪選單用）。
+/// 只放行 http(s) 與 mailto（回報問題開信件草稿），不當萬用開檔器。
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
-    if !url.starts_with("https://") && !url.starts_with("http://") {
-        return Err("只開 http(s) 網址".into());
+    if !url.starts_with("https://") && !url.starts_with("http://") && !url.starts_with("mailto:") {
+        return Err("只開 http(s)/mailto 網址".into());
     }
     Command::new("open").arg(url).status().map_err(|e| e.to_string())?;
     Ok(())
