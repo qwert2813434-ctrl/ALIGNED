@@ -76,9 +76,10 @@ RELID=$(api -X POST "https://api.github.com/repos/${REPO}/releases" \
 [ -n "${RELID}" ] || { echo "❌ Release 建立失敗（tag v${VER} 可能已存在）"; exit 1; }
 
 echo "▸ 上傳 ${ASSET}（$(du -h "$DMG" | cut -f1)）"
+# state 的鍵值間有無空格依端點而異（1.0.12 實測 uploads 端點回緊湊 JSON，帶空格的 grep 誤判成失敗）
 api -X POST -H "Content-Type: application/octet-stream" --data-binary @"${DMG}" \
   "https://uploads.github.com/repos/${REPO}/releases/${RELID}/assets?name=${ASSET}" \
-  | grep -q '"state": "uploaded"' || { echo "❌ asset 上傳失敗"; exit 1; }
+  | grep -Eq '"state": ?"uploaded"' || { echo "❌ asset 上傳失敗"; exit 1; }
 
 # 抓回來比對，確認 CDN 上的檔案跟本機同一份（不是只看 HTTP 200）
 echo "▸ 驗證永久網址"
