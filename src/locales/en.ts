@@ -72,6 +72,9 @@ export const en: Record<string, string> = {
   "點選畫布上的元件來調整；\n拖曳＝移動並吸附、方向鍵＝微移":
     "Select an element on the canvas to adjust it.\nDrag to move and snap, arrow keys to nudge.",
   "已選 {n} 個元件": "{n} elements selected",
+  "文字（{n} 個一起改）": "Text ({n} together)",
+  "（混合）": "(Mixed)",
+  "對齊頁面": "Align to page",
   "水平對齊": "Align horizontally",
   "垂直對齊": "Align vertically",
   "左": "Left",

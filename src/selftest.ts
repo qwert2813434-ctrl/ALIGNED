@@ -12,7 +12,7 @@ import { decodeProject, encodeProject } from "./core/schema";
 import { Inspector } from "./inspector";
 import { PageStrip } from "./pagestrip";
 import { addPage, deletePage, duplicatePage, retargetToPage, stripToTemplate, swapAdjacentPages } from "./core/pages";
-import { alignGroup, applyLayerOrder, distributeGroup } from "./core/group";
+import { alignGroup, alignToPage, applyLayerOrder, distributeGroup } from "./core/group";
 import { canvasSize, changeCanvasRatio, newProject, simplifiedRatio } from "./core/canvas";
 import { buildPageSpec, pageHasVideo } from "./videoexport";
 import { videoCullBounds } from "./videopool";
@@ -742,6 +742,84 @@ async function run(): Promise<void> {
       check("檢視器：沒選元件時給紙張與逐頁背景",
             p.paperKey === "c4" && p.pageBackgroundHex?.["0"] === "112233",
             `paperKey=${p.paperKey} 第1頁=${p.pageBackgroundHex?.["0"]}`);
+    }
+
+    // (e) 多選文字批次調整（2026-08-14）：字級混合顯示留空、設定＝套到全部；
+    //     顏色與對齊也一起改，形狀成員不受影響
+    {
+      const p = project([block("s", { x: 700, y: 700, w: 100, h: 100 })]);
+      const mkText = (id: string, size: number, color: string): Block => ({
+        id, frame: { x: 100, y: 100, w: 300, h: 60 }, rotation: 0, zIndex: 2, locked: false, opacity: 1,
+        content: { type: "text", text: { text: id, alignment: "leading", fontSize: size,
+                                         colorHex: color, inkColor: "rgb(0,0,0)" } },
+      });
+      p.blocks.push(mkText("t1", 30, "000000"), mkText("t2", 60, "FF0000"));
+      inspector.showGroup(p, p.blocks);
+      const t1 = (p.blocks[1].content as { text: TextBlock }).text;
+      const t2 = (p.blocks[2].content as { text: TextBlock }).text;
+
+      const size = control<HTMLInputElement>("字級", "input[type=number]");
+      const mixedShown = size!.value === "" && size!.placeholder === "—";
+      size!.value = "44";
+      size!.dispatchEvent(new Event("change"));
+      check("多選文字：字級混合＝欄位留空，打 44 套到兩個",
+            mixedShown && t1.fontSize === 44 && t2.fontSize === 44,
+            `混合顯示=${mixedShown} t1=${t1.fontSize} t2=${t2.fontSize}`);
+
+      const col = control<HTMLInputElement>("顏色", "input[type=color]");
+      col!.value = "#3355aa";
+      col!.dispatchEvent(new Event("input"));
+      check("多選文字：顏色套到全部並清掉 run 色（inkColor）",
+            t1.colorHex === "3355AA" && t2.colorHex === "3355AA"
+            && t1.inkColor === undefined && t2.inkColor === undefined,
+            `t1=${t1.colorHex}/${t1.inkColor} t2=${t2.colorHex}/${t2.inkColor}`);
+
+      // 對齊按鈕列：找「文字區段」裡的「中」——群組水平對齊也有一顆「中」，
+      // 用 label=對齊 那一列來鎖定範圍
+      const alignRow = [...host.querySelectorAll(".row")]
+        .find((r) => r.querySelector("label")?.textContent === "對齊");
+      const centerBtn = [...(alignRow?.querySelectorAll("button") ?? [])]
+        .find((b) => b.textContent === "中");
+      centerBtn!.click();
+      const shape = p.blocks[0];
+      check("多選文字：對齊套到全部、形狀成員不受影響",
+            t1.alignment === "center" && t2.alignment === "center"
+            && shape.content.type === "shape" && near(shape.frame.x, 700),
+            `t1=${t1.alignment} t2=${t2.alignment}`);
+
+      const weight = control<HTMLSelectElement>("字重", "select");
+      const font = control<HTMLSelectElement>("字型", "select");
+      check("多選文字：字重一致直接顯示、字型欄位存在",
+            weight!.value === "3" && !!font,
+            `字重=${weight!.value}`);
+
+      // 多選面板也要有「對齊頁面」六顆（左中右＋上中下）
+      const pageRow = [...host.querySelectorAll(".row")]
+        .find((r) => r.querySelector("label")?.textContent === "對齊頁面");
+      check("多選面板有「對齊頁面」六顆",
+            (pageRow?.querySelectorAll("button").length ?? 0) === 6,
+            `${pageRow?.querySelectorAll("button").length ?? 0} 顆`);
+    }
+
+    // (f) 對齊頁面：單選對到**自己那一頁**、多選整組平移（相對不變）、鎖定不動
+    {
+      const solo = block("s", { x: 1080 + 200, y: 200, w: 200, h: 100 });   // 第 2 頁
+      alignToPage([solo], "hCenter", 1080, 1350);
+      alignToPage([solo], "bottom", 1080, 1350);
+      const soloOK = near(solo.frame.x, 1080 + 440) && near(solo.frame.y, 1250);
+
+      const ga = block("a", { x: 100, y: 100, w: 200, h: 100 });
+      const gb = block("b", { x: 400, y: 300, w: 100, h: 100 });
+      alignToPage([ga, gb], "hCenter", 1080, 1350);   // 外框寬 400 → box.x 340、dx=240
+      const groupOK = near(ga.frame.x, 340) && near(gb.frame.x, 640) && near(ga.frame.y, 100);
+
+      const lk = block("lk", { x: 50, y: 50, w: 10, h: 10 }); lk.locked = true;
+      const mv = block("mv", { x: 0, y: 0, w: 100, h: 100 });
+      alignToPage([lk, mv], "right", 1080, 1350);
+      const lockOK = near(lk.frame.x, 50) && near(mv.frame.x, 980);
+      check("對齊頁面：單選對自己那頁、整組平移相對不變、鎖定不動也不算外框",
+            soloOK && groupOK && lockOK,
+            `solo=(${solo.frame.x},${solo.frame.y}) a.x=${ga.frame.x} b.x=${gb.frame.x} lk=${lk.frame.x} mv=${mv.frame.x}`);
     }
     host.remove();
   }

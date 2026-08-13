@@ -7,6 +7,7 @@ import { __, __f } from "./i18n";
 import type { Block, MediaBlock, Project, ShapeBlock, TextAlign, TextBlock } from "./core/schema";
 import { FONT_CHOICES, WEIGHT_LABELS, fontCatalog } from "./core/fonts";
 import { FILTER_KEYS, FILTER_LABELS } from "./core/filters";
+import { alignToPage } from "./core/group";
 import type { GroupAlign, GroupAxis } from "./core/group";
 import { CANVAS_PRESETS, canvasSize, simplifiedRatio } from "./core/canvas";
 
@@ -168,11 +169,89 @@ export class Inspector {
     }
     dist.append(dseg);
 
+    // 對齊到頁面：整組平移（彼此對齊在上面兩排；這排是「這一坨放到頁面哪裡」）
+    this.pageAlignRow(s, () => blocks);
+
     const acts = this.row(s, "");
     acts.append(this.btn(__("複製一份"), () => this.hooks.group.duplicate()));
     const danger = this.btn(__f("刪除 {n} 個（⌫）", { n: blocks.length }), () => this.hooks.group.remove());
     danger.className = "danger";
     acts.append(danger);
+
+    // ── 文字批次調整（2026-08-14）：選取裡的文字一起改 ──
+    // 值一致就顯示、不一致顯示「混合」；設定＝**絕對值**套到選取裡每一個文字
+    // （桌面慣例，Figma 同款）。要保留彼此的大小差異就用畫布上群組右下角
+    // 那顆等比縮放手把，這裡是「把它們改成一樣」的入口。
+    const texts: TextBlock[] = [];
+    for (const b of blocks) {
+      if (b.content.type === "text" || b.content.type === "textFlow") texts.push(b.content.text);
+    }
+    if (texts.length) {
+      const ts = this.section(__f("文字（{n} 個一起改）", { n: texts.length }));
+      const same = <T>(get: (t: TextBlock) => T): T | undefined => {
+        const v0 = get(texts[0]);
+        return texts.every((t) => get(t) === v0) ? v0 : undefined;
+      };
+      const applyAll = (fn: (t: TextBlock) => void): void => {
+        for (const t of texts) fn(t);
+        this.emit(true);
+      };
+      const mixedSelect = (options: [string, string][], value: string | undefined,
+                           set: (v: string) => void): HTMLSelectElement => {
+        const sel = this.select(
+          value == null ? [["__mixed__", __("（混合）")], ...options] : options,
+          value ?? "__mixed__", set);
+        if (value == null) sel.options[0].disabled = true;
+        return sel;
+      };
+
+      const curFont = same((t) => t.fontName ?? "");
+      this.row(ts, __("字型")).append(this.fontSelect(curFont ?? "",
+        (v) => applyAll((t) => { t.fontName = v || undefined; }), { mixed: curFont == null }));
+
+      const curW = same((t) => t.fontWeightValue ?? 3);
+      this.row(ts, __("字重")).append(mixedSelect(
+        WEIGHT_LABELS.map((l, i) => [String(i), l] as [string, string]),
+        curW == null ? undefined : String(curW),
+        (v) => applyAll((t) => { t.fontWeightValue = Number(v); })));
+
+      const curSize = same((t) => t.fontSize ?? 49);
+      this.row(ts, __("字級")).append(this.num(curSize ?? 49,
+        { min: 8, max: 500, step: 1, mixed: curSize == null },
+        (v) => applyAll((t) => { t.fontSize = v; })));
+
+      const curKern = same((t) => t.kerningEm ?? 0);
+      this.row(ts, __("字距 em")).append(this.num(curKern ?? 0,
+        { min: -0.05, max: 1.5, step: 0.01, mixed: curKern == null },
+        (v) => applyAll((t) => { t.kerningEm = v; })));
+
+      const curLh = same((t) => t.lineHeightMultiple ?? 1);
+      this.row(ts, __("行高 ×")).append(this.num(curLh ?? 1,
+        { min: 0.7, max: 2, step: 0.05, mixed: curLh == null },
+        (v) => applyAll((t) => { t.lineHeightMultiple = v; })));
+
+      const alignRow = this.row(ts, __("對齊"));
+      const alignBox = document.createElement("div");
+      alignBox.className = "seg";
+      const curAlign = same((t) => t.alignment);
+      const aligns: [TextAlign, string][] = [["leading", __("左")], ["center", __("中")], ["trailing", __("右")]];
+      for (const [val, label] of aligns) {
+        const abtn = this.btn(label, () => {
+          applyAll((t) => { t.alignment = val; });
+          for (const el of alignBox.children) el.classList.toggle("on", el === abtn);
+        });
+        abtn.classList.toggle("on", curAlign === val);
+        alignBox.append(abtn);
+      }
+      alignRow.append(alignBox);
+
+      this.row(ts, __("顏色")).append(this.color(
+        same((t) => t.colorHex ?? "000000") ?? texts[0].colorHex ?? "000000",
+        (hexNoHash) => applyAll((t) => {
+          t.colorHex = hexNoHash;
+          t.inkColor = undefined;   // 渲染以 run 屬性優先，改色要把它清掉才吃 colorHex
+        })));
+    }
 
     const hint = document.createElement("div");
     hint.className = "hint";
@@ -378,6 +457,30 @@ export class Inspector {
     });
   }
 
+  /** 「對齊頁面」六顆（左中右／上中下）。對齊是主功能：單選＝快速對齊、
+   *  多選＝**整組當一個單位**平移到頁邊／頁中（相對位置不變）。 */
+  private pageAlignRow(parent: HTMLElement, blocks: () => Block[]): void {
+    const p = this.project;
+    if (!p) return;
+    const row = this.row(parent, __("對齊頁面"));
+    const mk = (opts: [GroupAlign, string][]): HTMLDivElement => {
+      const seg = document.createElement("div");
+      seg.className = "seg";
+      for (const [edge, label] of opts) {
+        seg.append(this.btn(label, () => {
+          alignToPage(blocks(), edge, p.canvasWidth, p.pageHeight);
+          this.emit();
+          if (this.block) this.rebuild();   // 單選面板有位置數值，對齊完要刷新
+        }));
+      }
+      return seg;
+    };
+    row.append(
+      mk([["left", __("左")], ["hCenter", __("中")], ["right", __("右")]]),
+      mk([["top", __("上")], ["vCenter", __("中")], ["bottom", __("下")]]),
+    );
+  }
+
   private common(b: Block): void {
     const s = this.section(__("位置與圖層"));
     const pos = this.row(s, __("位置"));
@@ -385,6 +488,7 @@ export class Inspector {
       this.num(b.frame.x, { step: 1 }, (v) => { b.frame.x = v; this.emit(); }),
       this.num(b.frame.y, { step: 1 }, (v) => { b.frame.y = v; this.emit(); }),
     );
+    this.pageAlignRow(s, () => [b]);
     const size = this.row(s, __("尺寸"));
     const editable = b.content.type === "shape" || b.content.type === "image" || b.content.type === "video";
     // 文字的框是貼字盒（由內容決定），這裡不給改——改字級/欄寬才是正路
@@ -422,7 +526,8 @@ export class Inspector {
     ta.addEventListener("input", () => { t.text = ta.value; this.emit(true); });
     this.row(s, __("內容")).append(ta);
 
-    this.row(s, __("字型")).append(this.fontSelect(t));
+    this.row(s, __("字型")).append(this.fontSelect(t.fontName ?? "",
+      (v) => { t.fontName = v || undefined; this.emit(true); }, { allowImport: true }));
     this.row(s, __("字重")).append(this.select(
       WEIGHT_LABELS.map((l, i) => [String(i), l]),
       String(t.fontWeightValue ?? 3),
@@ -713,14 +818,16 @@ export class Inspector {
     return r;
   }
 
-  private num(value: number, opts: { min?: number; max?: number; step?: number; disabled?: boolean },
+  private num(value: number, opts: { min?: number; max?: number; step?: number; disabled?: boolean; mixed?: boolean },
               set: (v: number) => void): HTMLInputElement {
     const i = document.createElement("input");
     i.type = "number";
     if (opts.min != null) i.min = String(opts.min);
     if (opts.max != null) i.max = String(opts.max);
     i.step = String(opts.step ?? 1);
-    i.value = String(Math.round(value * 100) / 100);
+    // mixed＝多選時值不一致：欄位留空、顯示破折號，打了值才套用到全部
+    if (opts.mixed) i.placeholder = "—";
+    else i.value = String(Math.round(value * 100) / 100);
     i.disabled = !!opts.disabled;
     i.addEventListener("change", () => {
       let v = Number(i.value);
@@ -754,48 +861,55 @@ export class Inspector {
 
   /** 字型選單：介面字體／自訂（匯入檔）／系統字體 三組（剪映同款分法），
    *  最底下一列「匯入字型檔…」當動作項。正在用的字型三組都找不到時
-   *  （別台電腦做的專案）補一個「未安裝」項，選單才不會靜靜跳回黑體。 */
-  private fontSelect(t: TextBlock): HTMLSelectElement {
+   *  （別台電腦做的專案）補一個「未安裝」項，選單才不會靜靜跳回黑體。
+   *  多選批次改也走這顆（mixed＝各用各的字型時顯示「（混合）」；
+   *  匯入動作項只在單選給——匯完要重建面板，群組面板沒有這條路）。 */
+  private fontSelect(cur: string, apply: (v: string) => void,
+                     o: { mixed?: boolean; allowImport?: boolean } = {}): HTMLSelectElement {
     const sel = document.createElement("select");
     const group = (label: string, items: { label: string; value: string }[]): void => {
       if (!items.length) return;
       const g = document.createElement("optgroup");
       g.label = label;
       for (const f of items) {
-        const o = document.createElement("option");
-        o.value = f.value; o.textContent = f.label;
-        g.append(o);
+        const opt = document.createElement("option");
+        opt.value = f.value; opt.textContent = f.label;
+        g.append(opt);
       }
       sel.append(g);
     };
     group(__("介面字體"), FONT_CHOICES);
     group(__("自訂"), fontCatalog.custom);
     group(__("系統字體"), fontCatalog.system);
-    const cur = t.fontName ?? "";
-    if (cur && ![...sel.options].some((o) => o.value === cur)) {
-      const o = document.createElement("option");
-      o.value = cur; o.textContent = __f("{cur}（未安裝）", { cur });
-      sel.append(o);
+    if (!o.mixed && cur && ![...sel.options].some((x) => x.value === cur)) {
+      const opt = document.createElement("option");
+      opt.value = cur; opt.textContent = __f("{cur}（未安裝）", { cur });
+      sel.append(opt);
     }
-    if (this.hooks.importFont) {
+    if (o.allowImport && this.hooks.importFont) {
       const imp = document.createElement("option");
       imp.value = "__import__"; imp.textContent = __("＋ 匯入字型檔…");
       sel.append(imp);
     }
-    sel.value = cur;
+    if (o.mixed) {
+      const m = document.createElement("option");
+      m.value = "__mixed__"; m.textContent = __("（混合）"); m.disabled = true;
+      sel.prepend(m);
+      sel.value = "__mixed__";
+    } else {
+      sel.value = cur;
+    }
     sel.addEventListener("change", () => {
       if (sel.value === "__import__") {
-        sel.value = t.fontName ?? "";   // 先跳回原值——取消匯入時選單不能停在動作項上
+        sel.value = o.mixed ? "__mixed__" : cur;   // 先跳回原值——取消匯入時選單不能停在動作項上
         void this.hooks.importFont?.().then((f) => {
           if (!f) return;
-          t.fontName = f.value || undefined;
-          this.emit(true);
+          apply(f.value);
           this.show(this.project, this.block);   // 重建面板：新字型進選單並選中
         });
         return;
       }
-      t.fontName = sel.value || undefined;
-      this.emit(true);
+      apply(sel.value);
     });
     return sel;
   }

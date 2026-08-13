@@ -66,6 +66,28 @@ export function distributeGroup(blocks: Block[], axis: GroupAxis): void {
 }
 
 /**
+ * 對齊到頁面（2026-08-14，「對齊」主功能的快速入口）：
+ * **整組當一個單位平移**，相對位置不變（單選＝一個成員的組，就是快速對齊）。
+ * 基準＝未鎖成員的外框聯集；頁＝外框中心所在那一頁。鎖定的不動。
+ */
+export function alignToPage(blocks: Block[], edge: GroupAlign, canvasWidth: number, pageHeight: number): void {
+  const movable = blocks.filter((b) => !b.locked);
+  const box = boundingBox(movable);
+  if (!box) return;
+  const px = Math.floor((box.x + box.w / 2) / canvasWidth) * canvasWidth;
+  let dx = 0, dy = 0;
+  switch (edge) {
+    case "left":    dx = px - box.x; break;
+    case "hCenter": dx = px + (canvasWidth - box.w) / 2 - box.x; break;
+    case "right":   dx = px + canvasWidth - box.w - box.x; break;
+    case "top":     dy = -box.y; break;
+    case "vCenter": dy = (pageHeight - box.h) / 2 - box.y; break;
+    case "bottom":  dy = pageHeight - box.h - box.y; break;
+  }
+  for (const b of movable) { b.frame.x += dx; b.frame.y += dy; }
+}
+
+/**
  * 依「由前而後」的 id 順序重排 zIndex——圖層清單第一筆＝最上層。
  * 沒列到的 block（不在這一頁）不動。
  */
