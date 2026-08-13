@@ -813,6 +813,10 @@ WKWebView＋分鏡展示量到的數字推翻直覺：
 2. **餵 feed**：改 `37 - 工具間/上線/aligned-latest.json` 的 `version` 與 `notes` → push。
    **`url` 不用動了**，它是永久網址。App 開機查這份 feed 比版本後浮更新橫幅
    （`src/updatecheck.ts`，離線安靜跳過）。
+   **⏱ 批次推（2026-08-14 拍板）**：Release 隨改隨出（新下載自動拿最新），
+   但 feed **一個工作段落推一次、一天最多一次**，緊急修復才即時——
+   「略過此版」是按版本記的，feed 推太密會把使用者按過的「不要吵」洗掉。
+   notes 寫**這批**的總和，不是只寫最後一版。
 3. **順手更新小高本機**（2026-08-14 定案，小高交代「以後都順便」）：
    掛載剛出爐的 `release/ALIGNED_<版本>_aarch64.dmg` → `ditto` 蓋掉
    `/Applications/ALIGNED.app` → detach → **`xattr -dr com.apple.quarantine`**
