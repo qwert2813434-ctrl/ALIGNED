@@ -1,3 +1,4 @@
+import { __, __f } from "./i18n";
 // 操作導覽：藍框框住「現在要動的那個東西」，帶著把核心動作與排開系統各做一次。
 // 引擎是通用的：主程式給步驟（說什麼／框誰／怎麼算做到），這裡只管卡片、藍框、節奏。
 // 藍框每幀重算——元件被拖走、視角縮放、目標從畫布換到檢視器開關，框都跟著走。
@@ -92,12 +93,12 @@ function paint(): void {
 
   const next = document.createElement("button");
   next.className = "tourgo";
-  next.textContent = last ? "完成" : s.done ? "跳過這步" : "下一步";
+  next.textContent = last ? __("完成") : s.done ? __("跳過這步") : __("下一步");
   next.addEventListener("click", advance);
 
   const quit = document.createElement("button");
   quit.className = "tourquit";
-  quit.textContent = "結束導覽 esc";
+  quit.textContent = __("結束導覽 esc");
   quit.addEventListener("click", endTour);
 
   card.append(n, txt, next, quit);

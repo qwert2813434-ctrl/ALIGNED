@@ -1,3 +1,4 @@
+import { __ } from "../i18n";
 // ALIGN Core — 畫布尺寸與新專案。iOS `CanvasSizePreset` / `CanvasSizeMath` 的移植。
 //
 // 規則只有一條：**短邊固定 1080，長邊照比例長**。所以直式 4:5 是 1080×1350，
@@ -12,11 +13,11 @@ export interface CanvasPreset { key: string; label: string; ratio: number | null
 
 /** ratio ＝未翻轉時的 height / width。 */
 export const CANVAS_PRESETS: CanvasPreset[] = [
-  { key: "1:1", label: "1:1 方形", ratio: 1 },
-  { key: "4:5", label: "4:5 直式", ratio: 5 / 4 },
-  { key: "3:4", label: "3:4 直式", ratio: 4 / 3 },
-  { key: "9:16", label: "9:16 全螢幕", ratio: 16 / 9 },
-  { key: "1.91:1", label: "1.91:1 橫式", ratio: 1 / 1.91 },
+  { key: "1:1", label: __("1:1 方形"), ratio: 1 },
+  { key: "4:5", label: __("4:5 直式"), ratio: 5 / 4 },
+  { key: "3:4", label: __("3:4 直式"), ratio: 4 / 3 },
+  { key: "9:16", label: __("9:16 全螢幕"), ratio: 16 / 9 },
+  { key: "1.91:1", label: __("1.91:1 橫式"), ratio: 1 / 1.91 },
 ];
 
 /** 預設鍵（＋翻轉）→ 實際畫布尺寸。 */

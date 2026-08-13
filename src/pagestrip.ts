@@ -1,3 +1,4 @@
+import { __ } from "./i18n";
 // 頁面膠捲——獨立元件（與畫布、屬性檢視器同一條「三塊可分離」的約束）。
 // 縮圖走 renderPageCanvas＝與匯出、編輯預覽同一條渲染路，看到什麼就是什麼。
 //
@@ -123,7 +124,7 @@ export class PageStrip {
     }
     const add = document.createElement("figure");
     add.className = "addpage";
-    const btn = iconButton("add", "新增一頁", () => this.hooks.add());
+    const btn = iconButton("add", __("新增一頁"), () => this.hooks.add());
     btn.className = "addtile";
     add.append(btn);
     this.el.append(add);

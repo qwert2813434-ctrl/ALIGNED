@@ -1,3 +1,4 @@
+import { __ } from "../i18n";
 // ALIGN Core — 匯出。
 //
 // iOS 的 `PageExportRenderer` 用 `ImageRenderer(scale: 1)`：**畫布尺寸本身就是目標像素**，
@@ -27,7 +28,7 @@ export function renderAllPages(project: Project, opts: ExportOptions = {}): Expo
 
 export function toBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((ok, err) =>
-    canvas.toBlob((b) => (b ? ok(b) : err(new Error("PNG 編碼失敗"))), "image/png"));
+    canvas.toBlob((b) => (b ? ok(b) : err(new Error(__("PNG 編碼失敗")))), "image/png"));
 }
 
 /** 給 IG 輪播的頁序。**存進系統相簿時要反轉**——相簿是「最近建立的排前面」，

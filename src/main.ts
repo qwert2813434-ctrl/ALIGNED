@@ -1,3 +1,4 @@
+import { __, __f, localizeTitles } from "./i18n";
 // ALIGN Core 的 Mac 殼組裝。
 //
 // 同一份程式跑兩種環境：
@@ -38,12 +39,14 @@ const meta = $<HTMLSpanElement>("#meta");
 const info = $<HTMLSpanElement>("#info");
 const inApp = isTauri();
 
+localizeTitles(); // index.html 寫死的 title="…" 一次翻完（中文語系時等於沒作用）
+
 const editor = new Editor($<HTMLCanvasElement>("#canvas"));
 
 editor.onSelectionChange = (blocks: Block[]) => {
   if (blocks.length > 1 && current) {
     inspector.showGroup(current, blocks);
-    info.textContent = `已選 ${blocks.length} 個元件`;
+    info.textContent = __f("已選 {n} 個元件", { n: blocks.length });
   }
 };
 editor.onSelect = (b: Block | null) => {
@@ -51,7 +54,7 @@ editor.onSelect = (b: Block | null) => {
   if (b == null && editor.selectionBlocks().length > 1) return;
   inspector.show(current, b);
   if (!b) { info.textContent = ""; return; }
-  const kind = { text: "文字", textFlow: "續流文字", image: "圖片", video: "影片", shape: "形狀" }[b.content.type];
+  const kind = { text: __("文字"), textFlow: __("續流文字"), image: __("圖片"), video: __("影片"), shape: __("形狀") }[b.content.type];
   const f = b.frame;
   info.textContent = `${kind}　${Math.round(f.x)}, ${Math.round(f.y)}　${Math.round(f.w)}×${Math.round(f.h)}`
     + (b.rotation ? `　${Math.round(b.rotation)}°` : "");
@@ -62,7 +65,7 @@ editor.onCommit = () => {
   commit("drag");
 };
 editor.onFillSlot = (b) => {
-  pickMediaForBlock(b).catch((x) => { meta.textContent = `填圖失敗：${x.message ?? x}`; });
+  pickMediaForBlock(b).catch((x) => { meta.textContent = __f("填圖失敗：{msg}", { msg: x.message ?? x }); });
 };
 editor.onTextEdited = () => {
   inspector.show(current, editor.getSelected());   // 檢視器的內容欄同步新文字
@@ -258,7 +261,7 @@ const measureCtx = document.createElement("canvas").getContext("2d")!;   // 貼�
 const strip = new PageStrip($<HTMLDivElement>("#strip"), {
   pick: (i) => editor.focusPage(i),
   add: () => {
-    if (!current || !addPage(current)) { meta.textContent = `頁數上限 20 頁`; return; }
+    if (!current || !addPage(current)) { meta.textContent = __("頁數上限 20 頁"); return; }
     afterPageChange(current.pageCount - 1);
   },
   move: (from: number, to: number) => {
@@ -315,7 +318,7 @@ async function pickMediaForBlock(b: Block): Promise<void> {
   if (!dir || !current) return;
   const src = await openDialog({
     multiple: false,
-    filters: [{ name: "影像或影片", extensions: [...IMG_EXT, ...VID_EXT] }],
+    filters: [{ name: __("影像或影片"), extensions: [...IMG_EXT, ...VID_EXT] }],
   });
   if (typeof src !== "string") return;
   const ext = src.split(".").pop()?.toLowerCase() ?? "";
@@ -351,27 +354,27 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
     commit("inspector");
   },
   ensureVariant: ensureVariantFor,
-  fillMedia: (b) => { pickMediaForBlock(b).catch((x) => { meta.textContent = `填圖失敗：${x.message ?? x}`; }); },
+  fillMedia: (b) => { pickMediaForBlock(b).catch((x) => { meta.textContent = __f("填圖失敗：{msg}", { msg: x.message ?? x }); }); },
   // 匯入字型檔（剪映語彙的「自訂」）：存進 App 資料夾 UserFonts/，重開還在。
   // 專案照舊只存 PostScript 名——iPad 也匯同一套字型，專案就兩邊長一樣。
   importFont: async () => {
-    if (!inApp) { meta.textContent = "匯入字型要在 App 內用（瀏覽器只是開發預覽）"; return null; }
+    if (!inApp) { meta.textContent = __("匯入字型要在 App 內用（瀏覽器只是開發預覽）"); return null; }
     const src = await openDialog({
       multiple: false,
-      filters: [{ name: "字型檔", extensions: ["ttf", "otf", "ttc"] }],
+      filters: [{ name: __("字型檔"), extensions: ["ttf", "otf", "ttc"] }],
     });
     if (typeof src !== "string") return null;
     try {
       const f = await invoke<DynamicFont>("import_font", { src });
       // 匯入檔走 url()，必須 await 載完才能量測（字型鐵則）
       if (!f.path || !(await registerUserFont(f, await localUrl(f.path)))) {
-        meta.textContent = "這個字型檔讀不進來";
+        meta.textContent = __("這個字型檔讀不進來");
         return null;
       }
-      meta.textContent = `已匯入字型：${f.label}`;
+      meta.textContent = __f("已匯入字型：{name}", { name: f.label });
       return { label: f.label, value: f.ps };
     } catch (x) {
-      meta.textContent = `匯入字型失敗：${(x as Error).message ?? x}`;
+      meta.textContent = __f("匯入字型失敗：{msg}", { msg: (x as Error).message ?? x });
       return null;
     }
   },
@@ -506,7 +509,7 @@ async function openSample(base: string): Promise<void> {
 async function openNative(): Promise<void> {
   const path = await openDialog({
     multiple: false,
-    filters: [{ name: "ALIGN 專案", extensions: ["alignproj", "json"] }],
+    filters: [{ name: __("ALIGN 專案"), extensions: ["alignproj", "json"] }],
   });
   if (typeof path !== "string") return;
   await openPath(path);
@@ -564,7 +567,7 @@ function openBrowser(): void {
 
 $<HTMLButtonElement>("#open").addEventListener("click", () => {
   (inApp ? openNative() : Promise.resolve(openBrowser())).catch((e) => {
-    meta.textContent = `開啟失敗：${e.message ?? e}`;
+    meta.textContent = __f("開啟失敗：{msg}", { msg: e.message ?? e });
   });
 });
 
@@ -573,7 +576,7 @@ $<HTMLSelectElement>("#sample").addEventListener("change", (e) => {
 });
 
 $<HTMLButtonElement>("#exporttpl").addEventListener("click", () => {
-  exportTemplate().catch((x) => { meta.textContent = `匯出範本失敗：${x.message ?? x}`; });
+  exportTemplate().catch((x) => { meta.textContent = __f("匯出範本失敗：{msg}", { msg: x.message ?? x }); });
 });
 
 $<HTMLSelectElement>("#snap").addEventListener("change", (e) => {
@@ -625,18 +628,18 @@ function toPage(blocks: Block[], to: number, copy: boolean): void {
 /** 「複製這一頁」＝整頁複製並插在它後面（頁面操作共用這一支）。 */
 function pageMenu(i: number): MenuItem[] {
   return [
-    { label: "複製這一頁（含內容）", run: () => doPageAct("duplicate", i) },
-    { label: "在後面插入空白頁", run: () => insertBlankAfter(i) },
+    { label: __("複製這一頁（含內容）"), run: () => doPageAct("duplicate", i) },
+    { label: __("在後面插入空白頁"), run: () => insertBlankAfter(i) },
     "-",
-    { label: "往前一頁", run: () => doPageAct("left", i) },
-    { label: "往後一頁", run: () => doPageAct("right", i) },
+    { label: __("往前一頁"), run: () => doPageAct("left", i) },
+    { label: __("往後一頁"), run: () => doPageAct("right", i) },
     "-",
-    { label: "刪除這一頁", run: () => doPageAct("delete", i) },
+    { label: __("刪除這一頁"), run: () => doPageAct("delete", i) },
   ];
 }
 
 function insertBlankAfter(i: number): void {
-  if (!current || !addPage(current)) { meta.textContent = "頁數上限 20 頁"; return; }
+  if (!current || !addPage(current)) { meta.textContent = __("頁數上限 20 頁"); return; }
   for (let k = current.pageCount - 1; k > i + 1; k--) swapAdjacentPages(current, k, k - 1);
   afterPageChange(i + 1);
 }
@@ -649,40 +652,40 @@ editor.onContextMenu = (b, at) => {
     .filter((i) => !b || i !== pageIndexForX(current!, b.frame.x + b.frame.w / 2));
   const items: MenuItem[] = [];
   if (b) {
-    const many = sel.length > 1 ? ` ${sel.length} 個` : "";
-    items.push({ label: "複製一份", key: "⌘D", run: () => duplicateSelection() });
+    const many = sel.length > 1;
+    items.push({ label: __("複製一份"), key: "⌘D", run: () => duplicateSelection() });
     if (others.length) {
-      items.push({ label: `複製到${many ? "其他頁" : "第…頁"}`,
-                   sub: others.map((i) => ({ label: `第 ${i + 1} 頁`, run: () => toPage(sel, i, true) })) });
-      items.push({ label: "移到第…頁",
-                   sub: others.map((i) => ({ label: `第 ${i + 1} 頁`, run: () => toPage(sel, i, false) })) });
+      items.push({ label: many ? __("複製到其他頁") : __("複製到第…頁"),
+                   sub: others.map((i) => ({ label: __f("第 {n} 頁", { n: i + 1 }), run: () => toPage(sel, i, true) })) });
+      items.push({ label: __("移到第…頁"),
+                   sub: others.map((i) => ({ label: __f("第 {n} 頁", { n: i + 1 }), run: () => toPage(sel, i, false) })) });
     }
     items.push("-");
-    items.push({ label: b.locked ? "解除鎖定" : "鎖定", key: "⌘L", run: () => {
+    items.push({ label: b.locked ? __("解除鎖定") : __("鎖定"), key: "⌘L", run: () => {
       for (const k of sel) k.locked = !b.locked;
       inspector.show(current, editor.getSelected());
       editor.refresh(); commit("lock");
     } });
-    items.push({ label: "移到最前", run: () => inspectorReorder("front") });
-    items.push({ label: "移到最後", run: () => inspectorReorder("back") });
+    items.push({ label: __("移到最前"), run: () => inspectorReorder("front") });
+    items.push({ label: __("移到最後"), run: () => inspectorReorder("back") });
     if (b.content.type === "video" && b.content.media.assetFileName && inApp) {
       items.push("-");
-      items.push({ label: "修剪影片…", run: () => void trimBlock(b) });
+      items.push({ label: __("修剪影片…"), run: () => void trimBlock(b) });
     }
     if (sel.length > 1) {
       items.push("-");
-      items.push({ label: "水平置中對齊", run: () => applyToGroup((bs) => alignGroup(bs, "hCenter"), "align") });
-      items.push({ label: "垂直置中對齊", run: () => applyToGroup((bs) => alignGroup(bs, "vCenter"), "align") });
+      items.push({ label: __("水平置中對齊"), run: () => applyToGroup((bs) => alignGroup(bs, "hCenter"), "align") });
+      items.push({ label: __("垂直置中對齊"), run: () => applyToGroup((bs) => alignGroup(bs, "vCenter"), "align") });
     }
     items.push("-");
-    items.push({ label: `刪除${many}`, key: "⌫", run: () => deleteSelected() });
+    items.push({ label: sel.length > 1 ? __f("刪除選取的 {n} 個", { n: sel.length }) : __("刪除"), key: "⌫", run: () => deleteSelected() });
   } else {
-    items.push({ label: "在這裡加文字", run: () => addBlock("text") });
-    items.push({ label: "在這裡加矩形", run: () => addBlock("rectangle") });
+    items.push({ label: __("在這裡加文字"), run: () => addBlock("text") });
+    items.push({ label: __("在這裡加矩形"), run: () => addBlock("rectangle") });
     items.push("-");
-    items.push({ label: `第 ${here + 1} 頁`, sub: pageMenu(here) });
+    items.push({ label: __f("第 {n} 頁", { n: here + 1 }), sub: pageMenu(here) });
     items.push("-");
-    items.push({ label: "整台縮到剛好", key: "⌘0", run: () => editor.fitAll() });
+    items.push({ label: __("整台縮到剛好"), key: "⌘0", run: () => editor.fitAll() });
   }
   openMenu(items, at);
 };
@@ -721,7 +724,7 @@ editor.onGuidesChanged = () => {
 };
 
 editor.onContentMode = (on) => {
-  meta.textContent = on ? "搬照片模式：拖曳＝在框內移動照片，Esc 離開" : "";
+  meta.textContent = on ? __("搬照片模式：拖曳＝在框內移動照片，Esc 離開") : "";
 };
 
 // ── 開場首頁 ──────────────────────────────────────────────────────────
@@ -761,9 +764,9 @@ function rememberRecent(): void {
 
 function timeAgo(t: number): string {
   const d = Date.now() - t;
-  if (d < 3600_000) return `${Math.max(1, Math.round(d / 60000))} 分鐘前`;
-  if (d < 86400_000) return `${Math.round(d / 3600_000)} 小時前`;
-  if (d < 7 * 86400_000) return `${Math.round(d / 86400_000)} 天前`;
+  if (d < 3600_000) return __f("{n} 分鐘前", { n: Math.max(1, Math.round(d / 60000)) });
+  if (d < 86400_000) return __f("{n} 小時前", { n: Math.round(d / 3600_000) });
+  if (d < 7 * 86400_000) return __f("{n} 天前", { n: Math.round(d / 86400_000) });
   return new Date(t).toLocaleDateString("zh-TW");
 }
 
@@ -774,7 +777,7 @@ function renderHome(): void {
   if (!list.length) {
     const p = document.createElement("div");
     p.className = "empty";
-    p.textContent = "還沒有最近專案。開一份新的，或打開 iPad AirDrop 過來的 .alignproj。";
+    p.textContent = __("還沒有最近專案。開一份新的，或打開 iPad AirDrop 過來的 .alignproj。");
     grid.append(p);
     return;
   }
@@ -797,7 +800,7 @@ function renderHome(): void {
     pt.textContent = `${timeAgo(r.time)}　${r.path.replace(/^\/Users\/[^/]+/, "~")}`;
     pt.title = r.path;
     const rm = document.createElement("button");
-    rm.className = "rm"; rm.title = "從清單移除";
+    rm.className = "rm"; rm.title = __("從清單移除");
     rm.innerHTML = '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg>';
     rm.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -807,7 +810,7 @@ function renderHome(): void {
     card.append(shot, nm, pt, rm);
     card.addEventListener("click", () => {
       // 開失敗卡片留著——可能只是外接碟沒接，不急著把入口丟掉
-      openPath(r.path).catch((x) => { meta.textContent = `開不起來：${x.message ?? x}`; });
+      openPath(r.path).catch((x) => { meta.textContent = __f("開不起來：{msg}", { msg: x.message ?? x }); });
     });
     grid.append(card);
   }
@@ -870,7 +873,7 @@ $<HTMLButtonElement>("#newok").addEventListener("click", async () => {
   await autosaveNow();   // 開新專案前 flush 手上的，理由同 openSample
   const { w, h } = newSheetSize();
   const p = newProject(
-    $<HTMLInputElement>("#newname").value.trim() || "未命名專案",
+    $<HTMLInputElement>("#newname").value.trim() || __("未命名專案"),
     presetSel.value, $<HTMLSelectElement>("#newflip").value === "1",
     Number($<HTMLInputElement>("#newpages").value) || 1, newId(),
   );
@@ -878,22 +881,22 @@ $<HTMLButtonElement>("#newok").addEventListener("click", async () => {
   origin = { kind: "sample" };   // 還沒落地——⌘S 會走「另存」
   closeNewSheet();
   show(p, undefined, undefined);
-  meta.textContent = "新專案：⌘S 存檔之後才能匯入素材";
+  meta.textContent = __("新專案：⌘S 存檔之後才能匯入素材");
 });
 
 /** 匯出輕量範本：一份沒有 assets 的 .alignproj，圖片位置全成空欄位框。
  *  這是「把版型分享出去」的路——AirDrop 給 iPad 打開就能填自己的照片。 */
 async function exportTemplate(): Promise<void> {
   if (!current) return;
-  if (!inApp) { meta.textContent = "匯出範本要在 App 內用"; return; }
+  if (!inApp) { meta.textContent = __("匯出範本要在 App 內用"); return; }
   const path = await saveDialog({
-    defaultPath: `${current.name}_範本.alignproj`,
-    filters: [{ name: "ALIGN 範本", extensions: ["alignproj"] }],
+    defaultPath: __f("{name}_範本.alignproj", { name: current.name }),
+    filters: [{ name: __("ALIGN 範本"), extensions: ["alignproj"] }],
   });
   if (typeof path !== "string") return;
   const json = JSON.stringify(encodeProject(stripToTemplate(current)), null, 2);
   await invoke("pack_template", { json, dest: path });
-  meta.textContent = `已匯出範本　${path.split("/").pop()}`;
+  meta.textContent = __f("已匯出範本　{file}", { file: path.split("/").pop() ?? "" });
 }
 
 // ── 匯出 ──────────────────────────────────────────────────────────────
@@ -997,11 +1000,11 @@ function syncSheet(): void {
     b.classList.toggle("on", b.dataset.mode === mode);
   }
   const videoCount = videoPageSet.size;
-  const tail = videoCount ? `　${videoCount} 頁為影片` : "";
+  const tail = videoCount ? __f("　{n} 頁為影片", { n: videoCount }) : "";
   $<HTMLDivElement>("#hint").textContent =
-    mode === "single" ? `第 ${cur + 1} ／ ${shots.length} 張・← → 翻頁${tail}`
-    : mode === "joined" ? `頁貼著頁・檢查跨頁圖在接縫處對不對得齊${tail}`
-    : `一頁一張卡・多圖貼文的樣子${tail}`;
+    mode === "single" ? __f("第 {cur} ／ {total} 張・← → 翻頁{tail}", { cur: cur + 1, total: shots.length, tail })
+    : mode === "joined" ? __f("頁貼著頁・檢查跨頁圖在接縫處對不對得齊{tail}", { tail })
+    : __f("一頁一張卡・多圖貼文的樣子{tail}", { tail });
 }
 
 $<HTMLButtonElement>("#export").addEventListener("click", () => {
@@ -1010,7 +1013,7 @@ $<HTMLButtonElement>("#export").addEventListener("click", () => {
   shots = renderAllPages(current, renderOpts());
   const c = shots[0].canvas;
   $<HTMLSpanElement>("#sheetTitle").textContent = current.name;
-  $<HTMLSpanElement>("#sheetSub").textContent = `${shots.length} 頁　${c.width} × ${c.height}`;
+  $<HTMLSpanElement>("#sheetSub").textContent = __f("{n} 頁　{w} × {h}", { n: shots.length, w: c.width, h: c.height });
   const box = $<HTMLDivElement>("#shots");
   box.replaceChildren();
   for (const s of shots) {
@@ -1096,12 +1099,12 @@ async function saveOne(s: ExportedPage): Promise<void> {
   if (inApp && current && pageHasVideo(current, s.index)) {
     const path = await saveDialog({
       defaultPath: s.name.replace(/\.png$/, ".mp4"),
-      filters: [{ name: "影片", extensions: ["mp4"] }],
+      filters: [{ name: __("影片"), extensions: ["mp4"] }],
     });
     if (typeof path !== "string") return;
     const title = $<HTMLSpanElement>("#sheetSub");
     const base = title.textContent ?? "";
-    title.textContent = `${base}　合成影片中…`;
+    title.textContent = __f("{base}　合成影片中…", { base });
     try { await exportVideoPage(s.index, path); title.textContent = `${base}　✓ ${path.split("/").pop()}`; }
     catch (x) { title.textContent = `${base}　✗ ${(x as Error).message ?? x}`; }
     return;
@@ -1130,14 +1133,15 @@ $<HTMLButtonElement>("#saveAll").addEventListener("click", async () => {
     const base = title.textContent ?? "";
     for (const s of shots) {
       const isVideo = current ? pageHasVideo(current, s.index) : false;
-      title.textContent = `${base}　${isVideo ? "合成影片" : "輸出"}第 ${s.index + 1} 頁…`;
+      title.textContent = (isVideo ? __f("{base}　合成影片第 {n} 頁…", { base, n: s.index + 1 })
+        : __f("{base}　輸出第 {n} 頁…", { base, n: s.index + 1 }));
       if (isVideo) {
         await exportVideoPage(s.index, `${dir}/${s.name.replace(/\.png$/, ".mp4")}`);
       } else {
         await invoke("save_png", { path: `${dir}/${s.name}`, data: await pngBase64(s) });
       }
     }
-    title.textContent = `${base}　✓ 已存入 ${dir.split("/").pop()}`;
+    title.textContent = __f("{base}　✓ 已存入 {dir}", { base, dir: dir.split("/").pop() ?? "" });
     return;
   }
   // 瀏覽器會對連續下載設限，逐張間隔一下
@@ -1192,8 +1196,8 @@ const IMG_EXT = ["jpg", "jpeg", "png", "webp"];
 const VID_EXT = ["mp4", "mov", "m4v"];
 
 function assetsDir(): string | null {
-  if (!inApp) { meta.textContent = "匯入素材要在 App 內用（瀏覽器只是開發預覽）"; return null; }
-  if (origin.kind === "sample") { meta.textContent = "先 ⌘S 另存專案，素材才有地方放"; return null; }
+  if (!inApp) { meta.textContent = __("匯入素材要在 App 內用（瀏覽器只是開發預覽）"); return null; }
+  if (origin.kind === "sample") { meta.textContent = __("先 ⌘S 另存專案，素材才有地方放"); return null; }
   return (origin.kind === "alignproj" ? origin.root : origin.path.replace(/\/[^/]*$/, "")) + "/assets";
 }
 
@@ -1203,7 +1207,7 @@ function loadImg(url: string): Promise<HTMLImageElement> {
     // 媒體伺服器（127.0.0.1）跨源：CORS 乾淨載入，畫進 canvas 才不污染
     if (url.startsWith("http")) img.crossOrigin = "anonymous";
     img.onload = () => ok(img);
-    img.onerror = () => err(new Error("影像載入失敗"));
+    img.onerror = () => err(new Error(__("影像載入失敗")));
     img.src = url;
   });
 }
@@ -1223,7 +1227,7 @@ function capturePoster(url: string): Promise<string> {
     if (url.startsWith("http")) v.crossOrigin = "anonymous";   // toDataURL 需要乾淨的 canvas
     hiddenHost().append(v);
     const done = (fn: () => void): void => { clearTimeout(timer); v.remove(); fn(); };
-    const timer = setTimeout(() => done(() => err(new Error("影片讀太久，抓不到海報"))), 15000);
+    const timer = setTimeout(() => done(() => err(new Error(__("影片讀太久，抓不到海報")))), 15000);
     v.addEventListener("loadeddata", () => { v.currentTime = Math.min(0.1, (v.duration || 1) / 10); });
     v.addEventListener("seeked", () => {
       const c = document.createElement("canvas");
@@ -1232,7 +1236,7 @@ function capturePoster(url: string): Promise<string> {
       const u = c.toDataURL("image/jpeg", 0.86);
       done(() => ok(u.slice(u.indexOf(",") + 1)));
     }, { once: true });
-    v.addEventListener("error", () => done(() => err(new Error("影片解碼失敗"))));
+    v.addEventListener("error", () => done(() => err(new Error(__("影片解碼失敗")))));
     v.src = url;
   });
 }
@@ -1255,8 +1259,8 @@ function refreshMeta(): void {
   if (!current) return;
   if (!showInfo) { meta.textContent = ""; return; }
   const want = assetNames(current).size;
-  meta.textContent = `${current.pageCount} 頁 · ${current.canvasWidth}×${current.pageHeight} · ${current.blocks.length} 個 block`
-    + (want ? `（素材 ${assets.variants.size}/${want}）` : "")
+  meta.textContent = __f("{n} 頁 · {w}×{h} · {blocks} 個 block", { n: current.pageCount, w: current.canvasWidth, h: current.pageHeight, blocks: current.blocks.length })
+    + (want ? __f("（素材 {have}/{want}）", { have: assets.variants.size, want }) : "")
     + `　build ${__BUILD_STAMP__}`;
 }
 
@@ -1291,8 +1295,8 @@ async function importMediaFromPath(src: string, at?: { x: number; y: number }): 
     // （格式完全相容——30 秒只是 iPad 匯入 UI 的政策，見 trim.ts 檔頭）
     const secs = await videoDuration(videoUrl ? videoUrl(name) : await localUrl(`${dir}/${name}`));
     if (secs > 30) {
-      meta.textContent = `這支 ${secs.toFixed(0)} 秒——右鍵可以修剪（回 iPad 匯出會比較慢）`;
-      setTimeout(() => { if (meta.textContent?.startsWith("這支")) refreshMeta(); }, 5000);
+      meta.textContent = __f("這支 {secs} 秒——右鍵可以修剪（回 iPad 匯出會比較慢）", { secs: secs.toFixed(0) });
+      setTimeout(() => { if (meta.textContent?.startsWith(__("這支"))) refreshMeta(); }, 5000);
     }
     const poster = await capturePoster(await localUrl(`${dir}/${name}`));
     await invoke("save_png", { path: `${dir}/${name}.poster.jpg`, data: poster });
@@ -1322,7 +1326,7 @@ async function trimBlock(b: Block): Promise<void> {
   const src = `${dir}/${file}`;
   const r = await openTrim(videoUrl ? videoUrl(file) : await localUrl(src), file);
   if (!r) return;
-  meta.textContent = "修剪中…";
+  meta.textContent = __("修剪中…");
   try {
     const out = `${dir}/trim-${Date.now()}.mov`;
     await invoke("trim_video", { src, dest: out, start: r.start, end: r.end });
@@ -1340,12 +1344,12 @@ async function trimBlock(b: Block): Promise<void> {
     editor.refresh(); scheduleThumbs();
     inspector.show(current, editor.getSelected());
     commit("trim");
-    meta.textContent = `已修剪：${(r.end - r.start).toFixed(1)} 秒`;
+    meta.textContent = __f("已修剪：{secs} 秒", { secs: (r.end - r.start).toFixed(1) });
   } catch (e) {
-    meta.textContent = `修剪失敗：${(e as Error).message ?? e}`;
+    meta.textContent = __f("修剪失敗：{msg}", { msg: (e as Error).message ?? e });
     return;
   }
-  setTimeout(() => { if (meta.textContent?.startsWith("已修剪")) refreshMeta(); }, 2600);
+  setTimeout(() => { if (meta.textContent?.startsWith(__("已修剪"))) refreshMeta(); }, 2600);
 }
 
 async function addPhoto(): Promise<Block | null> {
@@ -1353,7 +1357,7 @@ async function addPhoto(): Promise<Block | null> {
   if (!dir) return null;
   const src = await openDialog({
     multiple: false,
-    filters: [{ name: "影像或影片", extensions: [...IMG_EXT, ...VID_EXT] }],
+    filters: [{ name: __("影像或影片"), extensions: [...IMG_EXT, ...VID_EXT] }],
   });
   if (typeof src !== "string") return null;
   return importMediaFromPath(src);
@@ -1376,7 +1380,7 @@ if (inApp) {
           at.x += 48; at.y += 48;   // 一次拖多張時錯開，別完全疊死
         }
       } catch (x) {
-        meta.textContent = `匯入失敗：${(x as Error).message ?? x}`;
+        meta.textContent = __f("匯入失敗：{msg}", { msg: (x as Error).message ?? x });
       }
     }
     if (added) {
@@ -1395,7 +1399,7 @@ async function addBlock(kind: string): Promise<void> {
   switch (kind) {
     case "text":
       // 預留字與 iOS 同款；黑字放白頁看得見，深色頁自己改——與 iOS 同預設
-      b = baseBlock({ type: "text", text: { text: "雙擊編輯文字", alignment: "center",
+      b = baseBlock({ type: "text", text: { text: __("雙擊編輯文字"), alignment: "center",
         fontSize: Math.round(cw * 0.045), colorHex: "000000", fontWeightValue: 3 } }, 10, 10);
       break;
     case "rectangle": case "ellipse":
@@ -1422,11 +1426,11 @@ async function addBlock(kind: string): Promise<void> {
 $<HTMLSpanElement>("#addbar").addEventListener("click", (e) => {
   // 點擊常落在 svg/path 上，要往上找到帶 data-kind 的按鈕
   const kind = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-kind]")?.dataset.kind;
-  if (kind) addBlock(kind).catch((x) => { meta.textContent = `新增失敗：${x.message ?? x}`; });
+  if (kind) addBlock(kind).catch((x) => { meta.textContent = __f("新增失敗：{msg}", { msg: x.message ?? x }); });
 });
 
 $<HTMLButtonElement>("#save").addEventListener("click", () => {
-  saveProject().catch((x) => { meta.textContent = `存檔失敗：${x.message ?? x}`; });
+  saveProject().catch((x) => { meta.textContent = __f("存檔失敗：{msg}", { msg: x.message ?? x }); });
 });
 $<HTMLButtonElement>("#undoBtn").addEventListener("click", () => undo());
 $<HTMLButtonElement>("#redoBtn").addEventListener("click", () => redo());
@@ -1503,7 +1507,7 @@ async function saveProject(): Promise<void> {
     await invoke("pack_alignproj", { dir: origin.root, dest: origin.path });
   } else {
     // 範本／瀏覽器來源：另存新檔
-    const path = await saveDialog({ defaultPath: `${current.name}.json`, filters: [{ name: "ALIGN 專案", extensions: ["json"] }] });
+    const path = await saveDialog({ defaultPath: `${current.name}.json`, filters: [{ name: __("ALIGN 專案"), extensions: ["json"] }] });
     if (typeof path !== "string") return;
     await invoke("save_text", { path, contents: json });
     origin = { kind: "json", path };
@@ -1511,7 +1515,7 @@ async function saveProject(): Promise<void> {
   }
   savedState = wrote; updateDirty();
   rememberRecent();   // 存檔＝這份專案值得進「最近專案」（另存後 origin 已更新）
-  meta.textContent = `已儲存　${new Date().toLocaleTimeString()}`;
+  meta.textContent = __f("已儲存　{time}", { time: new Date().toLocaleTimeString() });
 }
 
 // ── 齒輪：說明・回報・版本（快速回報 bug 的入口，2026-08-13）──────────
@@ -1520,9 +1524,9 @@ const REPO = "https://github.com/qwert2813434-ctrl/ALIGNED";
 let appVersion = "";   // 開機抓一次（getVersion 是 async，選單組字串要同步拿）
 
 function reportBugMail(): void {
-  const subject = `ALIGNED Mac ${appVersion} 問題回報`;
-  const body = "發生了什麼事：\n\n\n怎麼重現（做了哪幾步）：\n1. \n\n———\n"
-    + `版本 ${appVersion}（build ${__BUILD_STAMP__}）`;
+  const subject = __f("ALIGNED Mac {version} 問題回報", { version: appVersion });
+  const body = __("發生了什麼事：\n\n\n怎麼重現（做了哪幾步）：\n1. \n\n———\n")
+    + __f("版本 {version}（build {build}）", { version: appVersion, build: __BUILD_STAMP__ });
   void invoke("open_url", { url: `mailto:alignediosapp@gmail.com`
     + `?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` });
 }
@@ -1587,22 +1591,22 @@ function buildTour(): TourStep[] {
   }
 
   return [
-    { say: "歡迎。照著藍框走——每一步做到了會自動前進，這幾頁隨你玩壞。" },
-    { say: "先動視角：在畫布上雙指捲動（或 ⌘＋滾輪）縮放一下；按住空白處拖曳＝平移。",
+    { say: __("歡迎。照著藍框走——每一步做到了會自動前進，這幾頁隨你玩壞。") },
+    { say: __("先動視角：在畫布上雙指捲動（或 ⌘＋滾輪）縮放一下；按住空白處拖曳＝平移。"),
       target: () => domRect("#canvas"), done: (t) => t === "zoom" },
-    { say: "搬東西：把藍框這個元件拖去別的位置——靠近別的元件會跳出吸附線，貼齊了有磁力。",
+    { say: __("搬東西：把藍框這個元件拖去別的位置——靠近別的元件會跳出吸附線，貼齊了有磁力。"),
       target: () => rectOf(byId(dragB?.id)), done: (t) => t === "drag" },
-    { say: "改字：雙擊藍框這段文字，改幾個字，點外面完成。",
+    { say: __("改字：雙擊藍框這段文字，改幾個字，點外面完成。"),
       target: () => rectOf(byId(textB?.id)), done: (t) => t === "textedit" },
-    { say: "加東西：從上排這排工具加一個新元件——按 T 加文字，或按矩形。",
+    { say: __("加東西：從上排這排工具加一個新元件——按 T 加文字，或按矩形。"),
       target: () => domRect("#addbar"), done: (t) => t === "add" },
-    { say: "招牌來了。點選藍框這段文字，到右側把「長文框」打開——固定容器，這是排開的前提。",
-      target: blockThenRow(wrapT?.id, "長文框"),
+    { say: __("招牌來了。點選藍框這段文字，到右側把「長文框」打開——固定容器，這是排開的前提。"),
+      target: blockThenRow(wrapT?.id, __("長文框")),
       done: () => textOf(byId(wrapT?.id))?.isBodyFrame === true },
-    { say: "再選旁邊被框住的圖，打開「排開文字」——長文會當場繞著它重新流動。開完拖拖看那張圖。",
-      target: blockThenRow(wrapM?.id, "排開文字"),
+    { say: __("再選旁邊被框住的圖，打開「排開文字」——長文會當場繞著它重新流動。開完拖拖看那張圖。"),
+      target: blockThenRow(wrapM?.id, __("排開文字")),
       done: () => wrapOn(byId(wrapM?.id)) },
-    { say: "就這樣。⌘S 存檔、⌘Z 反悔；之後隨時從右上齒輪回到這份導覽。",
+    { say: __("就這樣。⌘S 存檔、⌘Z 反悔；之後隨時從右上齒輪回到這份導覽。"),
       target: () => domRect("#gearBtn") },
   ];
 }
@@ -1610,18 +1614,18 @@ function buildTour(): TourStep[] {
 $<HTMLButtonElement>("#gearBtn").addEventListener("click", (e) => {
   const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
   openMenu([
-    { label: "操作導覽（帶著做一次）", run: () => {
+    { label: __("操作導覽（帶著做一次）"), run: () => {
       openSample("/samples/intro").then(() => startTour(buildTour())).catch(() => { /* 開不到樣本就不開導覽 */ });
     } },
-    { label: "線上說明", run: () => { void invoke("open_url", { url: `${REPO}#readme` }); } },
+    { label: __("線上說明"), run: () => { void invoke("open_url", { url: `${REPO}#readme` }); } },
     "-",
-    { label: "回報問題（Email）", run: reportBugMail },
-    { label: "回報問題（GitHub Issues）", run: () => { void invoke("open_url", { url: `${REPO}/issues/new` }); } },
+    { label: __("回報問題（Email）"), run: reportBugMail },
+    { label: __("回報問題（GitHub Issues）"), run: () => { void invoke("open_url", { url: `${REPO}/issues/new` }); } },
     "-",
-    { label: "檢查更新", key: `v${appVersion}`, run: () => {
+    { label: __("檢查更新"), key: `v${appVersion}`, run: () => {
       void checkUpdate(true).then((got) => {
-        if (got === "latest") meta.textContent = `已是最新版（${appVersion}）`;
-        if (got === "error") meta.textContent = "連不上更新來源——檢查網路後再試";
+        if (got === "latest") meta.textContent = __f("已是最新版（{version}）", { version: appVersion });
+        if (got === "error") meta.textContent = __("連不上更新來源——檢查網路後再試");
       });
     } },
   ], { x: r.right - 210, y: r.bottom + 8 });
@@ -1669,7 +1673,7 @@ window.addEventListener("keydown", (e) => {
     if (e.key === "n") { e.preventDefault(); openNewSheet(); }
     if (e.key === "o") { e.preventDefault(); $<HTMLButtonElement>("#open").click(); }
     if (e.key === "e") { e.preventDefault(); $<HTMLButtonElement>("#export").click(); }
-    if (e.key === "s") { e.preventDefault(); saveProject().catch((x) => { meta.textContent = `存檔失敗：${x.message ?? x}`; }); }
+    if (e.key === "s") { e.preventDefault(); saveProject().catch((x) => { meta.textContent = __f("存檔失敗：{msg}", { msg: x.message ?? x }); }); }
     if (e.key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     if (e.key === "d") { e.preventDefault(); duplicateSelection(); }
     if (e.key === "l") {
@@ -1828,8 +1832,8 @@ function zoomProbe(): void {
     try {
       const d = JSON.parse(draftRaw) as { json: unknown; name?: string; when?: number };
       const when = d.when ? new Date(d.when).toLocaleString("zh-TW") : "";
-      if (await ask(`「${d.name ?? "未命名專案"}」上次關掉時還沒存檔（${when}）。要接續編輯嗎？`,
-          { title: "未儲存的草稿", okLabel: "接續編輯", cancelLabel: "捨棄" })) {
+      if (await ask(__f("「{name}」上次關掉時還沒存檔（{when}）。要接續編輯嗎？", { name: d.name ?? __("未命名專案"), when }),
+          { title: __("未儲存的草稿"), okLabel: __("接續編輯"), cancelLabel: __("捨棄") })) {
         show(decodeProject(d.json));
         origin = { kind: "sample" };   // 還是未落地——⌘S 走「另存」
       } else {
@@ -2019,4 +2023,4 @@ function zoomProbe(): void {
       lastPaints = f.paints; lastRaf = f.raf;
     }, 1000);
   }
-})().catch((e) => { meta.textContent = `載入失敗：${e.message}`; });
+})().catch((e) => { meta.textContent = __f(__("載入失敗：{msg}"), { msg: e.message }); });

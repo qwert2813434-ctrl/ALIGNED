@@ -1,3 +1,4 @@
+import { __f } from "../i18n";
 // ALIGN Core — 專案 schema 解碼。
 //
 // iOS 端是 Swift 合成的 Codable，JSON 形狀不是手寫的那種漂亮結構，三處要翻譯：
@@ -149,7 +150,7 @@ function content(o: Record<string, unknown>): BlockContent {
     case "image":    return { type: "image", media: media(p) };
     case "video":    return { type: "video", media: media(p) };
     case "shape":    return { type: "shape", shape: p as unknown as ShapeBlock };
-    default: throw new Error(`未知的 block 型別: ${type}`);
+    default: throw new Error(__f("未知的 block 型別: {type}", { type }));
   }
 }
 

@@ -1,3 +1,4 @@
+import { __ } from "../i18n";
 // ALIGN Core — 九顆濾鏡。iOS `Engines/FilterEngine.swift` 的移植。
 //
 // **策略：能烤成查找表的就不要重算。**
@@ -35,9 +36,9 @@ export type FilterKey = (typeof FILTER_KEYS)[number];
 
 /** 顯示名與 iOS 的濾鏡面板一致。 */
 export const FILTER_LABELS: Record<FilterKey, string> = {
-  a1: "銀鹽硬調", a2: "經典中性", a3: "褪色霧面",
-  b1: "紅色濾鏡", b2: "正片負沖", b5: "仿紅外線",
-  c1: "報紙", c3: "底片顆粒", c4: "高級紙",
+  a1: __("銀鹽硬調"), a2: __("經典中性"), a3: __("褪色霧面"),
+  b1: __("紅色濾鏡"), b2: __("正片負沖"), b5: __("仿紅外線"),
+  c1: __("報紙"), c3: __("底片顆粒"), c4: __("高級紙"),
 };
 
 /** 3D 查找表，三線性內插。輸入輸出都是 0…255。 */

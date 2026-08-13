@@ -1,3 +1,4 @@
+import { __, __f } from "./i18n";
 // 屬性檢視器——獨立元件（企劃約束：畫布／頁面膠捲／屬性檢視器三塊必須可分離，
 // 摺疊機與手機版面靠這個）。
 //
@@ -28,12 +29,12 @@ function layerName(b: Block): string {
   const c = b.content;
   if (c.type === "text" || c.type === "textFlow") {
     const t = c.text.text.replace(/\s+/g, " ").trim();
-    return t ? (t.length > 14 ? `${t.slice(0, 14)}…` : t) : "（空白文字）";
+    return t ? (t.length > 14 ? `${t.slice(0, 14)}…` : t) : __("（空白文字）");
   }
   if (c.type === "shape") {
-    return { rectangle: "矩形", ellipse: "圓形", line: "線條" }[c.shape.kind] ?? "形狀";
+    return { rectangle: __("矩形"), ellipse: __("圓形"), line: __("線條") }[c.shape.kind] ?? __("形狀");
   }
-  return c.media.assetFileName ? (c.type === "video" ? "影片" : "圖片") : "空欄位";
+  return c.media.assetFileName ? (c.type === "video" ? __("影片") : __("圖片")) : __("空欄位");
 }
 
 export interface InspectorHooks {
@@ -124,7 +125,7 @@ export class Inspector {
       if (project) this.projectPanel(project);
       const hint = document.createElement("div");
       hint.className = "hint";
-      hint.textContent = "點選畫布上的元件來調整；\n拖曳＝移動並吸附、方向鍵＝微移";
+      hint.textContent = __("點選畫布上的元件來調整；\n拖曳＝移動並吸附、方向鍵＝微移");
       this.el.append(hint);
       return;
     }
@@ -141,11 +142,11 @@ export class Inspector {
     this.project = project;
     this.block = null;
     this.el.replaceChildren();
-    const s = this.section(`已選 ${blocks.length} 個元件`);
+    const s = this.section(__f("已選 {n} 個元件", { n: blocks.length }));
 
     const pairs: [string, [GroupAlign, string][]][] = [
-      ["水平對齊", [["left", "左"], ["hCenter", "中"], ["right", "右"]]],
-      ["垂直對齊", [["top", "上"], ["vCenter", "中"], ["bottom", "下"]]],
+      [__("水平對齊"), [["left", __("左")], ["hCenter", __("中")], ["right", __("右")]]],
+      [__("垂直對齊"), [["top", __("上")], ["vCenter", __("中")], ["bottom", __("下")]]],
     ];
     for (const [label, opts] of pairs) {
       const row = this.row(s, label);
@@ -155,27 +156,27 @@ export class Inspector {
       row.append(seg);
     }
 
-    const dist = this.row(s, "等距分布");
+    const dist = this.row(s, __("等距分布"));
     const dseg = document.createElement("div");
     dseg.className = "seg";
     const canDistribute = blocks.length >= 3;
-    for (const [axis, text] of [["horizontal", "水平"], ["vertical", "垂直"]] as [GroupAxis, string][]) {
+    for (const [axis, text] of [["horizontal", __("水平")], ["vertical", __("垂直")]] as [GroupAxis, string][]) {
       const b = this.btn(text, () => this.hooks.group.distribute(axis));
       b.disabled = !canDistribute;      // 兩個之間沒有東西可以分
-      b.title = canDistribute ? "" : "等距分布至少要選三個";
+      b.title = canDistribute ? "" : __("等距分布至少要選三個");
       dseg.append(b);
     }
     dist.append(dseg);
 
     const acts = this.row(s, "");
-    acts.append(this.btn("複製一份", () => this.hooks.group.duplicate()));
-    const danger = this.btn(`刪除 ${blocks.length} 個（⌫）`, () => this.hooks.group.remove());
+    acts.append(this.btn(__("複製一份"), () => this.hooks.group.duplicate()));
+    const danger = this.btn(__f("刪除 {n} 個（⌫）", { n: blocks.length }), () => this.hooks.group.remove());
     danger.className = "danger";
     acts.append(danger);
 
     const hint = document.createElement("div");
     hint.className = "hint";
-    hint.textContent = "⇧／⌘ 點＝加減選、空白處拖曳＝框選；\n拖曳任一個＝整組移動（相對位置不變）";
+    hint.textContent = __("⇧／⌘ 點＝加減選、空白處拖曳＝框選；\n拖曳任一個＝整組移動（相對位置不變）");
     this.el.append(hint);
   }
 
@@ -184,7 +185,7 @@ export class Inspector {
   /** 沒選元件時給專案級的設定：紙張是**全專案單一**（逐頁不同紙會在頁縫露餡），
    *  頁面背景則是逐頁一格。 */
   private projectPanel(p: Project): void {
-    const s = this.section("專案");
+    const s = this.section(__("專案"));
     const cur = simplifiedRatio(p.canvasWidth, p.pageHeight);
     const known = CANVAS_PRESETS.flatMap((k) => [
       { key: k.key, flip: false, ...canvasSize(k.key, false) },
@@ -195,21 +196,21 @@ export class Inspector {
       .filter((k, i) => known.findIndex((j) => j.w === k.w && j.h === k.h) === i)   // 1:1 翻了還是 1:1
       .map((k) => [`${k.w}x${k.h}`,
                    `${simplifiedRatio(k.w, k.h)}　${k.w}×${k.h}`]);
-    if (!match) opts.unshift([`${p.canvasWidth}x${p.pageHeight}`, `${cur}　${p.canvasWidth}×${p.pageHeight}（目前）`]);
-    this.row(s, "畫布比例").append(this.select(
+    if (!match) opts.unshift([`${p.canvasWidth}x${p.pageHeight}`, __f("{cur}　{w}×{h}（目前）", { cur, w: p.canvasWidth, h: p.pageHeight })]);
+    this.row(s, __("畫布比例")).append(this.select(
       opts, `${p.canvasWidth}x${p.pageHeight}`,
       (v) => {
         const [w, h] = v.split("x").map(Number);
         if (w !== p.canvasWidth || h !== p.pageHeight) this.hooks.changeRatio(w, h);
       },
     ));
-    this.row(s, "紙張").append(this.select(
-      [["", "無"], ["c1", "報紙"], ["c3", "底片顆粒"], ["c4", "高級紙"]],
+    this.row(s, __("紙張")).append(this.select(
+      [["", __("無")], ["c1", __("報紙")], ["c3", __("底片顆粒")], ["c4", __("高級紙")]],
       p.paperKey ?? "",
       (v) => { p.paperKey = v || undefined; this.emit(); },
     ));
     const i = this.hooks.layers.currentPage();
-    this.row(this.section("頁面背景"), `第 ${i + 1} 頁`).append(
+    this.row(this.section(__("頁面背景")), __f("第 {n} 頁", { n: i + 1 })).append(
       this.color(p.pageBackgroundHex?.[String(i)] ?? "FFFFFF", (hexNoHash) => {
         p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [String(i)]: hexNoHash };
         this.emit();
@@ -221,21 +222,21 @@ export class Inspector {
 
   /** 參考線面板。**隱藏**只是不畫（線還在、吸附照舊）；**鎖定**是滑鼠碰不到。 */
   private guidesPanel(p: Project): void {
-    const gs = this.section("參考線");
-    const row = this.row(gs, "狀態");
-    const eye = this.btn(this.hooks.guides.hidden() ? "已隱藏" : "顯示中",
+    const gs = this.section(__("參考線"));
+    const row = this.row(gs, __("狀態"));
+    const eye = this.btn(this.hooks.guides.hidden() ? __("已隱藏") : __("顯示中"),
                          () => { this.hooks.guides.toggleHidden(); this.rebuild(); });
     eye.classList.toggle("on", !this.hooks.guides.hidden());
-    const lock = this.btn(this.hooks.guides.locked() ? "已鎖定" : "可拖曳",
+    const lock = this.btn(this.hooks.guides.locked() ? __("已鎖定") : __("可拖曳"),
                           () => { this.hooks.guides.toggleLocked(); this.rebuild(); });
     lock.classList.toggle("on", this.hooks.guides.locked());
     row.append(eye, lock);
-    this.row(gs, "新增").append(
-      this.btn("垂直線", () => this.hooks.guides.add("x")),
-      this.btn("水平線", () => this.hooks.guides.add("y")),
+    this.row(gs, __("新增")).append(
+      this.btn(__("垂直線"), () => this.hooks.guides.add("x")),
+      this.btn(__("水平線"), () => this.hooks.guides.add("y")),
     );
     const list: [string, "x" | "y", number[]][] = [
-      ["垂直", "x", p.guidesX ?? []], ["水平", "y", p.guidesY ?? []],
+      [__("垂直"), "x", p.guidesX ?? []], [__("水平"), "y", p.guidesY ?? []],
     ];
     for (const [label, axis, arr] of list) {
       arr.forEach((v, i) => {
@@ -246,15 +247,15 @@ export class Inspector {
             if (axis === "x") (p.guidesX ??= [])[i] = nv; else (p.guidesY ??= [])[i] = nv;
             this.emit();
           }),
-          this.btn("刪除", () => this.hooks.guides.remove(axis, i)),
+          this.btn(__("刪除"), () => this.hooks.guides.remove(axis, i)),
         );
       });
     }
     const hint = document.createElement("div");
     hint.className = "hint pinhint";
     hint.textContent = (p.guidesX?.length || p.guidesY?.length)
-      ? (this.hooks.guides.locked() ? "已鎖定：畫布上碰不到，改數值或解鎖" : "畫布上可直接拖；拖出頁面外＝丟掉")
-      : "還沒有參考線。加一條，或從畫布上拖出來";
+      ? (this.hooks.guides.locked() ? __("已鎖定：畫布上碰不到，改數值或解鎖") : __("畫布上可直接拖；拖出頁面外＝丟掉"))
+      : __("還沒有參考線。加一條，或從畫布上拖出來");
     this.el.append(hint);
   }
 
@@ -265,7 +266,7 @@ export class Inspector {
     const onPage = p.blocks
       .filter((b) => Math.floor((b.frame.x + b.frame.w / 2) / p.canvasWidth) === page)
       .sort((a, b) => b.zIndex - a.zIndex);
-    this.section(`圖層　第 ${page + 1} 頁`);
+    this.section(__f("圖層　第 {n} 頁", { n: page + 1 }));
     void half;
     const box = document.createElement("div");
     box.className = "layers";
@@ -282,7 +283,7 @@ export class Inspector {
       name.textContent = layerName(b);
       const lk = document.createElement("button");
       lk.className = "lk";
-      lk.title = b.locked ? "解除鎖定" : "鎖定";
+      lk.title = b.locked ? __("解除鎖定") : __("鎖定");
       lk.innerHTML = b.locked ? LOCK_ON : LOCK_OFF;
       lk.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -296,7 +297,7 @@ export class Inspector {
     }
     const hint = document.createElement("div");
     hint.className = "hint pinhint";
-    hint.textContent = onPage.length ? "上＝最前面，拖曳換前後" : "這一頁還沒有元件";
+    hint.textContent = onPage.length ? __("上＝最前面，拖曳換前後") : __("這一頁還沒有元件");
     this.el.append(hint);
   }
 
@@ -378,70 +379,70 @@ export class Inspector {
   }
 
   private common(b: Block): void {
-    const s = this.section("位置與圖層");
-    const pos = this.row(s, "位置");
+    const s = this.section(__("位置與圖層"));
+    const pos = this.row(s, __("位置"));
     pos.append(
       this.num(b.frame.x, { step: 1 }, (v) => { b.frame.x = v; this.emit(); }),
       this.num(b.frame.y, { step: 1 }, (v) => { b.frame.y = v; this.emit(); }),
     );
-    const size = this.row(s, "尺寸");
+    const size = this.row(s, __("尺寸"));
     const editable = b.content.type === "shape" || b.content.type === "image" || b.content.type === "video";
     // 文字的框是貼字盒（由內容決定），這裡不給改——改字級/欄寬才是正路
     size.append(
       this.num(Math.round(b.frame.w), { step: 1, disabled: !editable }, (v) => { b.frame.w = v; this.emit(); }),
       this.num(Math.round(b.frame.h), { step: 1, disabled: !editable }, (v) => { b.frame.h = v; this.emit(); }),
     );
-    this.row(s, "旋轉").append(
+    this.row(s, __("旋轉")).append(
       this.num(b.rotation, { min: -180, max: 180, step: 1 }, (v) => { b.rotation = v; this.emit(); }),
     );
-    this.row(s, "不透明").append(
+    this.row(s, __("不透明")).append(
       this.range(b.opacity, 0, 1, 0.05, (v) => { b.opacity = v; this.emit(); }),
     );
-    this.row(s, "鎖定").append(this.check(b.locked, (on) => {
+    this.row(s, __("鎖定")).append(this.check(b.locked, (on) => {
       // 鎖定的元件點不到、拖不動、不長手把、群組對齊也略過（引擎本來就吃這個欄位）
       b.locked = on;
       this.rebuild();
       this.emit();
     }));
-    const layer = this.row(s, "圖層");
+    const layer = this.row(s, __("圖層"));
     layer.append(
-      this.btn("移到最前", () => this.hooks.reorder(b, "front")),
-      this.btn("移到最後", () => this.hooks.reorder(b, "back")),
+      this.btn(__("移到最前"), () => this.hooks.reorder(b, "front")),
+      this.btn(__("移到最後"), () => this.hooks.reorder(b, "back")),
     );
-    const danger = this.btn("刪除元件（⌫）", () => this.hooks.remove(b));
+    const danger = this.btn(__("刪除元件（⌫）"), () => this.hooks.remove(b));
     danger.className = "danger";
     this.row(s, "").append(danger);
   }
 
   private text(t: TextBlock): void {
-    const s = this.section("文字");
+    const s = this.section(__("文字"));
     const ta = document.createElement("textarea");
     ta.rows = 3;
     ta.value = t.text;
     ta.addEventListener("input", () => { t.text = ta.value; this.emit(true); });
-    this.row(s, "內容").append(ta);
+    this.row(s, __("內容")).append(ta);
 
-    this.row(s, "字型").append(this.fontSelect(t));
-    this.row(s, "字重").append(this.select(
+    this.row(s, __("字型")).append(this.fontSelect(t));
+    this.row(s, __("字重")).append(this.select(
       WEIGHT_LABELS.map((l, i) => [String(i), l]),
       String(t.fontWeightValue ?? 3),
       (v) => { t.fontWeightValue = Number(v); this.emit(true); },
     ));
-    this.row(s, "字級").append(
+    this.row(s, __("字級")).append(
       this.num(t.fontSize ?? 49, { min: 8, max: 500, step: 1 }, (v) => { t.fontSize = v; this.emit(true); }),
     );
     // 字距用 em 制（新模型優先）；行高倍數 <1 可壓緊，這是 iOS 舊點制做不到的
-    this.row(s, "字距 em").append(
+    this.row(s, __("字距 em")).append(
       this.num(t.kerningEm ?? 0, { min: -0.05, max: 1.5, step: 0.01 }, (v) => { t.kerningEm = v; this.emit(true); }),
     );
-    this.row(s, "行高 ×").append(
+    this.row(s, __("行高 ×")).append(
       this.num(t.lineHeightMultiple ?? 1, { min: 0.7, max: 2, step: 0.05 }, (v) => { t.lineHeightMultiple = v; this.emit(true); }),
     );
 
-    const seg = this.row(s, "對齊");
+    const seg = this.row(s, __("對齊"));
     const alignBox = document.createElement("div");
     alignBox.className = "seg";
-    const aligns: [TextAlign, string][] = [["leading", "左"], ["center", "中"], ["trailing", "右"]];
+    const aligns: [TextAlign, string][] = [["leading", __("左")], ["center", __("中")], ["trailing", __("右")]];
     for (const [val, label] of aligns) {
       const btn = this.btn(label, () => {
         t.alignment = val;
@@ -454,7 +455,7 @@ export class Inspector {
     seg.append(alignBox);
 
     if (!t.vertical) {
-      this.row(s, "段落間距").append(
+      this.row(s, __("段落間距")).append(
         this.num(t.paragraphSpacingEm ?? 0, { min: 0, max: 3, step: 0.1 }, (v) => {
           t.paragraphSpacingEm = v > 0 ? v : undefined;
           this.emit(true);
@@ -462,7 +463,7 @@ export class Inspector {
       );
     }
 
-    this.row(s, "直排").append(this.check(t.vertical === true, (on) => {
+    this.row(s, __("直排")).append(this.check(t.vertical === true, (on) => {
       // additive 慣例：false 存成 undefined，舊檔 byte 不變
       t.vertical = on ? true : undefined;
       this.rebuild();
@@ -470,20 +471,20 @@ export class Inspector {
     }));
     if (t.vertical) {
       // 直排預設由右到左（中文的閱讀順序）；打開＝改成由左到右
-      this.row(s, "欄序左起").append(this.check(t.verticalLeftToRight === true, (on) => {
+      this.row(s, __("欄序左起")).append(this.check(t.verticalLeftToRight === true, (on) => {
         t.verticalLeftToRight = on ? true : undefined;
         this.emit(true);
       }));
     }
-    this.row(s, "顏色").append(this.color(t.colorHex ?? "000000", (hex) => {
+    this.row(s, __("顏色")).append(this.color(t.colorHex ?? "000000", (hex) => {
       t.colorHex = hex;
       t.inkColor = undefined;   // 渲染以 run 屬性優先，改色要把它清掉才吃 colorHex
       this.emit(true);
     }));
 
     // ── 長文框：固定容器（會裁切、吃文繞圖），與貼字盒是兩種語意 ──
-    const bs = this.section("長文框");
-    this.row(bs, "長文框").append(this.check(t.isBodyFrame === true, (on) => {
+    const bs = this.section(__("長文框"));
+    this.row(bs, __("長文框")).append(this.check(t.isBodyFrame === true, (on) => {
       if (on) {
         // 打開＝這個框從此由使用者定尺寸。先用目前的貼字盒當起點，
         // 太扁的話給一個能放進幾行的高度，不然打開的瞬間只看得到一行。
@@ -501,7 +502,7 @@ export class Inspector {
       this.emit(true);
     }));
     if (t.isBodyFrame) {
-      const box = this.row(bs, "框大小");
+      const box = this.row(bs, __("框大小"));
       const sync = (which: "w" | "h", v: number) => {
         const b = this.block!;
         if (which === "w") { t.manualWidth = v; b.frame.w = v; }
@@ -512,26 +513,26 @@ export class Inspector {
         this.num(Math.round(this.block!.frame.w), { min: 20, step: 1 }, (v) => sync("w", v)),
         this.num(Math.round(this.block!.frame.h), { min: 20, step: 1 }, (v) => sync("h", v)),
       );
-      this.row(bs, "框內對齊").append(this.select(
-        [["top", "上"], ["middle", "中"], ["bottom", "下"]],
+      this.row(bs, __("框內對齊")).append(this.select(
+        [["top", __("上")], ["middle", __("中")], ["bottom", __("下")]],
         t.verticalAlignment ?? "top",
         (v) => { t.verticalAlignment = v as TextBlock["verticalAlignment"]; this.emit(true); },
       ));
     }
 
     // ── 渲染層特效：只是畫上去，不影響量測與貼字盒 ──
-    const fx = this.section("特效");
-    this.row(fx, "陰影").append(this.select(
-      [["", "無"], ["soft", "柔和"], ["strong", "明顯"]],
+    const fx = this.section(__("特效"));
+    this.row(fx, __("陰影")).append(this.select(
+      [["", __("無")], ["soft", __("柔和")], ["strong", __("明顯")]],
       t.shadowStyle ?? "",
       (v) => { t.shadowStyle = v || undefined; this.rebuild(); this.emit(); },
     ));
     if (t.shadowStyle) {
-      this.row(fx, "陰影色").append(this.color(t.shadowColorHex ?? "000000", (hex) => {
+      this.row(fx, __("陰影色")).append(this.color(t.shadowColorHex ?? "000000", (hex) => {
         t.shadowColorHex = hex; this.emit();
       }));
     }
-    const bgOn = this.row(fx, "底色");
+    const bgOn = this.row(fx, __("底色"));
     bgOn.append(this.check(t.backgroundColorHex != null, (on) => {
       t.backgroundColorHex = on ? (t.backgroundColorHex ?? "FFE066") : undefined;
       this.rebuild();
@@ -543,21 +544,21 @@ export class Inspector {
   }
 
   private shape(sh: ShapeBlock): void {
-    const s = this.section("形狀");
-    this.row(s, "類型").append(this.select(
-      [["rectangle", "矩形"], ["ellipse", "圓形"], ["line", "線條"]],
+    const s = this.section(__("形狀"));
+    this.row(s, __("類型")).append(this.select(
+      [["rectangle", __("矩形")], ["ellipse", __("圓形")], ["line", __("線條")]],
       sh.kind,
       (v) => { sh.kind = v as ShapeBlock["kind"]; this.rebuild(); this.emit(); },
     ));
-    this.row(s, "顏色").append(this.color(sh.colorHex, (hex) => { sh.colorHex = hex; this.emit(); }));
+    this.row(s, __("顏色")).append(this.color(sh.colorHex, (hex) => { sh.colorHex = hex; this.emit(); }));
     if (sh.kind === "rectangle") {
-      this.row(s, "圓角").append(
+      this.row(s, __("圓角")).append(
         this.num(sh.cornerRadius ?? 0, { min: 0, max: 200, step: 1 }, (v) => { sh.cornerRadius = v; this.emit(); }),
       );
     }
     if (sh.kind === "line") {
       // 下限 0.25、一格 0.25——與 iOS 端 2026-08-01 的髮絲線修正同規格
-      this.row(s, "粗細").append(
+      this.row(s, __("粗細")).append(
         this.num(sh.lineWidth ?? 8, { min: 0.25, max: 60, step: 0.25 }, (v) => { sh.lineWidth = v; this.emit(); }),
       );
     }
@@ -565,12 +566,12 @@ export class Inspector {
   }
 
   private media(b: Block, m: MediaBlock): void {
-    const s = this.section(b.content.type === "video" ? "影片" : "圖片");
-    const pick = this.btn(m.assetFileName ? "更換圖片／影片…" : "選擇圖片／影片…",
+    const s = this.section(b.content.type === "video" ? __("影片") : __("圖片"));
+    const pick = this.btn(m.assetFileName ? __("更換圖片／影片…") : __("選擇圖片／影片…"),
                           () => this.hooks.fillMedia(b));
     this.row(s, "").append(pick);
-    this.row(s, "濾鏡").append(this.select(
-      [["", "無"], ...FILTER_KEYS.map((k) => [k, FILTER_LABELS[k]] as [string, string])],
+    this.row(s, __("濾鏡")).append(this.select(
+      [["", __("無")], ...FILTER_KEYS.map((k) => [k, FILTER_LABELS[k]] as [string, string])],
       m.filterKey ?? "",
       (v) => {
         m.filterKey = v || undefined;
@@ -578,8 +579,8 @@ export class Inspector {
         this.hooks.ensureVariant(b).then(() => this.emit());
       },
     ));
-    this.row(s, "遮罩").append(this.select(
-      [["", "無"], ["rectangle", "圓角矩形"], ["ellipse", "橢圓"]],
+    this.row(s, __("遮罩")).append(this.select(
+      [["", __("無")], ["rectangle", __("圓角矩形")], ["ellipse", __("橢圓")]],
       m.maskShape ?? "",
       (v) => {
         m.maskShape = (v || undefined) as MediaBlock["maskShape"];
@@ -590,18 +591,18 @@ export class Inspector {
     ));
     if (m.maskShape === "rectangle") {
       // 存的是「短邊一半」的分數
-      this.row(s, "圓角").append(
+      this.row(s, __("圓角")).append(
         this.range(m.maskCornerRadius ?? 0, 0, 1, 0.01, (v) => { m.maskCornerRadius = v; this.emit(); }),
       );
     }
     // 外框要「寬＋色」同時存在才會渲染——單獨動任一個都自動補上另一個的預設，
     // 不然使用者調了外框寬、畫面毫無反應（色票顯示白色但其實沒存過，2026-08-08 實案）
-    this.row(s, "外框色").append(this.color(m.strokeHex ?? "FFFFFF", (hex) => {
+    this.row(s, __("外框色")).append(this.color(m.strokeHex ?? "FFFFFF", (hex) => {
       m.strokeHex = hex;
       if (!m.strokeWidth) { m.strokeWidth = 0.01; this.rebuild(); }
       this.emit();
     }));
-    this.row(s, "外框寬").append(
+    this.row(s, __("外框寬")).append(
       // 短邊的分數制——所以跨畫布尺寸會等比（與圖形線的點數制不同，是 iOS 的原始設計）
       this.num(m.strokeWidth ?? 0, { min: 0, max: 0.15, step: 0.005 }, (v) => {
         m.strokeWidth = v > 0 ? v : undefined;
@@ -611,15 +612,15 @@ export class Inspector {
     );
     if (m.assetFileName) {
       // 拉直：轉的是**內容**不是 block（與 iOS 裁切畫面的那個角度同一個欄位）
-      this.row(s, "拉直").append(
+      this.row(s, __("拉直")).append(
         this.num(m.rotationDegrees ?? 0, { min: -45, max: 45, step: 0.5 }, (v) => {
           m.rotationDegrees = v !== 0 ? v : undefined;
           this.emit();
         }),
       );
       // 裁切比例：改的是 block 的框（照片不動、裁切區跟著），與八點裁切同一套語意
-      this.row(s, "裁切比例").append(this.select(
-        [["", "自由"], ["1:1", "1:1"], ["4:5", "4:5"], ["3:4", "3:4"], ["16:9", "16:9"], ["9:16", "9:16"]],
+      this.row(s, __("裁切比例")).append(this.select(
+        [["", __("自由")], ["1:1", "1:1"], ["4:5", "4:5"], ["3:4", "3:4"], ["16:9", "16:9"], ["9:16", "9:16"]],
         "",
         (v) => {
           if (!v) return;
@@ -663,14 +664,14 @@ export class Inspector {
     get: () => { excludesText?: boolean; textWrapMode?: string },
   ): void {
     const o = get();
-    this.row(parent, "排開文字").append(this.check(o.excludesText === true, (on) => {
+    this.row(parent, __("排開文字")).append(this.check(o.excludesText === true, (on) => {
       o.excludesText = on ? true : undefined;
       this.rebuild();
       this.emit(true);
     }));
     if (o.excludesText) {
-      this.row(parent, "排開方式").append(this.select(
-        [["side", "單側"], ["around", "兩側"], ["push", "上下"]],
+      this.row(parent, __("排開方式")).append(this.select(
+        [["side", __("單側")], ["around", __("兩側")], ["push", __("上下")]],
         o.textWrapMode ?? "side",     // 與 iOS TextWrapMode.init 相同：未設＝單側
         (v) => { o.textWrapMode = v; this.emit(true); },
       ));
@@ -685,7 +686,7 @@ export class Inspector {
       if (!hasBody) {
         const warn = document.createElement("div");
         warn.className = "hint pinhint warn";
-        warn.textContent = "這一頁沒有長文框，排開不會有反應——選那段文字，把「長文框」打開";
+        warn.textContent = __("這一頁沒有長文框，排開不會有反應——選那段文字，把「長文框」打開");
         parent.append(warn);
       }
     }
@@ -767,18 +768,18 @@ export class Inspector {
       }
       sel.append(g);
     };
-    group("介面字體", FONT_CHOICES);
-    group("自訂", fontCatalog.custom);
-    group("系統字體", fontCatalog.system);
+    group(__("介面字體"), FONT_CHOICES);
+    group(__("自訂"), fontCatalog.custom);
+    group(__("系統字體"), fontCatalog.system);
     const cur = t.fontName ?? "";
     if (cur && ![...sel.options].some((o) => o.value === cur)) {
       const o = document.createElement("option");
-      o.value = cur; o.textContent = `${cur}（未安裝）`;
+      o.value = cur; o.textContent = __f("{cur}（未安裝）", { cur });
       sel.append(o);
     }
     if (this.hooks.importFont) {
       const imp = document.createElement("option");
-      imp.value = "__import__"; imp.textContent = "＋ 匯入字型檔…";
+      imp.value = "__import__"; imp.textContent = __("＋ 匯入字型檔…");
       sel.append(imp);
     }
     sel.value = cur;

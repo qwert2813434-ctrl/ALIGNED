@@ -1,3 +1,4 @@
+import { __, __f } from "./i18n";
 // 更新提醒（STB 同款機制，理由也相同：離線 App 沒人知道出新版了）。
 // 開 App 時抓一份小 JSON 比版本，有新版才浮一條橫幅＋下載連結；不自動下載安裝
 // （那要 Tauri updater＋簽章 manifest，工大很多）。
@@ -43,22 +44,22 @@ function banner(version: string, notes: string, dmgUrl?: string): void {
   const txt = document.createElement("span");
   txt.className = "updtxt";
   const b = document.createElement("b");
-  b.textContent = `有新版 ${version}`;
+  b.textContent = __f("有新版 {version}", { version });
   txt.append(b);
   if (notes) txt.append(`　${notes}`);
   const go = document.createElement("button");
   go.className = "updgo";
-  go.textContent = "前往下載";
+  go.textContent = __("前往下載");
   go.addEventListener("click", () => {
     void invoke("open_url", { url: dmgUrl ?? PAGE });
     el.remove();
   });
   const skip = document.createElement("button");
-  skip.textContent = "略過此版";
+  skip.textContent = __("略過此版");
   skip.addEventListener("click", () => { localStorage.setItem(SKIP_KEY, version); el.remove(); });
   const x = document.createElement("button");
   x.textContent = "✕";
-  x.title = "關閉";
+  x.title = __("關閉");
   x.addEventListener("click", () => el.remove());
   el.append(txt, go, skip, x);
   document.body.append(el);

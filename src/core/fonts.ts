@@ -1,3 +1,4 @@
+import { __ } from "../i18n";
 // ALIGN Core — 字型解析。iOS 端 AppFontCatalog 的移植。
 //
 // 儲存模型：TextBlock.fontName 存的是**家族鍵**（該家族 Regular 的 PostScript 名），
@@ -138,10 +139,10 @@ export async function loadFonts(base = "/fonts/"): Promise<void> {
 
 /** 字型選單（檢視器用）。value ＝存進 TextBlock.fontName 的家族鍵，"" ＝系統黑體。 */
 export const FONT_CHOICES: { label: string; value: string }[] = [
-  { label: "黑體（系統）", value: "" },
-  { label: "粉圓體", value: "jf-openhuninn-2.1" },
-  { label: "思源宋體", value: "NotoSerifTC-Regular" },
-  { label: "源樣明體", value: "GenYoMin2TC-R" },
+  { label: __("黑體（系統）"), value: "" },
+  { label: __("粉圓體"), value: "jf-openhuninn-2.1" },
+  { label: __("思源宋體"), value: "NotoSerifTC-Regular" },
+  { label: __("源樣明體"), value: "GenYoMin2TC-R" },
   { label: "Playfair Display", value: "PlayfairDisplayRoman-Regular" },
   { label: "Fira Code", value: "FiraCode-Regular" },
   { label: "Inter", value: "Inter-Regular" },
@@ -149,4 +150,4 @@ export const FONT_CHOICES: { label: string; value: string }[] = [
 ];
 
 /** 字重五檔的顯示名（0…4，iOS TextWeightStep 同序）。 */
-export const WEIGHT_LABELS = ["極細", "細", "標準", "粗", "特粗"];
+export const WEIGHT_LABELS = [__("極細"), __("細"), __("標準"), __("粗"), __("特粗")];

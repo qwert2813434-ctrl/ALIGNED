@@ -1,3 +1,4 @@
+import { __ } from "./i18n";
 // 畫布上的影片預覽。
 //
 // iOS 的畫布上影片是**靜音、自動循環的真播放**（VideoBlockPreview）；Mac 這裡對齊。
@@ -124,7 +125,7 @@ export class VideoPool {
     try {
       if (typeof OffscreenCanvas === "undefined" || typeof VideoFrame === "undefined"
           || typeof HTMLCanvasElement.prototype.transferControlToOffscreen !== "function") {
-        throw new Error("環境不支援工人管線");
+        throw new Error(__("環境不支援工人管線"));
       }
       const w = new Worker(new URL("./filterworker.ts", import.meta.url), { type: "module" });
       w.postMessage({ type: "assets", assets: this.filters() });

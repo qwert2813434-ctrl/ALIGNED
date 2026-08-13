@@ -1,3 +1,4 @@
+import { __, __f, localizeTitles } from "./i18n";
 // 影片修剪視窗——底片條＋進出點把手＋播頭，照 iOS VideoTrimView 的語彙
 // （取消／加入、拖中段整段平移、最短 1 秒）。
 //
@@ -98,6 +99,7 @@ export function openTrim(url: string, name: string): Promise<TrimResult | null> 
         </div>
       </div>`;
     document.body.append(root);
+    localizeTitles(root); // 對話框是後生的，開機那次掃不到
     const $ = <T extends HTMLElement>(id: string): T => root.querySelector<T>(`#${id}`)!;
     const vid = $<HTMLVideoElement>("trimvid");
     const bar = $("trimbar"), win = $("trimwin"), head = $("trimhead");
@@ -122,9 +124,9 @@ export function openTrim(url: string, name: string): Promise<TrimResult | null> 
       dimR.style.width = `${100 - pct(outT)}%`;
       head.style.left = `${pct(vid.currentTime)}%`;
       const sel = outT - inT;
-      $("trimtimes").textContent = `${fmt(inT)} – ${fmt(outT)}　選取 ${sel.toFixed(1)} 秒（原長 ${dur.toFixed(1)} 秒）`;
+      $("trimtimes").textContent = __f("{in} – {out}　選取 {sel} 秒（原長 {dur} 秒）", { in: fmt(inT), out: fmt(outT), sel: sel.toFixed(1), dur: dur.toFixed(1) });
       // 軟提醒：超過 30 秒回 iPad 會很吃力（不是錯誤，只是誠實告知）
-      $("trimwarn").textContent = sel > 30 ? "超過 30 秒——回 iPad 匯出會比較慢、專案檔也大" : "";
+      $("trimwarn").textContent = sel > 30 ? __("超過 30 秒——回 iPad 匯出會比較慢、專案檔也大") : "";
     };
 
     const timeAt = (clientX: number): number => {
