@@ -38,6 +38,9 @@ export interface RenderOptions {
   onlyBlockIds?: Set<string>;
   /** 不畫頁面底色，留透明（分段圖層要疊在影片上，只有最底那段畫背景）。 */
   transparent?: boolean;
+  /** 輸出倍率（只有 renderPageCanvas 吃）：2＝畫布兩倍像素，16:9 畫布即 4K。
+   *  文字與形狀是向量重畫所以是真解析度，不是放大圖。 */
+  scale?: number;
   /** 編輯畫布的視野（專案座標）。給了就跳過視野外的頁與 block——
    *  clip 語意不變，只是不畫看不見的。匯出／縮圖不給＝全畫。 */
   viewRect?: Rect;
@@ -58,10 +61,12 @@ function cullBounds(b: Block): Rect {
  */
 export function renderPageCanvas(project: Project, index: number, opts: RenderOptions = {}): HTMLCanvasElement {
   const page = pageRect(project, index);
+  const S = opts.scale ?? 1;
   const c = document.createElement("canvas");
-  c.width = Math.round(page.w);
-  c.height = Math.round(page.h);
+  c.width = Math.round(page.w * S);
+  c.height = Math.round(page.h * S);
   const ctx = c.getContext("2d", { willReadFrequently: !!project.paperKey })!;
+  if (S !== 1) ctx.scale(S, S);   // renderPage 照樣畫頁座標，transform 負責放大
   renderPage(ctx, project, index, opts);
   if (project.paperKey && opts.filters) {
     const d = ctx.getImageData(0, 0, c.width, c.height);

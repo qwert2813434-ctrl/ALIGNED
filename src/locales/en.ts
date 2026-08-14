@@ -75,6 +75,15 @@ export const en: Record<string, string> = {
   "文字（{n} 個一起改）": "Text ({n} together)",
   "（混合）": "(Mixed)",
   "對齊頁面": "Align to page",
+  "透明": "Transparent",
+  "只留文字": "Text only",
+  "_透明": "_alpha",
+  "透明背景：跳過頁底色與紙張，出 RGBA PNG（給剪輯疊層用）":
+    "Transparent background: skip the page color and paper, export RGBA PNG (for editing overlays)",
+  "只留文字：藏起圖片與影片，出字幕／片尾疊層":
+    "Text only: hide images and videos, export a subtitle / credits overlay",
+  "輸出倍率：2×＝畫布兩倍像素（16:9 畫布＝4K）":
+    "Output scale: 2× = double the canvas pixels (16:9 canvas = 4K)",
   "貼左頁邊": "Left page edge",
   "頁面水平置中": "Center horizontally on page",
   "貼右頁邊": "Right page edge",

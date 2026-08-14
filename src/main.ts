@@ -505,13 +505,36 @@ function renderOpts() {
   return { images: assets.variants, filters: filterAssets, placeholderForMissingMedia: true };
 }
 
+// ── 匯出台的 PNG 選項（2026-08-14，優化項目 #11）──────────────────────
+// 透明背景＝跳過頁底色與紙張（紙是背景面）；只留文字＝字幕／片尾疊層，
+// 給剪輯軟體（達芬奇）直接壓在畫面上；2×＝畫布兩倍像素（16:9 即 4K）。
+// 記在本機——他每次要的多半一樣，不用每回重勾。
+const EXPORT_PNG_KEY = "align.exportPng";
+const exportPng = { alpha: false, textOnly: true, scale2x: false };
+try { Object.assign(exportPng, JSON.parse(localStorage.getItem(EXPORT_PNG_KEY) ?? "{}")); } catch { /* 壞值用預設 */ }
+
+/** 匯出（存檔）用的渲染選項。透明模式不套紙張——紙是背景面，疊層不該帶。 */
+function exportOpts() {
+  const scale = exportPng.scale2x ? 2 : 1;
+  if (!exportPng.alpha) return { ...renderOpts(), scale };
+  return {
+    images: assets.variants, placeholderForMissingMedia: true, scale,
+    transparent: true,
+    onlyBlockIds: exportPng.textOnly && current
+      ? new Set(current.blocks
+          .filter((b) => b.content.type === "text" || b.content.type === "textFlow")
+          .map((b) => b.id))
+      : undefined,
+  };
+}
+
 /**
- * 匯出台的**預覽**用：跟匯出同一條渲染路，但多餵即時影格，所以影片會動。
- * 存檔不能用這個——同一份專案匯出兩次必須一模一樣，抓「當下那一格」
- * 會讓 PNG 隨手速改變（VideoPool 開頭那條取捨）。
+ * 匯出台的**預覽**用：跟匯出同一條渲染路（含透明／只留文字／倍率），
+ * 但多餵即時影格，所以影片會動。存檔不能用這個——同一份專案匯出兩次
+ * 必須一模一樣，抓「當下那一格」會讓 PNG 隨手速改變（VideoPool 開頭那條取捨）。
  */
 function previewOpts() {
-  return { ...renderOpts(), videos: videos.frames };
+  return { ...exportOpts(), videos: videos.frames };
 }
 
 // 縮圖走全解析度渲染，改一個值重畫七頁沒必要——收斂到停手後 300ms 才更新
@@ -1002,11 +1025,15 @@ function repaintVideoPages(): void {
   for (const s of shots) {
     if (!videoPageSet.has(s.index) || !seen.has(s.index)) continue;
     if (current.paperKey && filterAssets) {
-      // 紙張是整頁逐像素運算，只能走離屏路
+      // 紙張是整頁逐像素運算，只能走離屏路。
+      // 2× 匯出時 shot 的 ctx 帶著縮放 transform，貼整張離屏圖前要歸零才不會貼成四倍
       const live = renderPageCanvas(current, s.index, previewOpts());
       const ctx = s.canvas.getContext("2d")!;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
       ctx.drawImage(live, 0, 0);
+      ctx.restore();
     } else {
       renderPage(s.canvas.getContext("2d")!, current, s.index, previewOpts());
     }
@@ -1033,10 +1060,13 @@ function syncSheet(): void {
     : __f("一頁一張卡・多圖貼文的樣子{tail}", { tail });
 }
 
-$<HTMLButtonElement>("#export").addEventListener("click", () => {
+/** 依目前的 PNG 選項重拍全部頁面並鋪進畫廊（匯出台開著時切選項也走這裡）。 */
+function buildShots(): void {
   if (!current) return;
   // 匯出走的是與編輯預覽同一支 renderPageCanvas，所以所見即所得
-  shots = renderAllPages(current, renderOpts());
+  shots = renderAllPages(current, exportOpts());
+  // 透明匯出的檔名帶記號，落地才分得出哪張是疊層
+  if (exportPng.alpha) for (const s of shots) s.name = s.name.replace(/\.png$/, `${__("_透明")}.png`);
   const c = shots[0].canvas;
   $<HTMLSpanElement>("#sheetTitle").textContent = current.name;
   $<HTMLSpanElement>("#sheetSub").textContent = __f("{n} 頁　{w} × {h}", { n: shots.length, w: c.width, h: c.height });
@@ -1063,10 +1093,17 @@ $<HTMLButtonElement>("#export").addEventListener("click", () => {
     d.onclick = () => { cur = i; syncSheet(); };
     return d;
   }));
-  cur = 0;
+  cur = Math.min(cur, shots.length - 1);
   videoPageSet = new Set(shots.filter((s) => pageHasVideo(current!, s.index)).map((s) => s.index));
-  $<HTMLButtonElement>("#muteBtn").innerHTML = muted ? SOUND_ICON.off : SOUND_ICON.on;
   syncSheet();
+}
+
+$<HTMLButtonElement>("#export").addEventListener("click", () => {
+  if (!current) return;
+  cur = 0;
+  buildShots();
+  syncPngOpts();
+  $<HTMLButtonElement>("#muteBtn").innerHTML = muted ? SOUND_ICON.off : SOUND_ICON.on;
   sheet.classList.add("on");
   requestAnimationFrame(resetView);        // 要等版面算完才量得到內容尺寸
   clearInterval(previewTimer);
@@ -1074,6 +1111,31 @@ $<HTMLButtonElement>("#export").addEventListener("click", () => {
     previewTimer = setInterval(repaintVideoPages, 1000 / 12);   // 匯出台只是看，12fps 夠了
   }
 });
+
+// ── PNG 選項三顆（透明背景／只留文字／倍率）：改了就地重拍，畫廊即時反映 ──
+const alphaBtn = $<HTMLButtonElement>("#alphaBtn");
+const textOnlyBtn = $<HTMLButtonElement>("#textOnlyBtn");
+const scaleBtn = $<HTMLButtonElement>("#scaleBtn");
+alphaBtn.textContent = __("透明");
+textOnlyBtn.textContent = __("只留文字");
+
+function syncPngOpts(): void {
+  alphaBtn.classList.toggle("on", exportPng.alpha);
+  textOnlyBtn.style.display = exportPng.alpha ? "" : "none";
+  textOnlyBtn.classList.toggle("on", exportPng.textOnly);
+  scaleBtn.textContent = exportPng.scale2x ? "2×" : "1×";
+  scaleBtn.classList.toggle("on", exportPng.scale2x);
+}
+
+function togglePngOpt(mutate: () => void): void {
+  mutate();
+  localStorage.setItem(EXPORT_PNG_KEY, JSON.stringify(exportPng));
+  syncPngOpts();
+  if (sheet.classList.contains("on")) { buildShots(); requestAnimationFrame(resetView); }
+}
+alphaBtn.addEventListener("click", () => togglePngOpt(() => { exportPng.alpha = !exportPng.alpha; }));
+textOnlyBtn.addEventListener("click", () => togglePngOpt(() => { exportPng.textOnly = !exportPng.textOnly; }));
+scaleBtn.addEventListener("click", () => togglePngOpt(() => { exportPng.scale2x = !exportPng.scale2x; }));
 
 for (const b of $<HTMLSpanElement>("#modes").querySelectorAll("button")) {
   b.addEventListener("click", () => {
@@ -1108,7 +1170,7 @@ window.addEventListener("keydown", (e) => {
  */
 function stillCanvas(s: ExportedPage): HTMLCanvasElement {
   return current && pageHasVideo(current, s.index)
-    ? renderPageCanvas(current, s.index, renderOpts()) : s.canvas;
+    ? renderPageCanvas(current, s.index, exportOpts()) : s.canvas;
 }
 
 async function pngBase64(s: ExportedPage): Promise<string> {

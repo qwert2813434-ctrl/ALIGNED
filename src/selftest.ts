@@ -1158,6 +1158,30 @@ async function run(): Promise<void> {
     }
   }
 
+  // ── 18c. 匯出選項的渲染核心（2026-08-14，優化項目 #11）───────────────────
+  //    scale＝真解析度重畫；transparent＝底色留透明；onlyBlockIds＝只畫指定層
+  {
+    const p = project([block("s", { x: 0, y: 0, w: 540, h: 1350 })]);   // 左半頁一塊 888888 矩形
+    const px = (c: HTMLCanvasElement, x: number, y: number) =>
+      [...c.getContext("2d")!.getImageData(x, y, 1, 1).data];
+
+    const two = renderPageCanvas(p, 0, { scale: 2 });
+    check("匯出倍率：2×＝畫布兩倍像素、內容跟著放大",
+          two.width === 2160 && two.height === 2700
+          && px(two, 500, 500)[0] === 136 && px(two, 1500, 500)[0] === 255,
+          `${two.width}×${two.height} 左=${px(two, 500, 500)[0]} 右=${px(two, 1500, 500)[0]}`);
+
+    const alpha = renderPageCanvas(p, 0, { transparent: true, onlyBlockIds: new Set<string>() });
+    const a = px(alpha, 500, 500);
+    check("透明匯出：跳過底色＋排除全部圖層＝整張全透明",
+          alpha.width === 1080 && a[3] === 0, `alpha=${a[3]}`);
+
+    const only = renderPageCanvas(p, 0, { transparent: true });
+    check("透明匯出：保留的圖層照畫、底色留透明",
+          px(only, 300, 300)[3] === 255 && px(only, 900, 300)[3] === 0,
+          `塊上=${px(only, 300, 300)[3]} 空處=${px(only, 900, 300)[3]}`);
+  }
+
   // ── 19. 畫布尺寸與新專案（2026-08-04）──────────────────────────────────
   {
     // (a) 短邊固定 1080、長邊照比例——翻轉的 9:16 是 1920×1080 不是 1080×608
