@@ -15,8 +15,12 @@ VER=$(defaults read "$(cd "$APP" && pwd)/Contents/Info.plist" CFBundleShortVersi
 DMG="release/ALIGNED_${VER}_aarch64.dmg"
 echo "▸ 發版 v${VER}（來源：${APP}）"
 
+# 公證認證走 .p8 直連（2026-08-14 改）：鑰匙圈 profile（stb-notary）會無預警讀不到
+# （store-credentials 寫得進去、history 卻 not found），.p8 直連在 headless／排程下也穩。
+NOTARY_AUTH=(--key "$HOME/.appstoreconnect/private_keys/AuthKey_J63NP838KQ.p8"
+             --key-id J63NP838KQ --issuer f1386394-19c4-4163-aa40-504dac653053)
 notarize() {
-  xcrun notarytool submit "$1" --keychain-profile stb-notary --wait 2>&1 | tail -3 \
+  xcrun notarytool submit "$1" "${NOTARY_AUTH[@]}" --wait 2>&1 | tail -3 \
     | grep -q "Accepted" || { echo "❌ 公證失敗：${1}（xcrun notarytool log 查詳情）"; exit 1; }
 }
 
