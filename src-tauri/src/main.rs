@@ -195,6 +195,16 @@ fn copy_asset(src: String, dest_dir: String) -> Result<String, String> {
     Ok(name)
 }
 
+/// 跨專案貼上用：把來源檔照**指定檔名**搬進 assets/。
+/// 影片海報要配對成 `<新影片名>.poster.jpg`，copy_asset 的自動命名做不到。
+#[tauri::command]
+fn copy_asset_as(src: String, dest_dir: String, name: String) -> Result<(), String> {
+    fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    mediaserv::register_root(&dest_dir);
+    fs::copy(&src, format!("{dest_dir}/{name}")).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ── 字型 ──────────────────────────────────────────────────────────────
 // WKWebView 沒有 queryLocalFonts，系統字型只能由殼層枚舉後餵給前端。
 // 儲存模型與 iOS 相同：專案存 PostScript 名——同一套字型兩台都裝，專案就兩邊長一樣。
@@ -339,7 +349,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![load_project, save_png, save_text, pack_alignproj,
-            pack_template, copy_asset,
+            pack_template, copy_asset, copy_asset_as,
             make_temp_dir, export_video, media_base, trim_video,
             list_system_fonts, list_user_fonts, import_font, open_url])
         .run(tauri::generate_context!())

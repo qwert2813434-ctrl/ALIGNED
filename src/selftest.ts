@@ -13,6 +13,7 @@ import { Inspector } from "./inspector";
 import { PageStrip } from "./pagestrip";
 import { addPage, deletePage, duplicatePage, retargetToPage, stripToTemplate, swapAdjacentPages } from "./core/pages";
 import { alignGroup, alignToPage, applyLayerOrder, distributeGroup } from "./core/group";
+import { buildClipboard, pasteBlocks } from "./core/clipboard";
 import { canvasSize, changeCanvasRatio, newProject, simplifiedRatio } from "./core/canvas";
 import { buildPageSpec, pageHasVideo } from "./videoexport";
 import { videoCullBounds } from "./videopool";
@@ -1180,6 +1181,50 @@ async function run(): Promise<void> {
     check("透明匯出：保留的圖層照畫、底色留透明",
           px(only, 300, 300)[3] === 255 && px(only, 900, 300)[3] === 0,
           `塊上=${px(only, 300, 300)[3]} 空處=${px(only, 900, 300)[3]}`);
+  }
+
+  // ── 18d. 跨專案剪貼簿的純邏輯（2026-08-14）───────────────────────────────
+  {
+    const src = project([]);
+    src.id = "proj-A";
+    src.blocks.push(
+      { id: "t", frame: { x: 100, y: 200, w: 300, h: 60 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "字", alignment: "leading", fontSize: 40 } } },
+      { id: "v", frame: { x: 1080 + 300, y: 400, w: 400, h: 300 }, rotation: 0, zIndex: 2, locked: true, opacity: 1,
+        content: { type: "video", media: { assetFileName: "clip.mp4", cropRect: { x: 0, y: 0, w: 1, h: 1 } } } },
+    );
+    const clip = buildClipboard(src, src.blocks, "/tmp/A/assets");
+    check("剪貼簿：素材記絕對路徑、影片連海報一起記",
+          clip.assetSrc["clip.mp4"] === "/tmp/A/assets/clip.mp4"
+          && clip.assetSrc["clip.mp4.poster.jpg"] === "/tmp/A/assets/clip.mp4.poster.jpg"
+          && clip.canvasWidth === 1080 && clip.projectId === "proj-A",
+          JSON.stringify(clip.assetSrc));
+
+    // 貼到另一份專案的第 1 頁：跨頁選取整組平移、素材換新名、鎖定解開、zIndex 疊上去
+    const dst = project([block("old", { x: 0, y: 0, w: 100, h: 100 })]);
+    dst.id = "proj-B";
+    dst.blocks[0].zIndex = 7;
+    let n = 0;
+    const out = pasteBlocks(clip, dst, 0, new Map([["clip.mp4", "mac-9.mp4"]]), () => `new-${++n}`);
+    const vv = out[1];
+    check("剪貼簿：貼到別的專案＝落在正看的那頁、頁距照舊、素材換名、鎖定解開",
+          near(out[0].frame.x, 100) && near(vv.frame.x, 1080 + 300)   // basePage=0 → dx=0
+          && vv.content.type === "video" && vv.content.media.assetFileName === "mac-9.mp4"
+          && !vv.locked && out[0].zIndex === 8 && vv.zIndex === 9 && out[0].id === "new-1",
+          `x=${out[0].frame.x},${vv.frame.x} asset=${vv.content.type === "video" ? vv.content.media.assetFileName : "?"}`);
+
+    // 貼回同一份專案的同一頁＝偏移 48；搬失敗（不在 renamed 表）＝舊名留著畫佔位框
+    const back = pasteBlocks(clip, src, 0, new Map(), () => `b-${++n}`);
+    check("剪貼簿：貼回同專案同頁＝偏移 48、搬失敗的素材留舊名",
+          near(back[0].frame.x, 148) && near(back[0].frame.y, 248)
+          && back[1].content.type === "video" && back[1].content.media.assetFileName === "clip.mp4",
+          `x=${back[0].frame.x} y=${back[0].frame.y}`);
+
+    // 貼到第 2 頁（viewPage=1）＝整組往右一頁
+    const p2 = pasteBlocks(clip, dst, 1, new Map(), () => `c-${++n}`);
+    check("剪貼簿：貼到正在看的第 2 頁＝整組平移一頁",
+          near(p2[0].frame.x, 1080 + 100) && near(p2[1].frame.x, 2160 + 300),
+          `x=${p2[0].frame.x},${p2[1].frame.x}`);
   }
 
   // ── 19. 畫布尺寸與新專案（2026-08-04）──────────────────────────────────

@@ -19,6 +19,7 @@ import { PageStrip, type PageAction } from "./pagestrip";
 import { pageIndexForX, pageRect } from "./core/geometry";
 import { addPage, deletePage, duplicatePage, retargetToPage, stripToTemplate, swapAdjacentPages } from "./core/pages";
 import { alignGroup, applyLayerOrder, distributeGroup, type GroupAlign, type GroupAxis } from "./core/group";
+import { buildClipboard, pasteBlocks, type BlockClipboard } from "./core/clipboard";
 import { CANVAS_PRESETS, canvasSize, changeCanvasRatio, newProject, simplifiedRatio } from "./core/canvas";
 import { VideoPool, hiddenHost } from "./videopool";
 import { Gallery } from "./gallery";
@@ -701,6 +702,7 @@ editor.onContextMenu = (b, at) => {
   const items: MenuItem[] = [];
   if (b) {
     const many = sel.length > 1;
+    items.push({ label: __("拷貝"), key: "⌘C", run: () => copySelection() });
     items.push({ label: __("複製一份"), key: "⌘D", run: () => duplicateSelection() });
     if (others.length) {
       items.push({ label: many ? __("複製到其他頁") : __("複製到第…頁"),
@@ -730,6 +732,9 @@ editor.onContextMenu = (b, at) => {
   } else {
     items.push({ label: __("在這裡加文字"), run: () => addBlock("text") });
     items.push({ label: __("在這裡加矩形"), run: () => addBlock("rectangle") });
+    if (localStorage.getItem(CLIP_KEY)) {
+      items.push({ label: __("貼上"), key: "⌘V", run: () => void pasteClipboard() });
+    }
     items.push("-");
     items.push({ label: __f("第 {n} 頁", { n: here + 1 }), sub: pageMenu(here) });
     items.push("-");
@@ -1575,6 +1580,96 @@ function deleteSelected(): void {
   commit("delete");
 }
 
+// ── 跨專案剪貼簿（2026-08-14）：⌘C／⌘V，素材連檔案一起過去 ──────────────
+// 存 localStorage＝換專案、重開 App 都還在。純邏輯在 core/clipboard.ts，
+// 這裡只做檔案搬運（copy_asset 重取檔名防碰撞）與素材表載入。
+const CLIP_KEY = "align.blockClipboard";
+
+/** 來源專案 assets/ 的絕對路徑——拷貝用，拿不到就安靜略過（純文字照樣可拷）。 */
+function assetsRootSilent(): string | null {
+  if (!inApp || origin.kind === "sample") return null;
+  return (origin.kind === "alignproj" ? origin.root : origin.path.replace(/\/[^/]*$/, "")) + "/assets";
+}
+
+function copySelection(): void {
+  const blocks = editor.selectionBlocks();
+  if (!current || !blocks.length) return;
+  localStorage.setItem(CLIP_KEY, JSON.stringify(buildClipboard(current, blocks, assetsRootSilent())));
+  meta.textContent = __f("已拷貝 {n} 個元件——⌘V 貼上，開另一份專案貼也行", { n: blocks.length });
+}
+
+async function pasteClipboard(): Promise<void> {
+  if (!current) return;
+  let clip: BlockClipboard | null = null;
+  try { clip = JSON.parse(localStorage.getItem(CLIP_KEY) ?? "null") as BlockClipboard | null; } catch { /* 壞值當空 */ }
+  if (!clip?.blocks?.length) return;
+
+  // 有媒體才需要 assets/（純文字連存檔位置都不用有）；拿不到時 assetsDir 已把原因寫在 meta
+  const needsAssets = clip.blocks.some((b) =>
+    (b.content.type === "image" || b.content.type === "video") && b.content.media.assetFileName);
+  const dir = needsAssets ? assetsDir() : null;
+  if (needsAssets && !dir) return;
+
+  // 同一個來源只搬一次；影片海報跟著搬成 <新名>.poster.jpg（畫布與匯出畫的是它）
+  const renamed = new Map<string, string>();
+  let missing = 0;
+  if (dir) {
+    for (const b of clip.blocks) {
+      if (b.content.type !== "image" && b.content.type !== "video") continue;
+      const name = b.content.media.assetFileName;
+      if (!name || renamed.has(name)) continue;
+      try {
+        const src = clip.assetSrc[name];
+        if (!src) throw new Error("no-src");
+        const newName = await invoke<string>("copy_asset", { src, destDir: dir });
+        if (b.content.type === "video") {
+          const ps = clip.assetSrc[`${name}.poster.jpg`];
+          if (ps) await invoke("copy_asset_as", { src: ps, destDir: dir, name: `${newName}.poster.jpg` });
+        }
+        renamed.set(name, newName);
+      } catch { missing++; }   // 來源檔搬不動＝畫佔位框，不擋整次貼上
+    }
+  }
+
+  const copies = pasteBlocks(clip, current, pageIndexForX(current, editor.centerPoint().x), renamed, newId);
+  current.blocks.push(...copies);
+
+  if (dir) {
+    // 新專案的第一支影片可能還沒接影片池（與 importMediaFromPath 同一個補接）
+    if (!videoUrl && copies.some((b) => b.content.type === "video")) {
+      const base = await mediaBaseOnce();
+      videoUrl = (f) => `${base}/${encodeURIComponent(`${dir}/${f}`)}`;
+      videos.attach(videoUrl);
+      editor.setVideos(videos.frames);
+    }
+    // 搬進來的素材載進素材表（影片載海報）＋補濾鏡變體
+    const isVid = new Set(copies.filter((b) => b.content.type === "video")
+                                .map((b) => b.content.type === "video" ? b.content.media.assetFileName : ""));
+    for (const newName of renamed.values()) {
+      const assetKey = isVid.has(newName) ? `${newName}.poster.jpg` : newName;
+      if (assets.raw.has(assetKey)) continue;
+      try {
+        const img = await loadImg(await localUrl(`${dir}/${assetKey}`));
+        assets.raw.set(assetKey, img);
+        assets.variants.set(assetKey, img);
+      } catch { /* 載不進來＝佔位框 */ }
+    }
+    for (const nb of copies) {
+      if ((nb.content.type === "image" || nb.content.type === "video") && nb.content.media.filterKey) {
+        await ensureVariantFor(nb).catch(() => { /* 變體生失敗照樣有原圖 */ });
+      }
+    }
+  }
+
+  editor.refresh();
+  editor.selectMany(copies.map((c) => c.id));
+  scheduleThumbs();
+  commit("paste");
+  meta.textContent = missing
+    ? __f("貼上了 {n} 個，{m} 個素材的來源檔找不到（顯示成佔位框）", { n: copies.length, m: missing })
+    : __f("貼上了 {n} 個元件", { n: copies.length });
+}
+
 // ── 存檔 ──────────────────────────────────────────────────────────────
 async function saveProject(): Promise<void> {
   if (!current) return;
@@ -1769,6 +1864,16 @@ window.addEventListener("keydown", (e) => {
     if (e.key === "s") { e.preventDefault(); saveProject().catch((x) => { meta.textContent = __f("存檔失敗：{msg}", { msg: x.message ?? x }); }); }
     if (e.key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     if (e.key === "d") { e.preventDefault(); duplicateSelection(); }
+    if (e.key === "c" || e.key === "v") {
+      // 正在輸入框裡＝讓給系統的文字複製貼上，只有畫布上的 ⌘C／⌘V 歸我們
+      const ae = document.activeElement as HTMLElement | null;
+      const typing = !!ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable);
+      if (!typing) {
+        e.preventDefault();
+        if (e.key === "c") copySelection();
+        else pasteClipboard().catch((x) => { meta.textContent = __f("貼上失敗：{msg}", { msg: x.message ?? x }); });
+      }
+    }
     if (e.key === "l") {
       e.preventDefault();
       const sel = editor.selectionBlocks();
