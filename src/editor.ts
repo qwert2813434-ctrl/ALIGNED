@@ -11,7 +11,7 @@ import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema"
 import { hex, resolvedFontSize, resolvedKerning } from "./core/schema";
 import { aspectFillCrop, pageIndexForX, pageRect, stageBounds } from "./core/geometry";
 import { cssFont } from "./core/fonts";
-import { autoFitText, naturalSize, naturalTextSize, renderStage } from "./core/render";
+import { autoFitText, naturalSize, naturalTextSize, renderStage, textPrintLines } from "./core/render";
 import type { FilterAssets } from "./core/filters";
 import { resolvePosition, rotatedBounds, equalSpacingBadges, snapGuide, snapResizingEdge, type GuideLine, type SnapStrength, type SpacingBadge } from "./core/align";
 
@@ -416,7 +416,7 @@ export class Editor {
     const min = p.canvasWidth * 0.05;   // iOS 同值
 
     this.guides = [];
-    const others = p.blocks.filter((_, i) => i !== idx).map((k) => rotatedBounds(inkFrame(k, k.frame), k.rotation));
+    const others = this.snapTargets(p, (_, i) => i === idx);
     const home = pageRect(p, pageIndexForX(p, f0.x + f0.w / 2));
     const stage = stageBounds(p);
     /** 正在動的那條邊照樣吃磁性——裁切的邊也要能咬到鄰居與頁邊。 */
@@ -504,7 +504,7 @@ export class Editor {
     // 吸附只在未旋轉時給：旋轉後「正在動的邊」不是軸對齊的，咬軸對齊的參考線沒意義
     this.guides = [];
     if (!b.rotation && this.snapStrength !== "none") {
-      const others = p.blocks.filter((_, i) => i !== idx).map((k) => rotatedBounds(inkFrame(k, k.frame), k.rotation));
+      const others = this.snapTargets(p, (_, i) => i === idx);
       const home = pageRect(p, pageIndexForX(p, s.anchor.x + (sx * w) / 2));
       const stage = stageBounds(p);
       const edgeX = s.anchor.x + sx * w, edgeY = s.anchor.y + sy * h;
@@ -564,8 +564,7 @@ export class Editor {
     this.guides = [];
     const snapEdge = (v: number, axis: "vertical" | "horizontal"): number => {
       if (b.rotation || this.snapStrength === "none") return v;
-      const others = p.blocks.filter((k) => k.id !== b.id)
-        .map((k) => rotatedBounds(inkFrame(k, k.frame), k.rotation));
+      const others = this.snapTargets(p, (k) => k.id === b.id);
       const home = pageRect(p, pageIndexForX(p, f0.x + f0.w / 2));
       const rr = snapResizingEdge(v, axis, others, home, stageBounds(p), this.snapStrength,
                                   axis === "vertical" ? (p.guidesX ?? []) : (p.guidesY ?? []));
@@ -635,8 +634,7 @@ export class Editor {
     // 吸附：等比鎖死＝右緣與下緣不能各吸各的，讓它們比距離、近的贏（同單選）
     this.guides = [];
     if (this.snapStrength !== "none") {
-      const others = p.blocks.filter((b) => !this.multi.has(b.id))
-        .map((b) => rotatedBounds(inkFrame(b, b.frame), b.rotation));
+      const others = this.snapTargets(p, (b) => this.multi.has(b.id));
       const home = pageRect(p, pageIndexForX(p, box.x + w / 2));
       const stage = stageBounds(p);
       const edgeX = box.x + w, edgeY = box.y + w * aspect;
@@ -815,7 +813,17 @@ export class Editor {
         const { axis, index } = this.guideDrag;
         const page = pageRect(p, pageIndexForX(p, at.x));
         const stage = stageBounds(p);
+        // 文字的印刷線也給（水平線咬基線＝先用線對好基線，再讓每頁照著複刻）
         const frames = p.blocks.map((b) => rotatedBounds(b.frame, b.rotation));
+        if (axis === "y" && this.snapStrength === "strong") {
+          for (const b of p.blocks) {
+            if (b.rotation || (b.content.type !== "text" && b.content.type !== "textFlow")) continue;
+            const pl = textPrintLines(this.ctx, b.content.text, b.frame, p.canvasWidth, p.pageHeight);
+            if (!pl) continue;
+            frames.push({ x: b.frame.x, y: pl.base, w: b.frame.w, h: 0 });
+            if (pl.cap != null) frames.push({ x: b.frame.x, y: pl.cap, w: b.frame.w, h: 0 });
+          }
+        }
         // 線自己也要吸附：先用線對好位，之後每一頁才能照著複刻
         const arr = axis === "x" ? (p.guidesX ??= []) : (p.guidesY ??= []);
         const others = arr.filter((_, i) => i !== index);
@@ -868,11 +876,22 @@ export class Editor {
     // 被拖的自己也要換成旋轉外接框再比對——iOS 端 2026-08-01 才修好的同一個坑：
     // 只對「別人」做外接框，自己還用未旋轉的 frame，旋轉過的元件就永遠對不上。
     const box = rotatedBounds(inkFrame(p.blocks[idx], moving), p.blocks[idx].rotation);
-    const others = p.blocks.filter((b) => !this.multi.has(b.id))
-                           .map((b) => rotatedBounds(inkFrame(b, b.frame), b.rotation));
+    const others = this.snapTargets(p, (b) => this.multi.has(b.id));
     const home = pageRect(p, pageIndexForX(p, moving.x + moving.w / 2));
+    // 拖的是單一文字→自己的印刷線也當候選：基線咬基線才是「絕對對齊」的手感
+    const extraY: number[] = [];
+    const dragged = p.blocks[idx];
+    if (this.snapStrength === "strong" && !dragged.rotation && this.drag.group.length <= 1
+        && (dragged.content.type === "text" || dragged.content.type === "textFlow")) {
+      const pl = textPrintLines(this.ctx, dragged.content.text, moving, p.canvasWidth, p.pageHeight);
+      if (pl) {
+        const cy = moving.y + moving.h / 2;
+        extraY.push(pl.base - cy);
+        if (pl.cap != null) extraY.push(pl.cap - cy);
+      }
+    }
     const res = resolvePosition(box, others, home, stageBounds(p), this.snapStrength,
-                                p.guidesX ?? [], p.guidesY ?? []);
+                                p.guidesX ?? [], p.guidesY ?? [], extraY);
 
     // 外接框與 frame 同心、尺寸不變，所以外接框被吸走多少 frame 就走多少
     moving.x += res.frame.x - box.x;
@@ -895,6 +914,27 @@ export class Editor {
       : [];
     this.dirty = true;
   };
+
+  /** 吸附目標。看得見的外框（inkFrame＋旋轉外接框）之外，文字再加「印刷線」——
+   *  大寫線與基線的零高假框（絕對對齊 2026-08-14）。框頂是最高墨跡（i 點、重音、
+   *  括號），人眼對的卻是這兩條線。weak 的哲學是只看起點與中心，印刷線屬於細節，
+   *  只在 strong 給。 */
+  private snapTargets(p: Project, exclude: (b: Block, i: number) => boolean): Rect[] {
+    const out: Rect[] = [];
+    for (let i = 0; i < p.blocks.length; i++) {
+      const b = p.blocks[i];
+      if (exclude(b, i)) continue;
+      const f = rotatedBounds(inkFrame(b, b.frame), b.rotation);
+      out.push(f);
+      if (this.snapStrength !== "strong" || b.rotation) continue;
+      if (b.content.type !== "text" && b.content.type !== "textFlow") continue;
+      const pl = textPrintLines(this.ctx, b.content.text, b.frame, p.canvasWidth, p.pageHeight);
+      if (!pl) continue;
+      out.push({ x: f.x, y: pl.base, w: f.w, h: 0 });
+      if (pl.cap != null) out.push({ x: f.x, y: pl.cap, w: f.w, h: 0 });
+    }
+    return out;
+  }
 
   private up = (e: PointerEvent): void => {
     if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId);

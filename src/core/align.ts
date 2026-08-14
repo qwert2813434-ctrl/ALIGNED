@@ -47,6 +47,9 @@ export function resolvePosition(
   strength: SnapStrength = "strong",
   guidesX: number[] = [],
   guidesY: number[] = [],
+  /** 被拖者的額外 Y 候選（相對中心的偏移）。文字的印刷線——大寫線與基線——
+   *  從這進來（絕對對齊 2026-08-14），基線咬基線才有「對上了」的手感。 */
+  extraYOffsets: number[] = [],
 ): AlignmentResult {
   if (strength === "none") {
     return { frame: dragging, guides: [], snappedX: false, snappedY: false };
@@ -100,6 +103,9 @@ export function resolvePosition(
   const yCandidates: [number, number][] = strength === "weak"
     ? [[-halfH, cy - halfH], [0, cy]]
     : [[-halfH, cy - halfH], [0, cy], [halfH, cy + halfH]];
+  if (strength === "strong") {
+    for (const off of extraYOffsets) yCandidates.push([off, cy + off]);
+  }
 
   // 水平參考線的值已經是絕對的（y 全頁共用），不必換算
   const yTargets = [midY(homePage), minY(homePage), maxY(homePage), ...guidesY];

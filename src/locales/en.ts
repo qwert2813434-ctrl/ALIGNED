@@ -354,4 +354,13 @@ export const en: Record<string, string> = {
   "刪除選取的 {n} 個": "Delete {n} selected",
   "　{n} 頁為影片": "　{n} pages are video",
   "{n} 頁 · {w}×{h} · {blocks} 個 block": "{n} pages · {w}×{h} · {blocks} blocks",
+
+  // ── 1.0.21：絕對對齊——貼字寬 ──
+  "框寬": "Frame",
+  "貼字寬": "Hug text",
+  "貼字寬（全部）": "Hug text (all)",
+  "把框收到剛好包住字——斷行與字的位置都不會變":
+    "Shrink the frame to hug the text — line breaks and glyph positions stay put",
+  "把每個文字的框收到剛好包住字——斷行與字的位置都不會變":
+    "Shrink every text frame to hug its text — line breaks and glyph positions stay put",
 };

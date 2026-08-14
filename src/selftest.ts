@@ -7,7 +7,7 @@
 import { Editor } from "./editor";
 import type { Block, Project, Rect, TextBlock } from "./core/schema";
 import { renderAllPages } from "./core/export";
-import { autoFitText, renderPageCanvas, renderStage } from "./core/render";
+import { autoFitText, renderPageCanvas, renderStage, snugTextWidth, textPrintLines } from "./core/render";
 import { decodeProject, encodeProject } from "./core/schema";
 import { Inspector } from "./inspector";
 import { PageStrip } from "./pagestrip";
@@ -1225,6 +1225,159 @@ async function run(): Promise<void> {
     check("剪貼簿：貼到正在看的第 2 頁＝整組平移一頁",
           near(p2[0].frame.x, 1080 + 100) && near(p2[1].frame.x, 2160 + 300),
           `x=${p2[0].frame.x},${p2[1].frame.x}`);
+  }
+
+  // ── 18e. 絕對對齊（2026-08-14）：框＝墨跡、貼字寬一鍵、吸附咬印刷線 ────────
+  //    驗收標準用「像素真相」：透明渲染後掃 alpha 得到墨跡外接框，
+  //    量使用者看到的那層，不量自己的計數器。
+  {
+    /** 透明渲染後的墨跡外接框（含 x1/y1 那一列/欄）。 */
+    const inkOf = (p: Project): { x0: number; y0: number; x1: number; y1: number } => {
+      const c = renderPageCanvas(p, 0, { transparent: true });
+      const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+      let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+      for (let y = 0; y < c.height; y++) {
+        for (let x = 0; x < c.width; x++) {
+          if (d[(y * c.width + x) * 4 + 3] > 16) {
+            if (x < x0) x0 = x; if (x > x1) x1 = x;
+            if (y < y0) y0 = y; if (y > y1) y1 = y;
+          }
+        }
+      }
+      return { x0, y0, x1, y1 };
+    };
+    const textBlk = (id: string, over: Partial<TextBlock>, frame: Rect): Block => ({
+      id, frame, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+      content: { type: "text", text: { text: "字", alignment: "leading", fontSize: 100, colorHex: "000000", ...over } },
+    });
+    const ectx = (editor as unknown as { ctx: CanvasRenderingContext2D }).ctx;
+    const tOf = (b: Block): TextBlock => (b.content as { text: TextBlock }).text;
+
+    // (a) 單行框高不虛胖：框的四邊＝墨跡的四邊（不再有 1.3em 保底的肚子）
+    {
+      const p = project([textBlk("t", { text: "ALIGN", fontSize: 120 }, { x: 100, y: 300, w: 900, h: 400 })]);
+      editor.load(p);
+      const f = p.blocks[0].frame;
+      const ink = inkOf(p);
+      // 垂直要嚴（這次修的就是它）；水平的框寬語意＝advance width（iOS 同款），
+      // 與墨跡差的是字型 side bearing，給寬一點的容差
+      check("絕對對齊：單行框底＝墨跡底（去 1.3em 虛胖）",
+            Math.abs(ink.y1 + 1 - (f.y + f.h)) <= 2 && Math.abs(ink.y0 - f.y) <= 2
+            && Math.abs(ink.x0 - f.x) <= 10 && Math.abs(ink.x1 + 1 - (f.x + f.w)) <= 10,
+            `框 y ${f.y.toFixed(1)}–${(f.y + f.h).toFixed(1)}　墨跡 y ${ink.y0}–${ink.y1 + 1}`);
+    }
+
+    // (b) 貼字寬：殘留的 manualWidth（無軟換行）＝整個交還自動貼字盒，字一動不動
+    {
+      const p = project([textBlk("t", { text: "美濃 MEINONG", alignment: "center", manualWidth: 900 },
+                                 { x: 90, y: 300, w: 900, h: 200 })]);
+      editor.load(p);
+      const b = p.blocks[0], t = tOf(b);
+      const before = inkOf(p);
+      const cxBefore = b.frame.x + b.frame.w / 2;
+      const changed = snugTextWidth(ectx, b, p.canvasWidth, p.pageHeight);
+      const after = inkOf(p);
+      check("貼字寬：無軟換行＝清掉 manualWidth、框收到貼字身",
+            changed && t.manualWidth === undefined && b.frame.w < 780
+            && Math.abs(b.frame.x - after.x0) <= 8 && Math.abs(b.frame.x + b.frame.w - (after.x1 + 1)) <= 8,
+            `manualWidth=${t.manualWidth} 框寬 900→${b.frame.w.toFixed(1)}`);
+      check("貼字寬：字一動不動（定律：不破壞使用者文字）",
+            Math.abs(before.x0 - after.x0) <= 1 && Math.abs(before.y0 - after.y0) <= 1
+            && Math.abs(before.x1 - after.x1) <= 1 && Math.abs(before.y1 - after.y1) <= 1
+            && Math.abs((b.frame.x + b.frame.w / 2) - cxBefore) <= 1,
+            `墨跡 (${before.x0},${before.y0})→(${after.x0},${after.y0})　中心 ${cxBefore.toFixed(1)}→${(b.frame.x + b.frame.w / 2).toFixed(1)}`);
+    }
+
+    // (c) 貼字寬：有軟換行＝manualWidth 收到最寬行、斷行一個都不能變
+    {
+      const p = project([textBlk("t", { text: "Snug width keeps every soft break intact",
+                                        fontSize: 60, manualWidth: 500 },
+                                 { x: 100, y: 200, w: 500, h: 400 })]);
+      editor.load(p);
+      const b = p.blocks[0], t = tOf(b);
+      const before = inkOf(p);
+      const linesBefore = before.y1 - before.y0;   // 墨跡高＝斷行數的代理
+      snugTextWidth(ectx, b, p.canvasWidth, p.pageHeight);
+      const after = inkOf(p);
+      check("貼字寬：有軟換行＝收緊 manualWidth 但斷行不變",
+            t.manualWidth != null && t.manualWidth <= 500
+            && Math.abs((after.y1 - after.y0) - linesBefore) <= 1
+            && Math.abs(before.x0 - after.x0) <= 1 && Math.abs(before.y0 - after.y0) <= 1
+            && near(b.frame.w, t.manualWidth ?? 0, 1),
+            `manualWidth=500→${t.manualWidth} 墨跡高 ${linesBefore}→${after.y1 - after.y0}`);
+    }
+
+    // (d) 印刷線：大寫線與基線要對到像素真相
+    {
+      const p = project([textBlk("t", { text: "ALIGN", fontSize: 120 }, { x: 100, y: 300, w: 900, h: 400 })]);
+      editor.load(p);
+      const b = p.blocks[0];
+      const ink = inkOf(p);
+      const pl = textPrintLines(ectx, tOf(b), b.frame, p.canvasWidth, p.pageHeight)!;
+      // 全大寫沒有降部：基線＝墨跡底；大寫線＝墨跡頂（與框頂重合就不給，允許 undefined）
+      check("印刷線：全大寫的基線＝墨跡底",
+            Math.abs(pl.base - (ink.y1 + 1)) <= 2, `base=${pl.base.toFixed(1)} 墨跡底=${ink.y1 + 1}`);
+
+      const g = project([textBlk("g", { text: "Align gap", fontSize: 120 }, { x: 100, y: 300, w: 900, h: 400 })]);
+      editor.load(g);
+      const ig = inkOf(g);
+      const plg = textPrintLines(ectx, tOf(g.blocks[0]), g.blocks[0].frame, g.canvasWidth, g.pageHeight)!;
+      check("印刷線：有降部時基線在墨跡底之上（g/p 垂下去）",
+            (ig.y1 + 1) - plg.base >= 8 && plg.cap != null && plg.cap > g.blocks[0].frame.y + 1,
+            `base=${plg.base.toFixed(1)} 墨跡底=${ig.y1 + 1} cap=${plg.cap?.toFixed(1)}`);
+
+      const cjk = project([textBlk("c", { text: "對齊" }, { x: 100, y: 300, w: 900, h: 400 })]);
+      editor.load(cjk);
+      const plc = textPrintLines(ectx, tOf(cjk.blocks[0]), cjk.blocks[0].frame, cjk.canvasWidth, cjk.pageHeight)!;
+      check("印刷線：純中文不給大寫線（那是拉丁字的概念）", plc.cap == null, `cap=${plc.cap}`);
+    }
+
+    // (e) 拖曳咬基線：把一段文字拖到另一段附近，基線對基線咬合
+    {
+      // a 全用平底字母（G/O 這類圓弧會在基線下方多 1-2px 墨跡，
+      // 框底與基線兩條線太近會搶咬——真實世界兩條都給是對的，測試要站遠一點）
+      const p = project([
+        textBlk("a", { text: "LINEAL", fontSize: 100 }, { x: 60, y: 200, w: 500, h: 130 }),
+        textBlk("b", { text: "Design", fontSize: 77 }, { x: 600, y: 700, w: 400, h: 110 }),
+      ]);
+      editor.load(p);
+      editor.snapStrength = "strong";
+      const [a, b] = p.blocks;
+      const baseA = textPrintLines(ectx, tOf(a), a.frame, p.canvasWidth, p.pageHeight)!.base;
+      const relB = textPrintLines(ectx, tOf(b), b.frame, p.canvasWidth, p.pageHeight)!.base - b.frame.y;
+      // 目標：b 的基線在 a 的基線上方 3px（閾值 8 內）——放開後要正好咬到 0
+      const wantY = baseA - relB - 3;
+      dragFrom(p, "b", { x: b.frame.x + b.frame.w / 2, y: wantY + b.frame.h / 2 });
+      const baseB = textPrintLines(ectx, tOf(b), b.frame, p.canvasWidth, p.pageHeight)!.base;
+      check("吸附：拖文字時基線咬基線（絕對對齊的手感）",
+            Math.abs(baseB - baseA) <= 0.5,
+            `baseA=${baseA.toFixed(1)} baseB=${baseB.toFixed(1)}（放手前差 3px）`);
+    }
+
+    // (f) 檢視器的「貼字寬」按鈕真的接到模型
+    {
+      const host = document.createElement("div");
+      document.body.append(host);
+      const insp = new Inspector(host, {
+        onChange: () => {}, ensureVariant: async () => {},
+        reorder: () => {}, remove: () => {}, fillMedia: () => {}, changeRatio: () => {},
+        guides: { hidden: () => false, toggleHidden: () => {}, add: () => {}, remove: () => {},
+                  locked: () => false, toggleLocked: () => {} },
+        layers: { currentPage: () => 0, select: () => {}, reorder: () => {}, toggleLock: () => {},
+                  thumb: () => undefined },
+        group: { align: () => {}, distribute: () => {}, duplicate: () => {}, remove: () => {} },
+      });
+      const p = project([textBlk("t", { text: "MEINONG", manualWidth: 900 }, { x: 100, y: 100, w: 900, h: 160 })]);
+      editor.load(p);
+      insp.show(p, p.blocks[0]);
+      const btn = [...host.querySelectorAll("button")].find((x) => x.textContent === "貼字寬");
+      btn?.click();
+      const t = tOf(p.blocks[0]);
+      check("檢視器：貼字寬按鈕＝清掉殘留的 manualWidth、框收緊",
+            !!btn && t.manualWidth === undefined && p.blocks[0].frame.w < 700,
+            `按鈕${btn ? "在" : "不在"} manualWidth=${t.manualWidth} 框寬=${p.blocks[0].frame.w.toFixed(1)}`);
+      host.remove();
+    }
   }
 
   // ── 19. 畫布尺寸與新專案（2026-08-04）──────────────────────────────────

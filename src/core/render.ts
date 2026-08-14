@@ -784,11 +784,109 @@ export function naturalTextSize(
   const measuredH = lines.length * lineH + Math.max(0, lines.length - 1) * paraGap;
   ctx.restore();
 
-  const minHeight = size * 1.3;
+  // 絕對對齊（2026-08-14）：有墨跡就貼墨跡。1.3em 保底只留給空文字（框要選得到）
+  // 與置中/置底的殘留框（關掉長文框後 verticalAlignment 會留下）——那些框的字是
+  // 照框高排的，改高度字會位移；版面穩定鐵則：舊值走舊碼。
+  const legacy = !t.text.trim() || (t.verticalAlignment ?? "top") !== "top";
+  const minHeight = legacy ? size * 1.3 : 1;
   return {
     w: t.manualWidth ?? Math.max(Math.ceil(measuredW), minWidth),
     h: Math.max(Math.max(Math.ceil(measuredH), minHeight) - ink.top - ink.bottom, 1),
   };
+}
+
+/**
+ * 貼字寬一鍵（絕對對齊 2026-08-14）：把殘留的手動寬度收到剛好包住現有的行。
+ * ClaudeForge 這類建構器會在單行標題留 manualWidth（900 vs 墨跡 ~285），
+ * 框的「空氣」全從這來——吸附咬的是框，框鬆了什麼都對不準。
+ *
+ * 定律「不破壞使用者文字」＝**斷行一個都不能變、字待在原地**：
+ * - 沒軟換行 → manualWidth 純屬殘留，整個交還自動貼字盒；
+ * - 有軟換行（或長文框）→ 收到最寬行的墨寬。收緊不會改變 greedy 斷行：
+ *   每行都是塞不下下一個字才斷的，收窄後更塞不下。收完仍驗一次斷行，
+ *   對不上（理論上不會）就放棄不動——寧可不收也不能重排。
+ * - 錨點照對齊方式修：置中的框兩邊往內收、靠右的固定右緣。
+ */
+export function snugTextWidth(
+  ctx: CanvasRenderingContext2D,
+  b: Block,
+  canvasWidth: number,
+  pageHeight: number,
+): boolean {
+  if (b.content.type !== "text" && b.content.type !== "textFlow") return false;
+  const t = b.content.text;
+  if (t.vertical || t.manualWidth == null) return false;
+  const size = resolvedFontSize(t, canvasWidth);
+  const kern = resolvedKerning(t, canvasWidth);
+
+  ctx.save();
+  ctx.font = cssFont(t, size);
+  ctx.letterSpacing = `${kern}px`;
+  const lines = wrap(ctx, t.text, t.manualWidth, kern);
+  const hard = t.text.split("\n");
+  const same = (x: string[], y: string[]) => x.length === y.length && x.every((l, i) => l === y[i]);
+
+  if (t.isBodyFrame || !same(lines, hard)) {
+    let tight = Math.ceil(Math.max(...lines.map((l) => lineWidth(ctx, l, kern)), 1));
+    let ok = same(wrap(ctx, t.text, tight, kern), lines);
+    for (let i = 0; i < 6 && !ok; i++) { tight++; ok = same(wrap(ctx, t.text, tight, kern), lines); }
+    ctx.restore();
+    if (!ok || tight >= t.manualWidth) return false;   // 收了會重排／本來就貼著＝不動
+    t.manualWidth = tight;
+  } else {
+    ctx.restore();
+    t.manualWidth = undefined;
+  }
+
+  const oldW = b.frame.w;
+  const nat = naturalTextSize(ctx, t, canvasWidth, pageHeight);
+  const delta = nat.w - oldW;
+  if (t.alignment === "center") b.frame.x -= delta / 2;
+  else if (t.alignment === "trailing") b.frame.x -= delta;
+  b.frame.w = nat.w;
+  b.frame.h = nat.h;
+  if (t.isBodyFrame) t.manualHeight = nat.h;   // 長文框連高度一起收到內容
+  return true;
+}
+
+/**
+ * 文字的「印刷線」——大寫線與基線（絕對對齊 2026-08-14）。
+ * 框頂是最高墨跡（i 點、重音、括號），人眼在畫面上對的卻是這兩條線；
+ * 吸附引擎多咬這兩條，「明明對了卻差幾 px」才會消失。
+ * 數學逐行鏡射 drawHorizontal——量測與繪製不可能分家。
+ * 基線：貼字盒取最末行（整框看得見）、長文框取第一行（末行可能被裁掉）。
+ * 大寫線：第一行含拉丁/數字才有；與框頂重合（全大寫）就不另給。
+ */
+export function textPrintLines(
+  ctx: CanvasRenderingContext2D,
+  t: TextBlock,
+  frame: Rect,
+  canvasWidth: number,
+  _pageHeight: number,   // 直排支援時要用（欄高），先收著讓呼叫端不用改
+): { base: number; cap?: number } | null {
+  if (t.vertical) return null;
+  const size = resolvedFontSize(t, canvasWidth);
+  const kern = resolvedKerning(t, canvasWidth);
+  ctx.save();
+  ctx.font = cssFont(t, size);
+  ctx.letterSpacing = `${kern}px`;
+  const lines = t.manualWidth != null ? wrap(ctx, t.text, frame.w, kern) : t.text.split("\n");
+  const { lineH, paraGap } = lineMetrics(ctx, t, size, lines[0] ?? "");
+  const blockH = lines.length * lineH + Math.max(0, lines.length - 1) * paraGap;
+  let y0 = 0;
+  if (t.verticalAlignment === "middle") y0 = (frame.h - blockH) / 2;
+  else if (t.verticalAlignment === "bottom") y0 = frame.h - blockH;
+  const firstAsc = ctx.measureText(lines[0] || "字").actualBoundingBoxAscent;
+  const bi = t.isBodyFrame ? 0 : lines.length - 1;
+  const baseAsc = bi === 0 ? firstAsc : ctx.measureText(lines[bi] || "字").actualBoundingBoxAscent;
+  const base = frame.y + y0 + bi * (lineH + paraGap) + baseAsc;
+  let cap: number | undefined;
+  if (/[A-Za-z0-9]/.test(lines[0] ?? "")) {
+    const c = frame.y + y0 + firstAsc - ctx.measureText("H").actualBoundingBoxAscent;
+    if (Math.abs(c - frame.y) > 0.5) cap = c;
+  }
+  ctx.restore();
+  return { base, cap };
 }
 
 /**

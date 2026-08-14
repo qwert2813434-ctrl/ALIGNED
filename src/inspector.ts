@@ -9,6 +9,12 @@ import { FONT_CHOICES, WEIGHT_LABELS, fontCatalog } from "./core/fonts";
 import { FILTER_KEYS, FILTER_LABELS } from "./core/filters";
 import { alignToPage } from "./core/group";
 import type { GroupAlign, GroupAxis } from "./core/group";
+import { snugTextWidth } from "./core/render";
+
+/** 貼字寬要量字——共用一個量測 ctx（字型都在 document 層，量得到匯入字型）。 */
+let MEASURE: CanvasRenderingContext2D | null = null;
+const measureCtx = (): CanvasRenderingContext2D =>
+  (MEASURE ??= document.createElement("canvas").getContext("2d")!);
 import { CANVAS_PRESETS, canvasSize, simplifiedRatio } from "./core/canvas";
 
 /** 圖層列的類型圖示（單色線性 SVG，絕不用 emoji 當 icon）。 */
@@ -269,6 +275,17 @@ export class Inspector {
           t.colorHex = hexNoHash;
           t.inkColor = undefined;   // 渲染以 run 屬性優先，改色要把它清掉才吃 colorHex
         })));
+
+      // 貼字寬（絕對對齊 2026-08-14）：把選取裡殘留的手動寬度一次收乾淨
+      const snugAll = this.btn(__("貼字寬（全部）"), () => {
+        const p = this.project;
+        if (!p) return;
+        let n = 0;
+        for (const b of blocks) if (snugTextWidth(measureCtx(), b, p.canvasWidth, p.pageHeight)) n++;
+        if (n) this.emit(true);
+      });
+      snugAll.title = __("把每個文字的框收到剛好包住字——斷行與字的位置都不會變");
+      this.row(ts, __("框寬")).append(snugAll);
     }
 
     const hint = document.createElement("div");
@@ -584,6 +601,20 @@ export class Inspector {
           this.emit(true);
         }),
       );
+    }
+
+    // 貼字寬（絕對對齊 2026-08-14）：ClaudeForge 或舊檔會殘留過寬的手動寬度，
+    // 框的「空氣」全從這來——吸附咬的是框，框鬆了什麼都對不準。一鍵收乾淨。
+    if (!t.vertical && t.manualWidth != null) {
+      const sb = this.btn(__("貼字寬"), () => {
+        const p = this.project, b = this.block;
+        if (p && b && snugTextWidth(measureCtx(), b, p.canvasWidth, p.pageHeight)) {
+          this.rebuild();
+          this.emit(true);
+        }
+      });
+      sb.title = __("把框收到剛好包住字——斷行與字的位置都不會變");
+      this.row(s, __("框寬")).append(sb);
     }
 
     this.row(s, __("直排")).append(this.check(t.vertical === true, (on) => {
