@@ -14,6 +14,7 @@ import { PageStrip } from "./pagestrip";
 import { addPage, deletePage, duplicatePage, retargetToPage, stripToTemplate, swapAdjacentPages } from "./core/pages";
 import { alignGroup, alignToPage, applyLayerOrder, distributeGroup } from "./core/group";
 import { buildClipboard, pasteBlocks } from "./core/clipboard";
+import { defaultParams, generateGuides, replaceBatch } from "./core/guidegen";
 import { canvasSize, changeCanvasRatio, newProject, simplifiedRatio } from "./core/canvas";
 import { buildPageSpec, pageHasVideo } from "./videoexport";
 import { videoCullBounds } from "./videopool";
@@ -1376,6 +1377,86 @@ async function run(): Promise<void> {
       check("檢視器：貼字寬按鈕＝清掉殘留的 manualWidth、框收緊",
             !!btn && t.manualWidth === undefined && p.blocks[0].frame.w < 700,
             `按鈕${btn ? "在" : "不在"} manualWidth=${t.manualWidth} 框寬=${p.blocks[0].frame.w.toFixed(1)}`);
+      host.remove();
+    }
+  }
+
+  // ── 18f. 參考線產生器（2026-08-14，優化項目 #13）──────────────────────────
+  //    鐵則：全部隨畫布比例現算、不寫死座標。生成到現有 guidesX/guidesY。
+  {
+    // (a) 隨比例生成：三分法在 4:5 與 1:1 畫布給的線不一樣
+    {
+      const a = generateGuides("thirds", defaultParams(1080, 1350), 1080, 1350);
+      const b = generateGuides("thirds", defaultParams(1080, 1080), 1080, 1080);
+      check("產生器：三分法隨畫布比例現算",
+            a.y.join() === "450,900" && b.y.join() === "360,720" && a.x.join() === "360,720",
+            `4:5 y=${a.y} 1:1 y=${b.y}`);
+    }
+
+    // (b) IG 安全區（主用）：3:4 預覽比 4:5 貼文「高」＝裁左右（直線）＋底部遮擋帶；
+    //     1:1 畫布在 3:4 預覽下也是裁左右
+    {
+      const p45 = generateGuides("igsafe", defaultParams(1080, 1350), 1080, 1350);
+      const cropW = 1350 * 3 / 4, leftF = (1080 - cropW) / 2;
+      const left = Math.round(leftF), right = Math.round(leftF + cropW);
+      const p11 = generateGuides("igsafe", defaultParams(1080, 1080), 1080, 1080);
+      check("產生器：IG 安全區＝3:4 預覽的裁切框（裁左右）＋遮擋帶",
+            p45.x.includes(left) && p45.x.includes(right)
+            && p45.y.length === 1 && p45.y[0] === Math.round(1350 * 0.82)
+            && p11.x.length === 2 && p11.y[0] === Math.round(1080 * 0.82),
+            `4:5 x=${p45.x} y=${p45.y}　1:1 x=${p11.x}`);
+    }
+
+    // (c) 模組網格・接觸印樣（2 欄 16:9 格＋說明帶）：格高＝欄寬/(16/9)、整組置中
+    {
+      const d = { ...defaultParams(1080, 1350), cols: 2, rows: 3, cellRatio: 16 / 9,
+                  captionH: 54 };
+      const g = generateGuides("modular", d, 1080, 1350);
+      const colW = (1080 - 2 * d.margin - d.gutter) / 2;
+      const cellH = colW / (16 / 9);
+      // 每列 3 條線（格頂/格底/帶底）；第一列格底 − 格頂 ＝ cellH
+      const rowsDrawn = g.y.length / 3;
+      const cellDrawn = g.y[1] - g.y[0];
+      check("產生器：接觸印樣＝格高照 16:9 現算、每列含說明帶",
+            rowsDrawn >= 2 && Math.abs(cellDrawn - cellH) <= 1.5
+            && Math.abs((g.y[2] - g.y[1]) - d.captionH) <= 1.5,
+            `列=${rowsDrawn} 格高=${cellDrawn}（應 ${cellH.toFixed(1)}）`);
+    }
+
+    // (d) 重生成＝只換上次那批：手動線與拖過的線都不收走
+    {
+      const gen1 = [100, 500, 900];
+      let cur = [333, ...gen1];           // 333＝手動加的
+      cur[2] = 520;                        // 使用者把 500 拖成 520＝值變了不收走
+      const gen2 = [120, 480];
+      cur = replaceBatch(cur, gen1, gen2);
+      check("產生器：重生成只換上次那批（手動的、拖過的都留）",
+            cur.includes(333) && cur.includes(520) && !cur.includes(100) && !cur.includes(900)
+            && cur.includes(120) && cur.includes(480),
+            `結果=${cur}`);
+    }
+
+    // (e) 檢視器端到端：參考線面板的「生成」按鈕真的寫進 project
+    {
+      const host = document.createElement("div");
+      document.body.append(host);
+      const insp = new Inspector(host, {
+        onChange: () => {}, ensureVariant: async () => {},
+        reorder: () => {}, remove: () => {}, fillMedia: () => {}, changeRatio: () => {},
+        guides: { hidden: () => false, toggleHidden: () => {}, add: () => {}, remove: () => {},
+                  locked: () => false, toggleLocked: () => {} },
+        layers: { currentPage: () => 0, select: () => {}, reorder: () => {}, toggleLock: () => {},
+                  thumb: () => undefined },
+        group: { align: () => {}, distribute: () => {}, duplicate: () => {}, remove: () => {} },
+      });
+      const p = project([]);
+      insp.show(p, null);
+      insp.setPanel("guides");
+      const gen = [...host.querySelectorAll("button")].find((x) => x.textContent === "生成");
+      gen?.click();
+      check("檢視器：參考線產生器寫得進 guidesX/guidesY",
+            !!gen && ((p.guidesX?.length ?? 0) + (p.guidesY?.length ?? 0)) > 0,
+            `按鈕${gen ? "在" : "不在"} x=${p.guidesX?.length ?? 0} y=${p.guidesY?.length ?? 0}`);
       host.remove();
     }
   }

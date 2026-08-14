@@ -10,6 +10,13 @@ import { FILTER_KEYS, FILTER_LABELS } from "./core/filters";
 import { alignToPage } from "./core/group";
 import type { GroupAlign, GroupAxis } from "./core/group";
 import { snugTextWidth } from "./core/render";
+import { GUIDE_PRESETS, MODULAR_COMBOS, defaultParams, generateGuides, replaceBatch } from "./core/guidegen";
+import type { GuideGenParams, GuidePreset } from "./core/guidegen";
+
+/** 產生器每個專案「上次生成的那批」——重生成時只換這批，手動線不動。
+ *  存記憶體就好：關掉 App 後舊批就當手動線看待，頂多多按一次刪除。 */
+const GEN_BATCH = new Map<string, { x: number[]; y: number[] }>();
+const GEN_STORE = "align.guidegen";
 
 /** 貼字寬要量字——共用一個量測 ctx（字型都在 document 層，量得到匯入字型）。 */
 let MEASURE: CanvasRenderingContext2D | null = null;
@@ -349,6 +356,7 @@ export class Inspector {
       this.btn(__("垂直線"), () => this.hooks.guides.add("x")),
       this.btn(__("水平線"), () => this.hooks.guides.add("y")),
     );
+    this.guideGenerator(gs, p);
     const list: [string, "x" | "y", number[]][] = [
       [__("垂直"), "x", p.guidesX ?? []], [__("水平"), "y", p.guidesY ?? []],
     ];
@@ -371,6 +379,99 @@ export class Inspector {
       ? (this.hooks.guides.locked() ? __("已鎖定：畫布上碰不到，改數值或解鎖") : __("畫布上可直接拖；拖出頁面外＝丟掉"))
       : __("還沒有參考線。加一條，或從畫布上拖出來");
     this.el.append(hint);
+  }
+
+  /** 參考線產生器（優化項目 #13）：一鍵長出預設參考線。
+   *  鐵則：全部從 canvasWidth/pageHeight 現算、不寫死座標——換畫布比例重按就對。
+   *  「生成」＝換掉上次生成的那批；手動加的、拖過的（值變了）都不收走。 */
+  private guideGenerator(gs: HTMLElement, p: Project): void {
+    const W = p.canvasWidth, H = p.pageHeight;
+    type Stored = { preset?: GuidePreset; over?: Partial<GuideGenParams> };
+    const load = (): Stored => {
+      try { return JSON.parse(localStorage.getItem(GEN_STORE) ?? "{}"); } catch { return {}; }
+    };
+    const st = load();
+    const preset: GuidePreset = st.preset ?? "igsafe";
+    // 只存「動過的」欄位——邊距/溝寬這些預設值要跟著畫布比例走，存死就違反鐵則
+    const over = st.over ?? {};
+    const params: GuideGenParams = { ...defaultParams(W, H), ...over };
+    const save = (patch: Partial<Stored>): void => {
+      localStorage.setItem(GEN_STORE, JSON.stringify({ preset, over, ...patch }));
+    };
+    const setOver = (k: keyof GuideGenParams, v: number | string): void => {
+      (over as Record<string, number | string>)[k] = v;
+      save({ over });
+      this.rebuild();
+    };
+
+    const labels: Record<GuidePreset, string> = {
+      igsafe: __("IG 安全區"), margins: __("邊界框"), columns: __("欄格"),
+      modular: __("模組網格"), baseline: __("基線網格"), thirds: __("三分法"), golden: __("黃金分割"),
+    };
+    this.row(gs, __("產生器")).append(this.select(
+      GUIDE_PRESETS.map((k) => [k, labels[k]] as [string, string]), preset,
+      (v) => { save({ preset: v as GuidePreset }); this.rebuild(); },
+    ));
+
+    const numRow = (label: string, key: keyof GuideGenParams, opts: { min: number; max: number; step: number }): void => {
+      this.row(gs, label).append(this.num(params[key] as number, opts, (v) => setOver(key, v)));
+    };
+    if (preset === "igsafe" && H / W < 1.6) {
+      this.row(gs, __("格狀預覽")).append(this.select(
+        [["3:4", __("3:4（現行）")], ["1:1", __("1:1（舊版）")]], params.gridPreview,
+        (v) => setOver("gridPreview", v),
+      ));
+    }
+    if (preset === "margins" || preset === "columns" || preset === "modular" || preset === "baseline") {
+      numRow(__("邊距"), "margin", { min: 0, max: Math.round(W / 3), step: 1 });
+    }
+    if (preset === "columns" || preset === "modular") {
+      numRow(__("欄數"), "cols", { min: 1, max: 12, step: 1 });
+      numRow(__("溝寬"), "gutter", { min: 0, max: Math.round(W / 4), step: 1 });
+    }
+    if (preset === "modular") {
+      this.row(gs, __("組合")).append(this.select(
+        [["", __("自訂")], ["letterbox", "Letterbox"], ["contact", __("接觸印樣")], ["editorial", __("雜誌主從")]],
+        "", (v) => {
+          const combo = MODULAR_COMBOS[v];
+          if (!combo) return;
+          Object.assign(over, combo);
+          // 分鏡組合預設要說明帶（字幕/編號的家）；自訂不動使用者的值
+          if (over.captionH == null) over.captionH = Math.round(W * 0.05);
+          save({ over });
+          this.rebuild();
+        },
+      ));
+      const ratios: [string, string][] = [["0", __("自由")], ["1", "1:1"], [String(16 / 9), "16:9"], ["2.35", "2.35:1"]];
+      const curRatio = ratios.some(([v]) => Number(v) === params.cellRatio) ? String(params.cellRatio) : "0";
+      this.row(gs, __("格比例")).append(this.select(ratios, curRatio, (v) => setOver("cellRatio", Number(v))));
+      numRow(params.cellRatio > 0 ? __("最多列數") : __("列數"), "rows", { min: 1, max: 12, step: 1 });
+      numRow(__("說明帶高"), "captionH", { min: 0, max: Math.round(H / 4), step: 1 });
+    }
+    if (preset === "baseline") {
+      numRow(__("行距"), "step", { min: 8, max: Math.round(H / 4), step: 1 });
+    }
+
+    const act = this.row(gs, __("生成"));
+    act.append(this.btn(__("生成"), () => {
+      const out = generateGuides(preset, params, W, H);
+      const prev = GEN_BATCH.get(p.id) ?? { x: [], y: [] };
+      p.guidesX = replaceBatch(p.guidesX ?? [], prev.x, out.x);
+      p.guidesY = replaceBatch(p.guidesY ?? [], prev.y, out.y);
+      GEN_BATCH.set(p.id, out);
+      this.rebuild();
+      this.emit();
+    }));
+    if (GEN_BATCH.get(p.id)?.x.length || GEN_BATCH.get(p.id)?.y.length) {
+      act.append(this.btn(__("收走生成的"), () => {
+        const prev = GEN_BATCH.get(p.id) ?? { x: [], y: [] };
+        p.guidesX = replaceBatch(p.guidesX ?? [], prev.x, []);
+        p.guidesY = replaceBatch(p.guidesY ?? [], prev.y, []);
+        GEN_BATCH.delete(p.id);
+        this.rebuild();
+        this.emit();
+      }));
+    }
   }
 
   /** 圖層清單：由上而下＝由前而後（跟畫面的疊法一致，不是 zIndex 由小到大）。 */
