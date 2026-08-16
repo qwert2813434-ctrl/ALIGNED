@@ -8,6 +8,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod mediaserv;
 
+/// 呼叫系統的 Apple Archive 工具。
+/// Windows／Linux 沒有 `aa`，而 `.alignproj` 就是 AppleArchive/LZFSE 容器——
+/// 跨平台容器還沒拍板（README「待小高定奪」①），這裡給明確訊息，不要靜默生出壞檔。
+#[cfg(target_os = "macos")]
+fn aa(args: &[&str]) -> Result<(), String> {
+    let out = Command::new("aa").args(args).output()
+        .map_err(|e| format!("呼叫 aa 失敗：{e}"))?;
+    if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).into_owned()) }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn aa(_args: &[&str]) -> Result<(), String> {
+    Err("這個平台還不支援 .alignproj（Apple Archive 容器）——請改用 project.json 專案資料夾".into())
+}
+
 #[derive(serde::Serialize)]
 struct LoadedProject {
     json: String,
@@ -32,14 +47,8 @@ fn load_project(path: String) -> Result<LoadedProject, String> {
         // 暫存路徑要落在 assetProtocol 的 scope（$TEMP）內，webview 才載得到素材
         let dir = std::env::temp_dir().join(format!("aligned-mac-{stamp}"));
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let out = Command::new("aa")
-            .args(["extract", "-i", &path, "-d"])
-            .arg(&dir)
-            .output()
-            .map_err(|e| format!("呼叫 aa 失敗：{e}"))?;
-        if !out.status.success() {
-            return Err(format!("解包失敗：{}", String::from_utf8_lossy(&out.stderr)));
-        }
+        aa(&["extract", "-i", &path, "-d", &dir.to_string_lossy()])
+            .map_err(|e| format!("解包失敗：{e}"))?;
         let json = fs::read_to_string(dir.join("project.json")).map_err(|e| e.to_string())?;
         let assets = dir.join("assets");
         if assets.exists() { mediaserv::register_root(&assets.to_string_lossy()); }
@@ -96,13 +105,8 @@ fn pack_alignproj(dir: String, dest: String) -> Result<(), String> {
         fs::copy(&dest, &bak).map_err(|e| e.to_string())?;
     }
     let tmp = format!("{dest}.tmp");
-    let out = Command::new("aa")
-        .args(["archive", "-d", &dir, "-o", &tmp, "-a", "lzfse"])
-        .output()
-        .map_err(|e| format!("呼叫 aa 失敗：{e}"))?;
-    if !out.status.success() {
-        return Err(format!("打包失敗：{}", String::from_utf8_lossy(&out.stderr)));
-    }
+    aa(&["archive", "-d", &dir, "-o", &tmp, "-a", "lzfse"])
+        .map_err(|e| format!("打包失敗：{e}"))?;
     fs::rename(&tmp, &dest).map_err(|e| e.to_string())
 }
 
@@ -115,15 +119,9 @@ fn pack_template(json: String, dest: String) -> Result<(), String> {
     let dir = std::env::temp_dir().join(format!("aligned-template-{stamp}"));
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     fs::write(dir.join("project.json"), json).map_err(|e| e.to_string())?;
-    let out = Command::new("aa")
-        .args(["archive", "-d", dir.to_str().unwrap_or_default(), "-o", &dest, "-a", "lzfse"])
-        .output()
-        .map_err(|e| format!("呼叫 aa 失敗：{e}"))?;
+    let r = aa(&["archive", "-d", dir.to_str().unwrap_or_default(), "-o", &dest, "-a", "lzfse"]);
     let _ = fs::remove_dir_all(&dir);
-    if !out.status.success() {
-        return Err(format!("打包失敗：{}", String::from_utf8_lossy(&out.stderr)));
-    }
-    Ok(())
+    r.map_err(|e| format!("打包失敗：{e}"))
 }
 
 /// 開一個全新的暫存資料夾（影片匯出要在裡面放圖層 PNG 與 spec.json）。
@@ -147,7 +145,12 @@ fn find_alignvideo(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         Some(PathBuf::from("bin/alignvideo")),
         Some(PathBuf::from("src-tauri/bin/alignvideo")),
     ].into_iter().flatten().find(|p| p.exists())
-        .ok_or_else(|| "找不到 alignvideo（跑一次 videotool/build.sh）".to_string())
+        .ok_or_else(|| if cfg!(target_os = "macos") {
+            "找不到 alignvideo（跑一次 videotool/build.sh）".to_string()
+        } else {
+            // alignvideo 是 Swift＋CoreImage 從 iOS 原始檔抽出來的，只長在 Apple 平台。
+            "這個平台還不支援影片頁與動畫匯出（合成器 alignvideo 僅有 macOS 版）".to_string()
+        })
 }
 
 /// 跑 alignvideo 匯出影片頁。
@@ -318,7 +321,12 @@ fn open_url(url: String) -> Result<(), String> {
     if !url.starts_with("https://") && !url.starts_with("http://") && !url.starts_with("mailto:") {
         return Err("只開 http(s)/mailto 網址".into());
     }
-    Command::new("open").arg(url).status().map_err(|e| e.to_string())?;
+    // Windows 走 rundll32 的協定處理器：不經 cmd 剖析，網址裡的 & 不會被切斷。
+    #[cfg(target_os = "windows")]
+    Command::new("rundll32").args(["url.dll,FileProtocolHandler", &url])
+        .status().map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "windows"))]
+    Command::new("open").arg(&url).status().map_err(|e| e.to_string())?;
     Ok(())
 }
 
