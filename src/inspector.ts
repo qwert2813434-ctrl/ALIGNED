@@ -9,7 +9,7 @@ import { FONT_CHOICES, WEIGHT_LABELS, fontCatalog } from "./core/fonts";
 import { FILTER_KEYS, FILTER_LABELS } from "./core/filters";
 import { alignToPage } from "./core/group";
 import type { GroupAlign, GroupAxis } from "./core/group";
-import { snugTextWidth } from "./core/render";
+import { paperScope, snugTextWidth } from "./core/render";
 import { ANIM_DUR, ANIM_DUR_MAX, ANIM_HOLD, ANIM_HOLD_MAX, ANIM_STAGE2_DUR, ANIM_STAGE2_SCALE, ANIM_STAGGER, ANIM_STAGGER_MAX, CAROUSEL_INTERVAL, MODEL_SECS_PER_TURN, MODEL_SPIN_DUR, MODEL_TURNS, defaultDur, type AnimDir, type AnimKind, type Stage2 } from "./core/anim";
 import { GUIDE_PRESETS, MODULAR_COMBOS, defaultParams, generateGuides, replaceBatch } from "./core/guidegen";
 import type { GuideGenParams, GuidePreset } from "./core/guidegen";
@@ -366,8 +366,23 @@ export class Inspector {
       [["", __("無")], ["c1", __("報紙")], ["c3", __("底片顆粒")], ["c4", __("高級紙")],
        ["h1", __("手抄紙")], ["h2", __("粗手抄紙")]],
       p.paperKey ?? "",
-      (v) => { p.paperKey = v || undefined; this.emit(); },
+      (v) => { p.paperKey = v || undefined; this.rebuild(); this.emit(); },
     ));
+    // 紙張要不要吃到哪一類——三個勾選（2026-08-16 使用者定案）。
+    // 全勾＝整頁一次套完（快路）；取消任一個就改走分層渲染。
+    if (p.paperKey) {
+      const sc = paperScope(p);
+      const scopeRow = this.row(s, __("套用到"));
+      const box = (label: string, on: boolean, set: (v: boolean) => void): void => {
+        const w = document.createElement("label");
+        w.className = "chk";
+        w.append(this.check(on, (v) => { set(v); this.emit(); }), document.createTextNode(label));
+        scopeRow.append(w);
+      };
+      box(__("物件"), sc.objects, (v) => { p.paperOnObjects = v; });
+      box(__("背景"), sc.background, (v) => { p.paperOnBackground = v; });
+      box(__("文字"), sc.text, (v) => { p.paperOnText = v; });
+    }
     // 一鍵一對：套用（陸續出現）↔ 移除（整頁動畫清掉）——2026-08-16 使用者定案
     const a = this.section(__("出場動畫"));
     this.row(a, "").append(
@@ -383,12 +398,21 @@ export class Inspector {
                (v) => { p.animHold = v; this.emit(); }),
     );
     const i = this.hooks.layers.currentPage();
-    this.row(this.section(__("頁面背景")), __f("第 {n} 頁", { n: i + 1 })).append(
+    const bgSec = this.section(__("頁面背景"));
+    this.row(bgSec, __f("第 {n} 頁", { n: i + 1 })).append(
       this.color(p.pageBackgroundHex?.[String(i)] ?? "FFFFFF", (hexNoHash) => {
         p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [String(i)]: hexNoHash };
         this.emit();
       }),
     );
+    // 一鍵把這一頁的底色刷到全部頁——輪播通常整本同一個底色，一頁一頁點是折磨
+    this.row(bgSec, "").append(this.btn(__("全部頁套用"), () => {
+      const hex = p.pageBackgroundHex?.[String(i)] ?? "FFFFFF";
+      const all: Record<string, string> = {};
+      for (let k = 0; k < p.pageCount; k++) all[String(k)] = hex;
+      p.pageBackgroundHex = all;
+      this.emit();
+    }));
   }
 
   // ── 釘住的面板 ──────────────────────────────────────────────────────

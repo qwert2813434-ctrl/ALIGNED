@@ -130,6 +130,11 @@ export interface Project {
   guidesY?: number[];    // 絕對座標（y 全頁共用）
   guidesLocked?: boolean;   // 鎖住＝畫布上滑鼠碰不到（線還在、吸附照舊）
   paperKey?: string;     // 全專案單一，刻意不逐頁（逐頁不同紙會在接縫露餡）
+  /** 紙張套用範圍（2026-08-16）：未設＝true＝整頁都套（舊檔行為零變動）。
+   *  關掉某一類＝那一類的像素不吃紙張，其餘照舊——分層渲染，z 序不變。 */
+  paperOnObjects?: boolean;      // 物件（圖片／影片／形狀／3D）
+  paperOnBackground?: boolean;   // 頁面底色
+  paperOnText?: boolean;         // 文字
 }
 
 // ── 解碼 ──────────────────────────────────────────────────────────────

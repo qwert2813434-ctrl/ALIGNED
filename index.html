@@ -91,6 +91,10 @@
     border: 1px solid var(--line); border-radius: 6px;
     background: var(--card); color: var(--ink); cursor: pointer; }
   #inspector button:hover { background: color-mix(in srgb, var(--ink) 7%, var(--card)); }
+  /* 一列多顆勾選（紙張套用範圍）——標籤貼著小方框，整組平分那一列 */
+  #inspector .chk { display: inline-flex; align-items: center; gap: 3px; color: var(--ink2); }
+  #inspector .chk input { margin: 0; }
+  #inspector .row > .chk + .chk { margin-left: 6px; }
   #inspector .seg { display: flex; gap: 4px; flex: 1; }
   #inspector .seg button { flex: 1; padding: 2px 0; }
   #inspector button.icon { display: inline-flex; align-items: center; justify-content: center; padding: 4px 0; }
