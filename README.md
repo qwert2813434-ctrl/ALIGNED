@@ -15,12 +15,24 @@
 
 👉 **[下載 ALIGNED for Mac（DMG）](https://github.com/qwert2813434-ctrl/ALIGNED/releases/latest/download/ALIGNED-macOS-arm64.dmg)**
 
-這個連結**永遠指向最新版**，發新版不用改。想看各版本更新內容或抓舊版 → [Releases](https://github.com/qwert2813434-ctrl/ALIGNED/releases)。
+👉 **[下載 ALIGNED for Windows（安裝檔）](https://github.com/qwert2813434-ctrl/ALIGNED/releases/latest/download/ALIGNED-windows-x64-setup.exe)**
+
+這兩個連結**永遠指向最新版**，發新版不用改。想看各版本更新內容或抓舊版 → [Releases](https://github.com/qwert2813434-ctrl/ALIGNED/releases)。
 
 📱 iPhone／iPad 版正在 App Store 審核中，上架後在這裡補連結。
 
-**系統需求**：Apple Silicon（M1 或更新）、macOS 13 Ventura 或更新。
+**Mac 系統需求**：Apple Silicon（M1 或更新）、macOS 13 Ventura 或更新。
 已通過 Apple 公證（Developer ID 簽名＋Notarization），下載後直接打開即可，不需要任何繞過步驟。
+
+**Windows 系統需求**：Windows 10（64 位元）或更新，需要 WebView2（Win11 內建，Win10 多數已隨 Edge 裝好）。
+安裝檔**尚未做程式碼簽章**，第一次開會跳 SmartScreen 藍色警告 —— 點「其他資訊」→「仍要執行」即可。
+
+**Windows 版目前少兩件事**（Mac 版有、Windows 版還沒有）：
+
+- **`.alignproj` 單檔開不了**。那是 Apple Archive 容器，靠 macOS 內建的 `aa` 打包。
+  Windows 請開**專案資料夾裡的 `project.json`**（素材放同層的 `assets/`）——同一份專案，只是沒裝進單檔。
+- **影片頁與動畫的 MP4 匯出**不能用。合成器是 Swift＋CoreImage 寫的，只長在 Apple 平台。
+  動畫的畫面預覽正常，靜態頁匯出 PNG 也正常。
 
 ## 給 AI 用（這個 repo 的另一半重點）
 
@@ -843,6 +855,26 @@ WKWebView＋分鏡展示量到的數字推翻直覺：
 （AutoDM 送的是 repo 首頁不是直連，所以私訊那條沒事，但 README 舊版本、書籤、轉貼都可能還在用）。
 `.git` 歷史裡那 556MB 也**不要回頭清**：要 rewrite history ＋ force push，會弄壞別人已經 clone 的
 副本，不划算。停止繼續加就好。
+
+### Windows 版怎麼出（2026-08-16 首發）
+
+Mac 上編不出 Windows 包（缺 MSVC 與 `llvm-rc`），**走 GitHub Actions**：推 `win-build`
+分支就自動跑 `.github/workflows/windows-build.yml`（`windows-latest` → `npx tauri build
+--bundles nsis`），artifact 抓下來就是安裝檔。改名成 `ALIGNED-windows-x64-setup.exe`
+掛到當版 Release，README 那條固定連結就自動指到它。
+
+平台差異全部收在 `src-tauri/tauri.windows.conf.json`（Tauri v2 自動合併，**Mac 端的
+`tauri.conf.json` 一個字都不用動**）：NSIS 包裝、`.ico`、`resources` 清空（不打包
+alignvideo）、`beforeBuildCommand` 改走 `scripts/prune-dist.mjs`（Swift 的
+`videotool/build.sh` 只長在 Mac，`rm -rf` 在 Windows 也不存在）、
+`mainBinaryName: ALIGNED`（不設的話裝出來叫 `aligned-mac.exe`，Cargo 套件名會漏出去）。
+
+🔴 **未簽章**：SmartScreen 會擋一次。要根治得買憑證，先在 README 寫明繞法。
+
+**驗收怎麼做**：測試筆電的互動桌面搆不到（SSH 落在 session 0），所以用
+**Windows Edge 跑 `selftest.html`**——Edge 與 WebView2 同一個 Chromium，
+149/149 通過就等於編輯核心在 Windows 成立。作法：Mac 開 `npm run dev -- --host`，
+Windows 端 headless Edge 開 `--remote-debugging-port`，SSH `-L` 打洞回來用 CDP 取結果。
 
 倉庫紅線：`public/samples/real/`（個人照片）永不入 repo（.gitignore 擋著）；
 新增內嵌資源前先想授權（字型清單在 `public/fonts/LICENSES.md`）。
