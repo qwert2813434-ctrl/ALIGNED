@@ -1,4 +1,5 @@
 import { en } from "./locales/en";
+import { IS_MAC } from "./platform";
 
 // i18n 骨架。照抄 STB app/src/i18n.ts（跑過多個版本的設計），差異：目前只有 en，
 // 日文之後補一個 locales/ja.ts 進 DICTS 就好。
@@ -42,15 +43,31 @@ export function setLocale(l: Locale) {
   location.reload(); // 字串散在各渲染器，整頁重載最穩（App 自動存檔，無資料風險）
 }
 
+// ⌘⇧⌥ 是 Apple 鍵盤的字，Windows 鍵盤上沒有這幾顆。介面字樣照平台換，
+// 按鍵判斷不動（那邊本來就同時吃 metaKey 與 ctrlKey）。長的組合先換，才不會被短的吃掉。
+const KEYGLYPH: [RegExp, string][] = [
+  [/⇧⌘/g, "Ctrl+Shift+"], [/⌥⌘/g, "Ctrl+Alt+"],
+  [/⌘([＋−+])/g, "Ctrl$1"],   // 「⌘＋滾輪」不要變成「Ctrl++滾輪」
+  [/⌘/g, "Ctrl+"], [/⇧/g, "Shift+"], [/⌥/g, "Alt+"],
+];
+/** 介面上的快捷鍵字樣。Mac 原樣返回＝這支在 Mac 上等於沒作用。 */
+export function keys(s: string): string {
+  return IS_MAC ? s : KEYGLYPH.reduce((t, [re, to]) => t.replace(re, to), s);
+}
+
 export function __(s: string): string {
-  if (cur === "zh") return s;
-  return DICTS[cur][s] ?? s;
+  return keys(cur === "zh" ? s : DICTS[cur][s] ?? s);
 }
 
 // index.html 的按鈕提示都寫在 title="…" 屬性裡。與其去改 HTML，開機掃一次全部翻掉，
 // 之後新加的按鈕也自動涵蓋。中文語系時 t() 原樣返回＝這個迴圈等於沒作用。
 export function localizeTitles(root: ParentNode = document): void {
   root.querySelectorAll<HTMLElement>("[title]").forEach((el) => { el.title = __(el.title); });
+  if (IS_MAC) return;
+  // 直接寫在標籤內文的鍵名（首頁的 .k 徽章、畫布提示條）走不到 title 那條，一起掃
+  const w = document.createTreeWalker(root as Node, NodeFilter.SHOW_TEXT);
+  for (let n = w.nextNode(); n; n = w.nextNode())
+    if (n.nodeValue && /[⌘⇧⌥]/.test(n.nodeValue)) n.nodeValue = keys(n.nodeValue);
 }
 
 // 帶參數字串：__f("已選 {n} 個元件", { n: 3 })
