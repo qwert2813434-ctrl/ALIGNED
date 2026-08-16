@@ -6,12 +6,15 @@ import { __, __f } from "./i18n";
 // 來源＝小高工具間（GitHub Pages 回 access-control-allow-origin: *，webview 直接 fetch 得到）。
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { IS_MAC } from "./platform";
 
 const FEED = "https://qwert2813434-ctrl.github.io/tools/aligned-latest.json";
 const PAGE = "https://github.com/qwert2813434-ctrl/ALIGNED";
 const SKIP_KEY = "align.skipVersion";   // 「略過此版」記在這，出下一版才再提醒
 
-interface Feed { version?: string; url?: string; notes?: string }
+// url＝Mac DMG（欄位名不動：已出貨的 Mac 版都讀它）；urlWin＝Windows 安裝檔。
+// 各平台拿不到自己的連結時退到 repo 首頁，絕不把 DMG 塞給 Windows 使用者。
+interface Feed { version?: string; url?: string; urlWin?: string; notes?: string }
 
 /** 純數字比較（1.10.0 > 1.9.0），不引語意化版本套件。 */
 export function isNewer(remote: string, local: string): boolean {
@@ -33,7 +36,7 @@ export async function checkUpdate(manual = false): Promise<"update" | "latest" |
     const d = (await r.json()) as Feed;
     if (!d.version || !isNewer(d.version, local)) return "latest";
     if (!manual && localStorage.getItem(SKIP_KEY) === d.version) return "update";
-    banner(d.version, d.notes ?? "", d.url);
+    banner(d.version, d.notes ?? "", IS_MAC ? d.url : d.urlWin);
     return "update";
   } catch { return "error"; /* 離線或網路不通：開機路徑安靜跳過 */ }
 }
