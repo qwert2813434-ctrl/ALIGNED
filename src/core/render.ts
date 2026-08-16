@@ -62,6 +62,29 @@ function cullBounds(b: Block): Rect {
   return { x: b.frame.x + b.frame.w / 2 - w / 2, y: b.frame.y + b.frame.h / 2 - h / 2, w, h };
 }
 
+/** 這一頁「畫得到」的 block，已依 z 序排好。**renderPage 與分層紙張共用這一份**——
+ *  兩邊各自 filter 的話，遲早會出現「有紙張的那層少畫一個東西」這種鬼。 */
+function pageBlocks(project: Project, page: Rect, opts: RenderOptions): Block[] {
+  return project.blocks
+    .filter((b) => intersects(b.frame, page) && b.id !== opts.skipBlockId
+                   && (!opts.onlyBlockIds || opts.onlyBlockIds.has(b.id))
+                   && (!opts.viewRect || intersects(cullBounds(b), opts.viewRect)))
+    .sort((a, b) => a.zIndex - b.zIndex);
+}
+
+/** 紙張套用範圍。未設＝全都套（舊檔零變動）。 */
+export function paperScope(p: Project): { objects: boolean; background: boolean; text: boolean } {
+  return {
+    objects: p.paperOnObjects !== false,
+    background: p.paperOnBackground !== false,
+    text: p.paperOnText !== false,
+  };
+}
+
+/** 這個 block 屬於紙張範圍的哪一類。 */
+const paperClassOf = (b: Block): "text" | "objects" =>
+  (b.content.type === "text" || b.content.type === "textFlow" ? "text" : "objects");
+
 /**
  * 單頁渲染成原尺寸的 canvas。**匯出與編輯預覽共用這條路**，兩者不可能分家。
  * iOS 的 ImageRenderer 用 scale 1——畫布尺寸本身就是目標像素，沒有 2x/3x。
@@ -74,10 +97,47 @@ export function renderPageCanvas(project: Project, index: number, opts: RenderOp
   c.height = Math.round(page.h * S);
   const ctx = c.getContext("2d", { willReadFrequently: !!project.paperKey })!;
   if (S !== 1) ctx.scale(S, S);   // renderPage 照樣畫頁座標，transform 負責放大
+  const hasPaper = !!project.paperKey && !!opts.filters;
+  const scope = paperScope(project);
+
+  // 有紙張、而且**不是全套**：分層畫（背景一層＋依 z 序把同類的連續段各一層），
+  // 只在該套的那幾層套紙。分段而不是「先畫全部再補畫例外」——後者會把 z 序弄亂。
+  if (hasPaper && !(scope.objects && scope.background && scope.text)) {
+    const blocks = pageBlocks(project, page, opts);
+    const layer = (ids: Set<string> | undefined, bg: boolean, paper: boolean): void => {
+      const lc = document.createElement("canvas");
+      lc.width = c.width; lc.height = c.height;
+      const lx = lc.getContext("2d", { willReadFrequently: true })!;
+      if (S !== 1) lx.scale(S, S);
+      // 只有背景層畫底色，其餘層一律透明；呼叫端要求透明匯出時連背景層也不填
+      renderPage(lx, project, index, {
+        ...opts, onlyBlockIds: ids ?? new Set(), transparent: bg ? !!opts.transparent : true,
+      });
+      if (paper) {
+        const d = lx.getImageData(0, 0, lc.width, lc.height);
+        applyPaper(project.paperKey, d, opts.filters!);
+        lx.putImageData(d, 0, 0);
+      }
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(lc, 0, 0);
+      ctx.restore();
+    };
+    layer(undefined, true, scope.background);
+    for (let i = 0; i < blocks.length;) {
+      const kind = paperClassOf(blocks[i]);
+      let j = i;
+      while (j < blocks.length && paperClassOf(blocks[j]) === kind) j++;
+      layer(new Set(blocks.slice(i, j).map((b) => b.id)), false, scope[kind]);
+      i = j;
+    }
+    return c;
+  }
+
   renderPage(ctx, project, index, opts);
-  if (project.paperKey && opts.filters) {
+  if (hasPaper) {
     const d = ctx.getImageData(0, 0, c.width, c.height);
-    applyPaper(project.paperKey, d, opts.filters);
+    applyPaper(project.paperKey, d, opts.filters!);
     ctx.putImageData(d, 0, 0);
   }
   return c;
@@ -102,11 +162,7 @@ export function renderPage(
   const n = parseInt(bg, 16);
   const pageLight = (((n >> 16) & 255) * 0.2126 + ((n >> 8) & 255) * 0.7152 + (n & 255) * 0.0722) > 140;
 
-  const blocks = project.blocks
-    .filter((b) => intersects(b.frame, page) && b.id !== opts.skipBlockId
-                   && (!opts.onlyBlockIds || opts.onlyBlockIds.has(b.id))
-                   && (!opts.viewRect || intersects(cullBounds(b), opts.viewRect)))
-    .sort((a, b) => a.zIndex - b.zIndex);
+  const blocks = pageBlocks(project, page, opts);
 
   // 多圖輪播：時間決定畫哪一張；遮罩模式在切換窗內畫兩張（舊的全幅＋新的從左揭示）。
   // 包在 drawBlock 外面——出場動畫的變換已套在 ctx 上，輪播就在同一個座標系裡發生。

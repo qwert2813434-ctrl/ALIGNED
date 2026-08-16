@@ -10,6 +10,7 @@
 import type { Block, Project } from "./core/schema";
 import { ANIM_HOLD, ANIM_STAGGER, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import { pageRect } from "./core/geometry";
+import { applyFilter } from "./core/filters";
 import { maskAndStrokeCanvases, renderPageCanvas, type RenderOptions } from "./core/render";
 import { toBlob } from "./core/export";
 import { hiddenHost } from "./videopool";
@@ -105,13 +106,22 @@ export async function buildAnimFrames(
   const { lead, cycle } = timelineCycle(anims.values(), tempo.periods,
     project.animHold ?? ANIM_HOLD, project.animStagger ?? ANIM_STAGGER, tempo.minEnd);
 
-  // 頁上的真影片：各開一個 seek 用的播放器（靜音、不真播，只跳格取像）
-  const vids = new Map<string, { el: HTMLVideoElement; canvas: HTMLCanvasElement }>();
+  // 頁上的真影片：各開一個 seek 用的播放器（靜音、不真播，只跳格取像）。
+  // ⚠️ **濾鏡代號要一起記**：drawMedia 查影格的鍵是「檔名|濾鏡」，只塞裸檔名的話
+  // 有濾鏡的影片查不到即時影格 → 退回海報圖 → 整支片在成品裡定格
+  // （2026-08-16 使用者回報「濾鏡效果會讓影片輸出定格」的根因）。
+  const vids = new Map<string, {
+    el: HTMLVideoElement; canvas: HTMLCanvasElement;
+    /** 這個檔被哪些濾鏡用（""＝無濾鏡）→ 每格各產一份，鍵與 drawMedia 對齊。 */
+    keys: Set<string>; scratch: Map<string, HTMLCanvasElement>;
+  }>();
   if (deps.videoUrl) {
     for (const b of onPage) {
       if (b.content.type !== "video" || !b.content.media.assetFileName) continue;
       const file = b.content.media.assetFileName;
-      if (vids.has(file)) continue;
+      const fk = b.content.media.filterKey ?? "";
+      const had = vids.get(file);
+      if (had) { had.keys.add(fk); continue; }
       const el = document.createElement("video");
       el.muted = true; el.playsInline = true; el.preload = "auto";
       const src = deps.videoUrl(file);
@@ -128,7 +138,7 @@ export async function buildAnimFrames(
       const canvas = document.createElement("canvas");
       canvas.width = Math.max(2, Math.round(el.videoWidth * cap));
       canvas.height = Math.max(2, Math.round(el.videoHeight * cap));
-      vids.set(file, { el, canvas });
+      vids.set(file, { el, canvas, keys: new Set([fk]), scratch: new Map() });
     }
   }
 
@@ -150,7 +160,22 @@ export async function buildAnimFrames(
           });
         }
         v.canvas.getContext("2d")!.drawImage(v.el, 0, 0, v.canvas.width, v.canvas.height);
-        videos.set(file, v.canvas);
+        for (const fk of v.keys) {
+          if (!fk || !deps.renderOpts.filters) { videos.set(file, v.canvas); continue; }
+          // 有濾鏡：套在這一格上，鍵帶濾鏡代號（與 drawMedia 的查表鍵一致）
+          let sc = v.scratch.get(fk);
+          if (!sc) {
+            sc = document.createElement("canvas");
+            sc.width = v.canvas.width; sc.height = v.canvas.height;
+            v.scratch.set(fk, sc);
+          }
+          const scx = sc.getContext("2d", { willReadFrequently: true })!;
+          scx.drawImage(v.canvas, 0, 0);
+          const px = scx.getImageData(0, 0, sc.width, sc.height);
+          applyFilter(fk, px, deps.renderOpts.filters);
+          scx.putImageData(px, 0, 0);
+          videos.set(`${file}|${fk}`, sc);
+        }
       }
       const c = renderPageCanvas(project, index, {
         ...deps.renderOpts, videos, anims, time: t,

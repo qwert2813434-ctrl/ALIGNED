@@ -21,3 +21,7 @@ src/exportdemo.ts
 src/modeldemo.ts
 src/pageshot.ts
 public/warnshot/
+paperscopedemo.html
+vidfilterdemo.html
+src/paperscopedemo.ts
+src/vidfilterdemo.ts
