@@ -7,6 +7,7 @@
 // `offsetX/offsetY` 取自**真事件**是唯一兩種語意下都乾淨、也不受捲動影響的量。
 // rect 只配拿來量尺寸。
 
+import { additiveClick } from "./platform";
 import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema";
 import { hex, resolvedFontSize, resolvedKerning } from "./core/schema";
 import { aspectFillCrop, intersects, pageIndexForX, pageRect, stageBounds } from "./core/geometry";
@@ -731,7 +732,7 @@ export class Editor {
       return;
     }
     const b = this.hit(p);
-    const additive = e.shiftKey || e.metaKey;
+    const additive = additiveClick(e);
     if (b) {
       if (additive) {
         // ⇧／⌘ 點＝加減選。減掉主選取時把主選取讓給集合裡剩下的任一個

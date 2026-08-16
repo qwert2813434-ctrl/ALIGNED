@@ -1,4 +1,5 @@
 {
+  "mainBinaryName": "ALIGNED",
   "build": {
     "beforeBuildCommand": "npm run build && node scripts/prune-dist.mjs"
   },

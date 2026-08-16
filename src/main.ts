@@ -1,4 +1,4 @@
-import { __, __f, localizeTitles } from "./i18n";
+import { __, __f, keys, localizeTitles } from "./i18n";
 // ALIGN Core 的 Mac 殼組裝。
 //
 // 同一份程式跑兩種環境：
@@ -39,8 +39,12 @@ declare const __BUILD_STAMP__: string;
 // macOS 面板的位置記憶是全 App 一份，匯出去過哪、開專案面板就被帶去哪（2026-08-14 Armin 指正）。
 const dirKey = (k: string) => `align.lastDir.${k}`;
 const lastDir = (k: string) => localStorage.getItem(dirKey(k)) ?? undefined;
+// 分隔符兩種都認：Windows 給的是 C:\…\x.alignproj，只找 "/" 會回 -1＝記憶靜默失效
+const sepAt = (p: string) => Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+/** 路徑的檔名部分（顯示用）。 */
+const baseName = (p: string) => p.slice(sepAt(p) + 1);
 const rememberDir = (k: string, picked: string) => {
-  const i = picked.lastIndexOf("/");
+  const i = sepAt(picked);
   if (i > 0) localStorage.setItem(dirKey(k), picked.slice(0, i));
 };
 const rememberDirExact = (k: string, dir: string) => localStorage.setItem(dirKey(k), dir);
@@ -764,8 +768,8 @@ editor.onContextMenu = (b, at) => {
   const items: MenuItem[] = [];
   if (b) {
     const many = sel.length > 1;
-    items.push({ label: __("拷貝"), key: "⌘C", run: () => copySelection() });
-    items.push({ label: __("複製一份"), key: "⌘D", run: () => duplicateSelection() });
+    items.push({ label: __("拷貝"), key: keys("⌘C"), run: () => copySelection() });
+    items.push({ label: __("複製一份"), key: keys("⌘D"), run: () => duplicateSelection() });
     if (others.length) {
       items.push({ label: many ? __("複製到其他頁") : __("複製到第…頁"),
                    sub: others.map((i) => ({ label: __f("第 {n} 頁", { n: i + 1 }), run: () => toPage(sel, i, true) })) });
@@ -773,7 +777,7 @@ editor.onContextMenu = (b, at) => {
                    sub: others.map((i) => ({ label: __f("第 {n} 頁", { n: i + 1 }), run: () => toPage(sel, i, false) })) });
     }
     items.push("-");
-    items.push({ label: b.locked ? __("解除鎖定") : __("鎖定"), key: "⌘L", run: () => {
+    items.push({ label: b.locked ? __("解除鎖定") : __("鎖定"), key: keys("⌘L"), run: () => {
       for (const k of sel) k.locked = !b.locked;
       inspector.show(current, editor.getSelected());
       editor.refresh(); commit("lock");
@@ -795,12 +799,12 @@ editor.onContextMenu = (b, at) => {
     items.push({ label: __("在這裡加文字"), run: () => addBlock("text") });
     items.push({ label: __("在這裡加矩形"), run: () => addBlock("rectangle") });
     if (localStorage.getItem(CLIP_KEY)) {
-      items.push({ label: __("貼上"), key: "⌘V", run: () => void pasteClipboard() });
+      items.push({ label: __("貼上"), key: keys("⌘V"), run: () => void pasteClipboard() });
     }
     items.push("-");
     items.push({ label: __f("第 {n} 頁", { n: here + 1 }), sub: pageMenu(here) });
     items.push("-");
-    items.push({ label: __("整台縮到剛好"), key: "⌘0", run: () => editor.fitAll() });
+    items.push({ label: __("整台縮到剛好"), key: keys("⌘0"), run: () => editor.fitAll() });
   }
   openMenu(items, at);
 };
@@ -1012,7 +1016,7 @@ async function exportTemplate(): Promise<void> {
   rememberDir("export", path);
   const json = JSON.stringify(encodeProject(stripToTemplate(current)), null, 2);
   await invoke("pack_template", { json, dest: path });
-  meta.textContent = __f("已匯出範本　{file}", { file: path.split("/").pop() ?? "" });
+  meta.textContent = __f("已匯出範本　{file}", { file: baseName(path) });
 }
 
 // ── 匯出 ──────────────────────────────────────────────────────────────
@@ -1265,7 +1269,7 @@ async function saveOne(s: ExportedPage): Promise<void> {
     title.textContent = motion ? __f("{base}　烤動畫影格中…", { base }) : __f("{base}　合成影片中…", { base });
     try {
       await (motion ? exportAnimPage(s.index, path) : exportVideoPage(s.index, path));
-      title.textContent = `${base}　✓ ${path.split("/").pop()}`;
+      title.textContent = `${base}　✓ ${baseName(path)}`;
     } catch (x) { title.textContent = `${base}　✗ ${(x as Error).message ?? x}`; }
     return;
   }
@@ -1306,7 +1310,7 @@ $<HTMLButtonElement>("#saveAll").addEventListener("click", async () => {
         await invoke("save_png", { path: `${dir}/${s.name}`, data: await pngBase64(s) });
       }
     }
-    title.textContent = __f("{base}　✓ 已存入 {dir}", { base, dir: dir.split("/").pop() ?? "" });
+    title.textContent = __f("{base}　✓ 已存入 {dir}", { base, dir: baseName(dir) });
     return;
   }
   // 瀏覽器會對連續下載設限，逐張間隔一下
@@ -1519,7 +1523,7 @@ async function trimBlock(b: Block): Promise<void> {
   try {
     const out = `${dir}/trim-${Date.now()}.mov`;
     await invoke("trim_video", { src, dest: out, start: r.start, end: r.end });
-    const name = out.split("/").pop()!;
+    const name = baseName(out);
     // 海報要重抓——修剪後的第一格通常不是原本那一格
     const poster = await capturePoster(await localUrl(out));
     await invoke("save_png", { path: `${out}.poster.jpg`, data: poster });

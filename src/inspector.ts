@@ -1,4 +1,5 @@
 import { __, __f } from "./i18n";
+import { additiveClick } from "./platform";
 // 屬性檢視器——獨立元件（企劃約束：畫布／頁面膠捲／屬性檢視器三塊必須可分離，
 // 摺疊機與手機版面靠這個）。
 //
@@ -558,7 +559,7 @@ export class Inspector {
         this.rebuild();
       });
       row.append(ic, name, lk);
-      row.addEventListener("click", (e) => this.hooks.layers.select(b.id, e.shiftKey || e.metaKey));
+      row.addEventListener("click", (e) => this.hooks.layers.select(b.id, additiveClick(e)));
       this.makeLayerDraggable(box, row);
       box.append(row);
     }
