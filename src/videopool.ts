@@ -163,6 +163,15 @@ export class VideoPool {
     this.timer = setInterval(() => this.pump(), 1000 / LIVE_FPS);
   }
 
+  /** 暫停／恢復所有影片（工具列播放鍵用）。
+   *  跟 stop() 不同：不釋放解碼器、不清畫格表，只是不再前進——按下播放能立刻接回去。 */
+  private paused = false;
+  setPaused(on: boolean): void {
+    this.paused = on;
+    if (on) for (const v of this.pool.values()) if (!v.el.paused) v.el.pause();
+  }
+  get isPaused(): boolean { return this.paused; }
+
   stop(): void {
     if (this.timer) { clearInterval(this.timer); this.timer = undefined; }
     for (const v of this.pool.values()) this.release(v);
@@ -206,7 +215,7 @@ export class VideoPool {
     if (!p || !url) return;
     // 整個 App 不在螢幕上（收到背景/被蓋住）＝全部停解碼。
     // 15 條 4K 解碼在背景燒電池毫無意義，而且燒久了 WebContent 會被系統盯上
-    if (document.hidden) {
+    if (document.hidden || this.paused) {
       for (const v of this.pool.values()) if (!v.el.paused) v.el.pause();
       this.stats.playing = 0;
       return;

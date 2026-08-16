@@ -16,6 +16,7 @@ import { cssFont } from "./fonts";
 import type { GuideLine, SpacingBadge } from "./align";
 import type { FilterAssets } from "./filters";
 import { applyPaper } from "./paper";
+import { animStateAt, carouselAt, maskWipeState, revealText, type BlockAnim } from "./anim";
 import { freeIntervals, wrapHoles } from "./textwrap";
 
 /** 直排的預設欄距（em）。iOS：baseline 1.5em 減掉 defaultVerticalLineSpacing 0.28em。 */
@@ -30,6 +31,9 @@ export interface RenderOptions {
    * 只有編輯畫布傳——匯出維持海報圖，PNG 才有決定性（同一份專案匯出兩次要一樣）。
    */
   videos?: Map<string, CanvasImageSource>;
+  /** 3D 物件的渲染入口（modelpool）。未給＝3D block 畫佔位框。
+   *  用介面不用 Map——角度由 time 決定，得現場算，快取在 pool 自己手上。 */
+  models?: { render(b: Block, time?: number): CanvasImageSource | undefined };
   /** 整頁紙張需要顆粒貼片。未提供＝不套紙張。 */
   filters?: FilterAssets;
   /** 行內編輯中的 block——畫布跳過不畫（DOM 編輯層在上面，畫了就疊影）。 */
@@ -38,6 +42,9 @@ export interface RenderOptions {
   onlyBlockIds?: Set<string>;
   /** 不畫頁面底色，留透明（分段圖層要疊在影片上，只有最底那段畫背景）。 */
   transparent?: boolean;
+  /** 出場動畫：時間（秒）與每個 block 的設定。未給＝靜態（舊行為，零變動）。 */
+  time?: number;
+  anims?: Map<string, BlockAnim>;
   /** 輸出倍率（只有 renderPageCanvas 吃）：2＝畫布兩倍像素，16:9 畫布即 4K。
    *  文字與形狀是向量重畫所以是真解析度，不是放大圖。 */
   scale?: number;
@@ -101,7 +108,64 @@ export function renderPage(
                    && (!opts.viewRect || intersects(cullBounds(b), opts.viewRect)))
     .sort((a, b) => a.zIndex - b.zIndex);
 
-  for (const b of blocks) drawBlock(ctx, project, b, page, opts, pageLight);
+  // 多圖輪播：時間決定畫哪一張；遮罩模式在切換窗內畫兩張（舊的全幅＋新的從左揭示）。
+  // 包在 drawBlock 外面——出場動畫的變換已套在 ctx 上，輪播就在同一個座標系裡發生。
+  const drawTimed = (blk: Block): void => {
+    if (blk.content.type !== "image" || !blk.content.media.carouselAssets?.length
+        || opts.time === undefined) {
+      drawBlock(ctx, project, blk, page, opts, pageLight);
+      return;
+    }
+    const m = blk.content.media;
+    const list = [m.assetFileName, ...m.carouselAssets!];
+    const cs = carouselAt(list.length, opts.time, m.carouselInterval, m.carouselMode);
+    const withAsset = (name: string): Block =>
+      ({ ...blk, content: { type: "image", media: { ...m, assetFileName: name } } });
+    drawBlock(ctx, project, withAsset(list[cs.cur]), page, opts, pageLight);
+    if (cs.next !== undefined && cs.wipe !== undefined) {
+      // 與入場 maskWipe 同一份幾何：遮罩沿方向揭示、新圖帶同方向位移
+      const w = maskWipeState(blk.frame, cs.wipe, m.carouselDir);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(w.clip.x - page.x, w.clip.y - page.y, w.clip.w, w.clip.h);
+      ctx.clip();
+      if (w.dx || w.dy) ctx.translate(w.dx, w.dy);
+      drawBlock(ctx, project, withAsset(list[cs.next]), page, opts, pageLight);
+      ctx.restore();
+    }
+  };
+
+  for (const b of blocks) {
+    // 動畫層：求值與繪製分離——這裡只把狀態變成 canvas 變換，drawBlock 完全不知道有動畫
+    const a = opts.anims?.get(b.id);
+    if (a && opts.time !== undefined) {
+      const vert = b.content.type === "text" && !!b.content.text.vertical;
+      const st = animStateAt(a, opts.time, b.frame, page, vert);
+      if (st.opacity <= 0) continue;
+      ctx.save();
+      if (st.clip) {
+        ctx.beginPath();
+        ctx.rect(st.clip.x - page.x, st.clip.y - page.y, st.clip.w, st.clip.h);
+        ctx.clip();
+      }
+      if (st.opacity < 1) ctx.globalAlpha *= st.opacity;
+      if (st.dx || st.dy) ctx.translate(st.dx, st.dy);
+      if (st.scale !== 1) {
+        const cx = b.frame.x - page.x + b.frame.w / 2, cy = b.frame.y - page.y + b.frame.h / 2;
+        ctx.translate(cx, cy); ctx.scale(st.scale, st.scale); ctx.translate(-cx, -cy);
+      }
+      // 打字／閃現＝換一份截短的文字進去（不動 drawBlock 的內部）
+      let bb = b;
+      if (st.reveal !== undefined && b.content.type === "text") {
+        bb = { ...b, content: { ...b.content,
+          text: { ...b.content.text, text: revealText(b.content.text.text, st.reveal, st.revealMode) } } };
+      }
+      drawTimed(bb);
+      ctx.restore();
+    } else {
+      drawTimed(b);
+    }
+  }
   ctx.restore();
 }
 
@@ -287,6 +351,28 @@ function drawBlock(
     case "video":
       drawMedia(ctx, b.content.media, f.w, f.h, opts, pageLight);
       break;
+    case "model": {
+      // 3D 物件：向 modelpool 要「時間 time 的那一格」——渲染核心只認得 CanvasImageSource
+      const img = opts.models?.render(b, opts.time);
+      if (img) {
+        ctx.drawImage(img, 0, 0, f.w, f.h);
+      } else {
+        // 還沒載好／WebGL 不可用：畫個立方體線框佔位（沿用空欄位的墨色邏輯）
+        ctx.strokeStyle = pageLight ? "rgba(60,60,60,.5)" : "rgba(240,240,240,.6)";
+        ctx.lineWidth = Math.max(1, Math.min(f.w, f.h) * 0.008);
+        ctx.strokeRect(0, 0, f.w, f.h);
+        const s = Math.min(f.w, f.h) * 0.22, mx = f.w / 2, my = f.h / 2, o = s * 0.45;
+        ctx.strokeRect(mx - s / 2, my - s / 2 + o / 2, s, s);
+        ctx.strokeRect(mx - s / 2 + o, my - s / 2 - o / 2, s, s);
+        ctx.beginPath();
+        for (const [ax, ay] of [[0, 0], [s, 0], [0, s], [s, s]] as const) {
+          ctx.moveTo(mx - s / 2 + ax, my - s / 2 + o / 2 + ay);
+          ctx.lineTo(mx - s / 2 + o + ax, my - s / 2 - o / 2 + ay);
+        }
+        ctx.stroke();
+      }
+      break;
+    }
   }
   ctx.restore();
 }

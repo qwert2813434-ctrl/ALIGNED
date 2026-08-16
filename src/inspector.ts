@@ -4,12 +4,13 @@ import { __, __f } from "./i18n";
 //
 // 這層只做「顯示值＋回寫值」：直接改共享的 block 物件，改完呼叫 hooks 讓殼層
 // 重畫／重算貼字盒。**改自己的值時不重建面板**——重建會把正在打字的輸入框炸掉。
-import type { Block, MediaBlock, Project, ShapeBlock, TextAlign, TextBlock } from "./core/schema";
+import type { Block, MediaBlock, ModelBlock, Project, ShapeBlock, TextAlign, TextBlock } from "./core/schema";
 import { FONT_CHOICES, WEIGHT_LABELS, fontCatalog } from "./core/fonts";
 import { FILTER_KEYS, FILTER_LABELS } from "./core/filters";
 import { alignToPage } from "./core/group";
 import type { GroupAlign, GroupAxis } from "./core/group";
 import { snugTextWidth } from "./core/render";
+import { ANIM_DUR, ANIM_DUR_MAX, ANIM_HOLD, ANIM_HOLD_MAX, ANIM_STAGE2_DUR, ANIM_STAGE2_SCALE, ANIM_STAGGER, ANIM_STAGGER_MAX, CAROUSEL_INTERVAL, MODEL_SECS_PER_TURN, MODEL_SPIN_DUR, MODEL_TURNS, defaultDur, type AnimDir, type AnimKind, type Stage2 } from "./core/anim";
 import { GUIDE_PRESETS, MODULAR_COMBOS, defaultParams, generateGuides, replaceBatch } from "./core/guidegen";
 import type { GuideGenParams, GuidePreset } from "./core/guidegen";
 
@@ -33,6 +34,7 @@ const LAYER_ICON: Record<Block["content"]["type"], string> = {
   textFlow: svg('<path d="M3.4 4.6h11"/><path d="M3.4 8h11"/><path d="M3.4 11.4h7.6"/><path d="M3.4 14.8h5"/>'),
   image: svg('<rect x="2.8" y="4" width="12.4" height="10" rx="1.6"/><circle cx="6.6" cy="7.6" r="1.1"/><path d="M3.2 12.4l3.4-2.6 3 2.2 2.2-1.6 3.2 2.2"/>'),
   video: svg('<rect x="2.8" y="4" width="12.4" height="10" rx="1.6"/><path d="M7.6 6.9l4 2.1-4 2.1z"/>'),
+  model: svg('<path d="M9 2.6l5.6 3.2v6.4L9 15.4 3.4 12.2V5.8z"/><path d="M3.4 5.8L9 9l5.6-3.2"/><path d="M9 9v6.4"/>'),
   shape: svg('<rect x="3.2" y="3.2" width="8" height="8" rx="1.2"/><circle cx="11.4" cy="11.4" r="3.4"/>'),
 };
 const LOCK_ON = svg('<rect x="4" y="8" width="10" height="6.4" rx="1.4"/><path d="M6.4 8V6.2a2.6 2.6 0 015.2 0V8"/>');
@@ -64,6 +66,7 @@ function layerName(b: Block): string {
   if (c.type === "shape") {
     return { rectangle: __("矩形"), ellipse: __("圓形"), line: __("線條") }[c.shape.kind] ?? __("形狀");
   }
+  if (c.type === "model") return __("3D 物件");
   return c.media.assetFileName ? (c.type === "video" ? __("影片") : __("圖片")) : __("空欄位");
 }
 
@@ -73,9 +76,17 @@ export interface InspectorHooks {
   /** 濾鏡換了——殼層要確保「素材×濾鏡」的變體已生成。 */
   ensureVariant: (block: Block) => Promise<void>;
   reorder: (block: Block, dir: "front" | "back") => void;
+  /** 播放出場動畫。給 block＝只播那一個（面板即時回饋）；不給＝整個版面。 */
+  playAnim?: (block?: Block) => void;
+  /** 一鍵把整頁的出場順序排開（寫進專案），排完自動播一次。 */
+  sequenceAll?: (from?: Block) => void;
+  /** 一鍵把整頁的出場動畫清掉（陸續出現的反操作）。 */
+  clearAnims?: (from?: Block) => void;
   remove: (block: Block) => void;
   /** 空欄位填圖／既有媒體換檔（開選檔框、複製進 assets、必要時轉型 image↔video）。 */
   fillMedia: (block: Block) => void;
+  /** 多圖輪播：開選檔框（可多選）把圖加進這個框的輪播清單。 */
+  addCarousel?: (block: Block) => void;
   /** 匯入字型檔（開選檔框→存 UserFonts→註冊）。回匯入結果，null＝取消或失敗。 */
   importFont?: () => Promise<{ label: string; value: string } | null>;
   /** 多選時的整組操作。 */
@@ -152,11 +163,8 @@ export class Inspector {
       this.el = host;
     }
     if (!project || !block) {
+      // 空狀態不放教學文字（2026-08-16 使用者：版面說明文字全拿掉；教學歸操作導覽）
       if (project) this.projectPanel(project);
-      const hint = document.createElement("div");
-      hint.className = "hint";
-      hint.textContent = __("點選畫布上的元件來調整；\n拖曳＝移動並吸附、方向鍵＝微移");
-      this.el.append(hint);
       return;
     }
     this.common(block);
@@ -164,7 +172,40 @@ export class Inspector {
       case "text": case "textFlow": this.text(block.content.text); break;
       case "shape": this.shape(block.content.shape); break;
       case "image": case "video": this.media(block, block.content.media); break;
+      case "model": this.model3d(block, block.content.model); break;
     }
+  }
+
+  /** 3D 物件：展示方式與速率。它在專案裡永遠是活的物件，匯出那一刻才烤成影格。
+   *  ②快轉煞停的圈數 0.5 步進（半圈也行）、終點停在「角度」那一面（2026-08-16 定案）。 */
+  private model3d(b: Block, m: ModelBlock): void {
+    const s = this.section(__("3D 物件"));
+    const play = (): void => this.hooks.playAnim?.(b);
+    this.row(s, __("展示方式")).append(this.select(
+      [["", __("靜止")], ["spin", __("慢慢轉圈")], ["spinStop", __("快轉煞停")]],
+      m.mode ?? "",
+      (v) => { m.mode = (v || undefined) as ModelBlock["mode"]; this.rebuild(); this.emit(); play(); },
+    ));
+    if (m.mode === "spin") {
+      this.row(s, __("秒／圈")).append(
+        this.num(m.secsPerTurn ?? MODEL_SECS_PER_TURN, { min: 0.5, max: 60, step: 0.5 },
+                 (v) => { m.secsPerTurn = v; this.emit(); play(); }),
+      );
+    }
+    if (m.mode === "spinStop") {
+      this.row(s, __("圈數")).append(
+        this.num(m.turns ?? MODEL_TURNS, { min: 0.5, max: 10, step: 0.5 },
+                 (v) => { m.turns = v; this.emit(); play(); }),
+      );
+      this.row(s, __("秒數")).append(
+        this.num(m.dur ?? MODEL_SPIN_DUR, { min: 0.3, max: 10, step: 0.1 },
+                 (v) => { m.dur = v; this.emit(); play(); }),
+      );
+    }
+    this.row(s, __("角度")).append(
+      this.num(m.yaw ?? 0, { min: -360, max: 360, step: 5 },
+               (v) => { m.yaw = v || undefined; this.emit(); }),
+    );
   }
 
   /** 多選：顯示整組操作（對齊的基準是**這幾個東西自己的外框**，不是頁面）。 */
@@ -294,11 +335,7 @@ export class Inspector {
       snugAll.title = __("把每個文字的框收到剛好包住字——斷行與字的位置都不會變");
       this.row(ts, __("框寬")).append(snugAll);
     }
-
-    const hint = document.createElement("div");
-    hint.className = "hint";
-    hint.textContent = __("⇧／⌘ 點＝加減選、空白處拖曳＝框選；\n拖曳任一個＝整組移動（相對位置不變）");
-    this.el.append(hint);
+    // 操作提示文字拿掉了（2026-08-16 使用者定案）——快捷鍵語彙留給 title 提示與導覽
   }
 
   // ── 各區段 ──────────────────────────────────────────────────────────
@@ -326,10 +363,25 @@ export class Inspector {
       },
     ));
     this.row(s, __("紙張")).append(this.select(
-      [["", __("無")], ["c1", __("報紙")], ["c3", __("底片顆粒")], ["c4", __("高級紙")]],
+      [["", __("無")], ["c1", __("報紙")], ["c3", __("底片顆粒")], ["c4", __("高級紙")],
+       ["h1", __("手抄紙")], ["h2", __("粗手抄紙")]],
       p.paperKey ?? "",
       (v) => { p.paperKey = v || undefined; this.emit(); },
     ));
+    // 一鍵一對：套用（陸續出現）↔ 移除（整頁動畫清掉）——2026-08-16 使用者定案
+    const a = this.section(__("出場動畫"));
+    this.row(a, "").append(
+      this.btn(__("陸續出現"), () => { this.hooks.sequenceAll?.(); this.rebuild(); this.emit(); }),
+      this.btn(__("移除動畫"), () => { this.hooks.clearAnims?.(); this.rebuild(); this.emit(); }),
+    );
+    this.row(a, __("間隔")).append(
+      this.num(p.animStagger ?? ANIM_STAGGER, { min: 0, max: ANIM_STAGGER_MAX, step: 0.05 },
+               (v) => { p.animStagger = v; this.emit(); }),
+    );
+    this.row(a, __("停留")).append(
+      this.num(p.animHold ?? ANIM_HOLD, { min: 0, max: ANIM_HOLD_MAX, step: 0.5 },
+               (v) => { p.animHold = v; this.emit(); }),
+    );
     const i = this.hooks.layers.currentPage();
     this.row(this.section(__("頁面背景")), __f("第 {n} 頁", { n: i + 1 })).append(
       this.color(p.pageBackgroundHex?.[String(i)] ?? "FFFFFF", (hexNoHash) => {
@@ -644,14 +696,103 @@ export class Inspector {
       this.rebuild();
       this.emit();
     }));
+    this.animRow(s, b);
     const layer = this.row(s, __("圖層"));
     layer.append(
       this.btn(__("移到最前"), () => this.hooks.reorder(b, "front")),
       this.btn(__("移到最後"), () => this.hooks.reorder(b, "back")),
     );
-    const danger = this.btn(__("刪除元件（⌫）"), () => this.hooks.remove(b));
+    const danger = this.btn(__("刪除元件"), () => this.hooks.remove(b));
     danger.className = "danger";
     this.row(s, "").append(danger);
+  }
+
+  /**
+   * 出場方式。文字與物件是兩套語彙：
+   * 文字的 in 點固定在「文字開頭」、方向朝尾端，所以沒有方向可選；
+   * 物件的 in 點方向可自訂上下左右。
+   */
+  private animRow(s: HTMLElement, b: Block): void {
+    const isText = b.content.type === "text" || b.content.type === "textFlow";
+    const kinds: [string, string][] = isText
+      ? [["", __("無")], ["typewriter", __("打字")], ["textPhrase", __("逐句")],
+         ["textSlide", __("位移")], ["textFlicker", __("隨機閃現")]]
+      : [["", __("無")], ["slide", __("位移")], ["fade", __("淡入")],
+         ["scale", __("縮放")], ["maskWipe", __("遮罩")]];
+    const play = (): void => this.hooks.playAnim?.(b);
+
+    this.row(s, __("出場方式")).append(this.select(kinds, b.anim?.kind ?? "", (v) => {
+      if (!v) {
+        b.anim = undefined;
+        this.rebuild(); this.emit();
+        // 必須重啟整台播放——不重啟的話，時間軸還抱著改之前的快照在循環
+        // （2026-08-16 實案：3D 物件的出場調回「無」還一直播）
+        this.hooks.playAnim?.();
+        return;
+      }
+      const kind = v as AnimKind;
+      // **換效果就重算秒數**——沿用前一個效果的值會出事：長文選過「打字」算出 30 秒，
+      // 再換「位移」就變成慢動作 30 秒。手調過的值在換效果時一併重置，這是可預期的。
+      const txt = b.content.type === "text" || b.content.type === "textFlow" ? b.content.text.text : "";
+      b.anim = { ...(b.anim ?? {}), kind, dur: defaultDur(kind, txt) };
+      this.rebuild();
+      this.emit();
+      play();                      // 選了就立刻在畫布上播一次——不用匯出才知道長怎樣
+    }));
+    if (!b.anim) return;
+
+    // 方向只對「會動的物件效果」有意義（淡入、縮放沒有方向）；
+    // 兩段式是純縮放語彙，第一段不跑 kind 的效果，方向也就沒意義
+    if (!isText && (b.anim.kind === "slide" || b.anim.kind === "maskWipe") && !b.anim.stage2) {
+      this.row(s, __("方向")).append(this.select(
+        [["left", __("從左")], ["right", __("從右")], ["up", __("從上")], ["down", __("從下")]],
+        b.anim.dir ?? "left",
+        (v) => { b.anim = { ...b.anim!, dir: v as AnimDir }; this.emit(); play(); },
+      ));
+    }
+    // 兩段式是物件的語彙（文字沒有「放大／滿版」這回事）。
+    // 模型：入場到版面位置（第一個位置）→ 接著放大到第二個位置並停在那裡。
+    if (!isText) {
+      this.row(s, __("兩段式")).append(this.select(
+        [["", __("無")], ["scale", __("接著放大")], ["fullscreen", __("接著滿版")]],
+        b.anim.stage2 ?? "",
+        (v) => {
+          const { stage2: _s2, dur2: _d2, scale2: _sc, ...rest } = b.anim!;
+          b.anim = v ? { ...rest, stage2: v as Stage2 } : rest;
+          this.rebuild(); this.emit(); play();
+        },
+      ));
+      if (b.anim.stage2 === "scale") {
+        this.row(s, __("第二段大小")).append(
+          this.num(Math.round((b.anim.scale2 ?? ANIM_STAGE2_SCALE) * 100), { min: 50, max: 400, step: 5 },
+                   (v) => { b.anim = { ...b.anim!, scale2: v / 100 }; this.emit(); play(); }),
+        );
+      }
+      if (b.anim.stage2) {
+        this.row(s, __("第二段秒數")).append(
+          this.num(b.anim.dur2 ?? ANIM_STAGE2_DUR, { min: 0.1, max: ANIM_DUR_MAX, step: 0.1 },
+                   (v) => { b.anim = { ...b.anim!, dur2: v }; this.emit(); play(); }),
+        );
+      }
+    }
+    this.row(s, __("秒數")).append(
+      this.num(b.anim.dur ?? ANIM_DUR, { min: 0.1, max: ANIM_DUR_MAX, step: 0.1 },
+               (v) => { b.anim = { ...b.anim!, dur: v }; this.emit(); play(); }),
+    );
+    this.row(s, __("延遲")).append(
+      this.num(b.anim.delay ?? 0, { min: 0, max: 60, step: 0.1 },
+               (v) => { b.anim = { ...b.anim!, delay: v }; this.emit(); play(); }),
+    );
+    // 停留就擺在秒數旁邊——調節奏時兩個數字要一起看。
+    // 值本身是**整頁共用**（停留是頁面跑完的那段靜止，不是單一元件的屬性），
+    // 所以這裡寫的是專案設定，專案面板那列是同一個值。
+    const proj = this.project;
+    if (proj) {
+      this.row(s, __("停留")).append(
+        this.num(proj.animHold ?? ANIM_HOLD, { min: 0, max: ANIM_HOLD_MAX, step: 0.5 },
+                 (v) => { proj.animHold = v; this.emit(); play(); }),
+      );
+    }
   }
 
   private text(t: TextBlock): void {
@@ -824,7 +965,43 @@ export class Inspector {
     const s = this.section(b.content.type === "video" ? __("影片") : __("圖片"));
     const pick = this.btn(m.assetFileName ? __("更換圖片／影片…") : __("選擇圖片／影片…"),
                           () => this.hooks.fillMedia(b));
-    this.row(s, "").append(pick);
+    this.row(s, __("素材")).append(pick);
+    // 多圖輪播：加圖的按鈕就長在選檔旁邊（使用者定案：新增圖片時旁邊有一顆），
+    // 有圖之後才出現間隔／切換方式——沒開輪播的人不用看到這些
+    if (b.content.type === "image" && m.assetFileName && this.hooks.addCarousel) {
+      const n = m.carouselAssets?.length ?? 0;
+      const carouselRow = this.row(s, __("輪播"));
+      carouselRow.append(this.btn(__("加輪播圖…"), () => this.hooks.addCarousel!(b)));
+      if (n) {
+        carouselRow.append(this.btn(__("清空"), () => {
+          m.carouselAssets = undefined;
+          m.carouselInterval = undefined;
+          m.carouselMode = undefined;
+          m.carouselDir = undefined;
+          this.rebuild(); this.emit();
+        }));
+        this.row(s, __("輪播間隔")).append(
+          this.num(m.carouselInterval ?? CAROUSEL_INTERVAL, { min: 0.2, max: 10, step: 0.1 },
+                   (v) => { m.carouselInterval = v; this.emit(); this.hooks.playAnim?.(b); }),
+        );
+        this.row(s, __("切換方式")).append(this.select(
+          [["cut", __("直切")], ["maskWipe", __("連續遮罩")]],
+          m.carouselMode ?? "cut",
+          (v) => {
+            m.carouselMode = v as MediaBlock["carouselMode"];
+            this.rebuild(); this.emit(); this.hooks.playAnim?.(b);
+          },
+        ));
+        // 遮罩帶同方向位移，所以要給方向（與入場 maskWipe 同語彙）
+        if (m.carouselMode === "maskWipe") {
+          this.row(s, __("方向")).append(this.select(
+            [["left", __("從左")], ["right", __("從右")], ["up", __("從上")], ["down", __("從下")]],
+            m.carouselDir ?? "left",
+            (v) => { m.carouselDir = v as MediaBlock["carouselDir"]; this.emit(); this.hooks.playAnim?.(b); },
+          ));
+        }
+      }
+    }
     this.row(s, __("濾鏡")).append(this.select(
       [["", __("無")], ...FILTER_KEYS.map((k) => [k, FILTER_LABELS[k]] as [string, string])],
       m.filterKey ?? "",

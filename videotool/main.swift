@@ -51,6 +51,10 @@ struct Spec: Decodable {
     let mute: Bool
     let paper: String?
     let layers: [LayerSpecJSON]
+    /// 影格序列模式（2026-08-16 出場動畫用）：資料夾裡放 f-000000.jpg…，
+    /// 影格已由畫布**完全烤好**（含動畫、輪播、紙張），這裡只負責編碼。無聲。
+    let frames: String?
+    let frameCount: Int?
 }
 
 enum ToolError: Error, CustomStringConvertible {
@@ -271,6 +275,112 @@ func trimClip(source: URL, dest: URL, start: Double, end: Double) async throws {
     }
 }
 
+// ── 手抄紙纖維（mac 版）────────────────────────────────────────────────
+// 與 iOS handmadeFiber／TS handmadeFiber **同配方、同固定種子**，只是用純 CGContext
+// 畫（工具端沒有 UIKit）。build.sh 會把 applyPaperCILive 的手抄紙分支改接到這裡。
+func handmadeFiberCG(_ paper: PagePaper, size: CGSize) -> CIImage? {
+    let r = paper.handmadeRecipe
+    let s = size.width / 2160        // 長度／線寬換算（根數不動）
+    var seed: UInt64 = 20260816
+    func rnd() -> CGFloat {          // 與 TS 端同一條 LCG
+        seed = (seed &* 1103515245 &+ 12345) & 0x7fff_ffff
+        return CGFloat(seed) / CGFloat(0x7fff_ffff)
+    }
+    let w = Int(size.width.rounded()), h = Int(size.height.rounded())
+    let space = CGColorSpaceCreateDeviceRGB()
+    guard w > 0, h > 0, let g = CGContext(
+        data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+        space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    func color(_ rc: CGFloat, _ gc: CGFloat, _ bc: CGFloat, _ a: CGFloat) -> CGColor {
+        CGColor(colorSpace: space, components: [rc, gc, bc, a])!
+    }
+    func strokes(_ n: Int, _ w0: CGFloat, _ w1: CGFloat,
+                 _ aDark: CGFloat, _ aLight: CGFloat, _ l0: CGFloat, _ l1: CGFloat) {
+        for _ in 0..<n {
+            let x = rnd() * size.width, y = rnd() * size.height
+            let a = rnd() * .pi, len = (l0 + rnd() * l1) * s
+            let dark = rnd() > 0.45
+            g.setStrokeColor(dark ? color(96/255, 98/255, 74/255, aDark)
+                                  : color(1, 1, 246/255, aLight))
+            g.setLineWidth((w0 + rnd() * w1) * s)
+            g.move(to: CGPoint(x: x, y: y))
+            g.addQuadCurve(
+                to: CGPoint(x: x + cos(a) * len, y: y + sin(a) * len),
+                control: CGPoint(x: x + cos(a) * len * 0.5 + (rnd() - 0.5) * 6 * s,
+                                 y: y + sin(a) * len * 0.5 + (rnd() - 0.5) * 6 * s))
+            g.strokePath()
+        }
+    }
+    strokes(r.fine, 0.4, 0.7, 0.14, 0.24, 7, 34)      // 細纖維
+    strokes(r.coarse, 0.9, 0.8, 0.20, 0.30, 16, 50)   // 粗絮
+    for _ in 0..<r.specks {                           // 紙漿雜點
+        let light = rnd() > 0.5
+        g.setFillColor(light ? color(1, 1, 248/255, 0.16) : color(110/255, 112/255, 86/255, 0.10))
+        let rad = (0.35 + rnd() * 1.2) * s
+        g.fillEllipse(in: CGRect(x: rnd() * size.width - rad, y: rnd() * size.height - rad,
+                                 width: rad * 2, height: rad * 2))
+    }
+    guard let cg = g.makeImage() else { return nil }
+    return CIImage(cgImage: cg)
+}
+
+// ── 影格序列 → MP4（出場動畫頁）───────────────────────────────────────
+// 影格由畫布逐格渲染（與預覽同一條路），這裡純編碼：H.264、無聲。
+func encodeFrames(spec: Spec, framesDir: String) async throws {
+    let count = spec.frameCount ?? 0
+    guard count > 0 else { throw ToolError.badSpec("frameCount 要 > 0") }
+    let w = Int(roundEven(spec.pageWidth)), h = Int(roundEven(spec.pageHeight))
+    let out = URL(fileURLWithPath: spec.output)
+    try? FileManager.default.removeItem(at: out)
+    let writer = try AVAssetWriter(outputURL: out, fileType: .mp4)
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264,
+        AVVideoWidthKey: w, AVVideoHeightKey: h,
+        // 位元率抓 8 bpp——1080×1350 約 11.7 Mbps，IG 上傳綽綽有餘
+        AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: w * h * 8],
+    ])
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+        assetWriterInput: input,
+        sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: w,
+            kCVPixelBufferHeightKey as String: h,
+        ])
+    writer.add(input)
+    guard writer.startWriting() else {
+        throw ToolError.exportFailed(writer.error?.localizedDescription ?? "startWriting")
+    }
+    writer.startSession(atSourceTime: .zero)
+    for i in 0..<count {
+        let path = String(format: "%@/f-%06d.jpg", framesDir, i)
+        let img = try loadCGImage(path)
+        while !input.isReadyForMoreMediaData { usleep(2000) }
+        guard let pool = adaptor.pixelBufferPool else { throw ToolError.exportFailed("沒有像素緩衝池") }
+        var pb: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pb)
+        guard let buf = pb else { throw ToolError.exportFailed("要不到像素緩衝") }
+        CVPixelBufferLockBaseAddress(buf, [])
+        guard let ctx = CGContext(
+            data: CVPixelBufferGetBaseAddress(buf), width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buf),
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else {
+            CVPixelBufferUnlockBaseAddress(buf, [])
+            throw ToolError.exportFailed("建 CGContext 失敗")
+        }
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h)))
+        CVPixelBufferUnlockBaseAddress(buf, [])
+        adaptor.append(buf, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: CMTimeScale(spec.fps)))
+    }
+    input.markAsFinished()
+    await writer.finishWriting()
+    guard writer.status == .completed else {
+        throw ToolError.exportFailed(writer.error?.localizedDescription ?? "編碼未完成")
+    }
+}
+
 @main
 struct Tool {
     static func main() async {
@@ -289,6 +399,12 @@ struct Tool {
             guard CommandLine.arguments.count > 1 else { throw ToolError.badSpec("要給一個 spec.json 路徑") }
             let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
             let spec = try JSONDecoder().decode(Spec.self, from: data)
+            // 影格序列模式：畫布已把每一格烤好，這裡只編碼
+            if let framesDir = spec.frames {
+                try await encodeFrames(spec: spec, framesDir: framesDir)
+                print("ok")
+                return
+            }
             let videos = spec.layers.filter { $0.type == "video" }
             guard !videos.isEmpty else { throw ToolError.noVideo }
 

@@ -18,11 +18,20 @@ s = s.replace("import UIKit", "import CoreGraphics\nimport Foundation")
 for pat, what in [
     (r"\n    /// 紙張纖維層快取.*?\n    private static var paperCache.*?\n", "paperCache"),
     (r"\n    /// softLight 用的纖維噪點層.*?\n    static func paperFiber.*?\n    \}\n", "paperFiber"),
+    # 手抄紙纖維（2026-08-16 加）：整段是 UIGraphicsImageRenderer 畫的 UIImage，
+    # Mac 版在 main.swift 有純 CG 的 handmadeFiberCG（同配方同種子）
+    (r"\n    /// 手抄紙纖維層.*?\n    static func handmadeFiber.*?\n        \}\n    \}\n", "handmadeFiber"),
     (r"\n    /// 套一顆濾鏡到 UIImage.*?\n    static func apply\(_ key: String\?, to image: UIImage\).*?\n    \}\n", "apply"),
 ]:
     before = s
     s = re.sub(pat, "\n", s, flags=re.S)
     assert s != before, f"{what} 沒被移除——App 端結構變了，回來看 build.sh"
+# applyPaperCILive 的手抄紙分支：iOS 讀主緒 paperFiber（UIImage 快取），
+# mac 改接 main.swift 的純 CG 版（同配方同種子）
+s = s.replace("""            let fiber = paperFiber(paper, size: input.extent.size)
+                .flatMap { $0.cgImage }.map { CIImage(cgImage: $0) }""",
+"""            let fiber = handmadeFiberCG(paper, size: input.extent.size)""")
+assert "handmadeFiberCG" in s, "手抄紙分支改寫沒生效——applyPaperCILive 結構變了"
 assert "UIImage" not in s, "還有殘留的 UIImage"
 pathlib.Path("videotool/generated/FilterEngine.mac.swift").write_text(s)
 PY

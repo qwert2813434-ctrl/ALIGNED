@@ -47,8 +47,23 @@ enum PagePaper: String, CaseIterable, Identifiable {
     case newsprint = "c1"   // 報紙：泛黃紙色 × 纖維
     case grain = "c3"       // 底片顆粒
     case finePaper = "c4"   // 高級紙：象牙紙色 × 霧面抬黑 × 粗纖維
+    // 手抄紙系（2026-08-16）：C 系的纖維是均勻噪點，這兩張是**有結構的絮**，
+    // 走另一條生成路（handmadeFiber）並且用 normal 合成，不能用 softLight——
+    // softLight 的變化量正比於 b×(1−b)，在紙這種亮底幾乎歸零，絮會完全看不見。
+    case handmade = "h1"        // 手抄紙：淡灰綠 × 細絮
+    case handmadeCoarse = "h2"  // 粗手抄紙：同紙色 × 絮重
 
     var id: String { rawValue }
+
+    /// 手抄紙系＝整頁畫出來的結構性纖維，而非均勻噪點。
+    var isHandmade: Bool { self == .handmade || self == .handmadeCoarse }
+
+    /// 手抄紙配方（細纖維、粗絮、雜點根數）。配方在 2160 寬畫布上寫成，
+    /// **根數固定不隨頁面縮放**，只有長度／線寬按 頁寬/2160 換算——
+    /// 1x 與 2x 匯出因此紙感一致。與 align-core/src/core/paper.ts 的 HANDMADE 同值。
+    var handmadeRecipe: (fine: Int, coarse: Int, specks: Int) {
+        self == .handmadeCoarse ? (3200, 380, 11000) : (900, 40, 2500)
+    }
 
     /// 面板顯示名 — 與區塊濾鏡共用已翻譯的 key。
     var displayName: String {
@@ -56,6 +71,8 @@ enum PagePaper: String, CaseIterable, Identifiable {
         case .newsprint: return "報紙"
         case .grain: return "顆粒"
         case .finePaper: return "高級紙"
+        case .handmade: return "手抄紙"
+        case .handmadeCoarse: return "粗手抄紙"
         }
     }
 
@@ -65,11 +82,12 @@ enum PagePaper: String, CaseIterable, Identifiable {
         case .newsprint: return (0.91, 0.88, 0.78)
         case .grain: return nil
         case .finePaper: return (0.96, 0.93, 0.87)
+        case .handmade, .handmadeCoarse: return (0.863, 0.867, 0.784)   // DCDDC8
         }
     }
 
     /// screen 白抬黑量（高級紙霧面曲線「黑位抬到 0.07」的覆蓋層等價）。
-    var lift: CGFloat { self == .finePaper ? 0.07 : 0 }
+    var lift: CGFloat { self == .finePaper ? 0.07 : (isHandmade ? 0.05 : 0) }
 
     /// softLight 纖維噪點層的（強度, 模糊）— 與樣本間 C 系同參數。
     var fiber: (strength: CGFloat, blur: CGFloat) {
@@ -77,6 +95,7 @@ enum PagePaper: String, CaseIterable, Identifiable {
         case .newsprint: return (0.30, 0.6)
         case .grain: return (0.55, 0.4)
         case .finePaper: return (0.42, 1.4)
+        case .handmade, .handmadeCoarse: return (0, 0)   // 不用噪點鏈，見 isHandmade
         }
     }
 }
@@ -86,6 +105,7 @@ enum FilterEngine {
     private static let ctx = CIContext(options: [
         .workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB) as Any
     ])
+
 
 
 
@@ -105,6 +125,11 @@ enum FilterEngine {
     /// 與頁面版的視覺無差；濾鏡與紙張同一個 handler 內先濾後紙。
     static func applyPaperCILive(_ key: String?, to input: CIImage) -> CIImage {
         guard let key, let paper = PagePaper(rawValue: key) else { return input }
+        if paper.isHandmade {
+            // 結構性纖維沒辦法即時用 CI 噪點鏈長出來，改讀主緒預先生成的整頁層
+            let fiber = handmadeFiberCG(paper, size: input.extent.size)
+            return applyPaperCI(paper, fiber: fiber, to: input, pageRect: input.extent)
+        }
         let f = paper.fiber
         return applyPaperCI(paper, fiber: grainLayer(f.strength, blur: f.blur, ext: input.extent),
                             to: input, pageRect: input.extent)
@@ -125,7 +150,9 @@ enum FilterEngine {
                 .applyingFilter("CIScreenBlendMode", parameters: [kCIInputBackgroundImageKey: out])
         }
         if let fiber {
-            out = fiber.applyingFilter("CISoftLightBlendMode", parameters: [kCIInputBackgroundImageKey: out])
+            // 手抄紙的絮要直接疊（softLight 在亮底幾乎沒作用，絮會消失）
+            out = fiber.applyingFilter(paper.isHandmade ? "CISourceOverCompositing" : "CISoftLightBlendMode",
+                                       parameters: [kCIInputBackgroundImageKey: out])
         }
         return out.cropped(to: pageRect)
     }

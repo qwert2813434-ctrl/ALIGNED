@@ -12,7 +12,7 @@ import { applyFilter, loadFilterAssets, type FilterAssets } from "./core/filters
 import type { SnapStrength } from "./core/align";
 import { Editor } from "./editor";
 import { renderAllPages, toBlob, type ExportedPage } from "./core/export";
-import { buildPageSpec, pageHasVideo } from "./videoexport";
+import { buildAnimFrames, buildPageSpec, pageHasMotion, pageHasVideo } from "./videoexport";
 import { autoFitText, renderPage, renderPageCanvas } from "./core/render";
 import { Inspector } from "./inspector";
 import { PageStrip, type PageAction } from "./pagestrip";
@@ -22,6 +22,7 @@ import { alignGroup, applyLayerOrder, distributeGroup, type GroupAlign, type Gro
 import { buildClipboard, pasteBlocks, type BlockClipboard } from "./core/clipboard";
 import { CANVAS_PRESETS, canvasSize, changeCanvasRatio, newProject, simplifiedRatio } from "./core/canvas";
 import { VideoPool, hiddenHost } from "./videopool";
+import { ModelPool } from "./modelpool";
 import { Gallery } from "./gallery";
 import { openTrim } from "./trim";
 import { checkUpdate } from "./updatecheck";
@@ -70,7 +71,7 @@ editor.onSelect = (b: Block | null) => {
   if (b == null && editor.selectionBlocks().length > 1) return;
   inspector.show(current, b);
   if (!b) { info.textContent = ""; return; }
-  const kind = { text: __("文字"), textFlow: __("續流文字"), image: __("圖片"), video: __("影片"), shape: __("形狀") }[b.content.type];
+  const kind = { text: __("文字"), textFlow: __("續流文字"), image: __("圖片"), video: __("影片"), shape: __("形狀"), model: __("3D 物件") }[b.content.type];
   const f = b.frame;
   info.textContent = `${kind}　${Math.round(f.x)}, ${Math.round(f.y)}　${Math.round(f.w)}×${Math.round(f.h)}`
     + (b.rotation ? `　${Math.round(b.rotation)}°` : "");
@@ -172,6 +173,11 @@ const videos = new VideoPool(
     return [editor.visibleRect()];
   },
 );
+
+// 畫布上的 3D 物件（實作在 modelpool.ts）——WebGL 離屏渲染，餵給畫布的只是普通畫布
+const models = new ModelPool(() => {
+  if (!sheet.classList.contains("on")) editor.refresh();
+});
 
 type Origin =
   | { kind: "sample" }
@@ -330,6 +336,39 @@ async function ensureVariantFor(b: Block): Promise<void> {
   assets.variants.set(key, m.filterKey ? filteredCanvas(img, m.filterKey, filterAssets) : img);
 }
 
+/** 多圖輪播：選一張或多張圖，複製進 assets/ 後掛進這個框的輪播清單。
+ *  只收圖片（輪播是「多圖」展示；影片自己會動，不進輪播）。
+ *  框上有濾鏡的話，順手把每張的「素材×濾鏡」變體也生好，畫的時候才不會閃佔位框。 */
+async function addCarouselImages(b: Block): Promise<void> {
+  if (b.content.type !== "image" || !current) return;
+  const dir = assetsDir();
+  if (!dir) return;
+  const picked = await openDialog({
+    multiple: true,
+    defaultPath: lastDir("media"),
+    filters: [{ name: __("圖片"), extensions: IMG_EXT }],
+  });
+  const srcs = typeof picked === "string" ? [picked] : Array.isArray(picked) ? picked : [];
+  if (!srcs.length) return;
+  rememberDir("media", srcs[0]);
+  const m = b.content.media;
+  for (const src of srcs) {
+    const name = await invoke<string>("copy_asset", { src, destDir: dir });
+    const img = await loadImg(await localUrl(`${dir}/${name}`));
+    assets.raw.set(name, img);
+    assets.variants.set(name, img);
+    if (m.filterKey) {
+      assets.variants.set(`${name}|${m.filterKey}`, filteredCanvas(img, m.filterKey, filterAssets));
+    }
+    m.carouselAssets = [...(m.carouselAssets ?? []), name];
+  }
+  editor.refresh(); scheduleThumbs();
+  inspector.show(current, editor.getSelected());
+  commit("carousel");
+  meta.textContent = __f("輪播共 {n} 張", { n: (m.carouselAssets?.length ?? 0) + 1 });
+  setTimeout(() => { if (meta.textContent?.startsWith(__("輪播共"))) refreshMeta(); }, 2600);
+}
+
 /** 空欄位填圖／既有媒體換檔。裁切與拉直重置（屬於舊圖，iOS 同款）；
  *  遮罩／描邊／濾鏡／排開設定保留。選了影片會自動抓海報並轉型。 */
 async function pickMediaForBlock(b: Block): Promise<void> {
@@ -377,6 +416,7 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
   },
   ensureVariant: ensureVariantFor,
   fillMedia: (b) => { pickMediaForBlock(b).catch((x) => { meta.textContent = __f("填圖失敗：{msg}", { msg: x.message ?? x }); }); },
+  addCarousel: (b) => { addCarouselImages(b).catch((x) => { meta.textContent = __f("加輪播圖失敗：{msg}", { msg: x.message ?? x }); }); },
   // 匯入字型檔（剪映語彙的「自訂」）：存進 App 資料夾 UserFonts/，重開還在。
   // 專案照舊只存 PostScript 名——iPad 也匯同一套字型，專案就兩邊長一樣。
   importFont: async () => {
@@ -423,13 +463,9 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
     },
   },
   layers: {
-    currentPage: () => {
-      if (!current) return 0;
-      // 有選取就跟著選取那一頁——正在調的元件在哪，清單就該在哪
-      const sel = editor.getSelected();
-      const x = sel ? sel.frame.x + sel.frame.w / 2 : editor.centerPoint().x;
-      return pageIndexForX(current, x);
-    },
+    // 「目前這一頁」只有一個來源＝editor.currentPageIndex（有選取跟選取、否則跟視野中心）。
+    // 這裡曾經自己算過一份，結果與別處分岔——同一個問題兩份答案，遲早出事。
+    currentPage: () => (current ? editor.currentPageIndex() : 0),
     select: (id, additive) => {
       if (additive) editor.selectMany([...editor.selectionBlocks().map((b) => b.id), id]);
       else editor.select(id);
@@ -472,6 +508,10 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
     duplicate: () => duplicateSelection(),
     remove: () => deleteSelected(),
   },
+  // 出場動畫——面板選了效果就在畫布上循環播放，不必匯出
+  playAnim: (b) => editor.playAnim(b),
+  sequenceAll: (b) => editor.sequenceCurrentPage(b),
+  clearAnims: (b) => editor.clearCurrentPageAnims(b),
   reorder: (b, dir) => {
     if (!current) return;
     const zs = current.blocks.map((k) => k.zIndex);
@@ -500,10 +540,12 @@ function show(p: Project, a?: LoadedAssets, videoSrc?: (file: string) => string)
   strip.render(p, renderOpts());
   videos.attach(videoSrc ?? null);   // 換專案＝舊播放器全收掉，再照新來源接
   editor.setVideos(videoSrc ? videos.frames : undefined);
+  models.attach(videoSrc ?? null);   // 3D 池同一個素材 URL 解析器（媒體伺服器通吃）
+  editor.setModels(models);
 }
 
 function renderOpts() {
-  return { images: assets.variants, filters: filterAssets, placeholderForMissingMedia: true };
+  return { images: assets.variants, filters: filterAssets, models, placeholderForMissingMedia: true };
 }
 
 // ── 匯出台的 PNG 選項（2026-08-14，優化項目 #11）──────────────────────
@@ -519,7 +561,7 @@ function exportOpts() {
   const scale = exportPng.scale2x ? 2 : 1;
   if (!exportPng.alpha) return { ...renderOpts(), scale };
   return {
-    images: assets.variants, placeholderForMissingMedia: true, scale,
+    images: assets.variants, models, placeholderForMissingMedia: true, scale,
     transparent: true,
     onlyBlockIds: exportPng.textOnly && current
       ? new Set(current.blocks
@@ -640,6 +682,26 @@ menu.id = "ctxmenu";
 document.body.append(menu);
 const closeMenu = (): void => { menu.style.display = "none"; };
 window.addEventListener("pointerdown", (e) => { if (!menu.contains(e.target as Node)) closeMenu(); }, true);
+
+// ── 出場動畫播放鍵（播放器語彙：三角形＝播放、雙直槓＝暫停）──
+const playBtn = document.querySelector<HTMLButtonElement>("#playBtn")!;
+const ICON_PLAY = `<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" stroke="none"><path d="M6.5 4.2l9 5.8-9 5.8z"/></svg>`;
+const ICON_PAUSE = `<svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" stroke="none"><rect x="5.6" y="4.2" width="3.2" height="11.6" rx="0.6"/><rect x="11.2" y="4.2" width="3.2" height="11.6" rx="0.6"/></svg>`;
+playBtn.onclick = () => editor.toggleAnim();
+// 播放＝整個版面一起跑（影片＋出場動畫）；暫停＝兩者都停，回到原始版面。
+// 影片平常在編輯畫布本來就是播的，所以「暫停」才是那個要主動下的指令。
+editor.onAnimPlayChange = (playing) => {
+  playBtn.innerHTML = playing ? ICON_PAUSE : ICON_PLAY;
+  playBtn.title = playing ? __("暫停（影片與出場動畫一起）") : __("播放整個版面（含影片，循環）");
+  playBtn.classList.toggle("on", playing);
+  videos.setPaused(!playing);
+};
+// 開檔預設＝播放中：影片照常動（跟加播放鍵之前一樣），按一下才是暫停
+videos.setPaused(false);
+playBtn.innerHTML = ICON_PAUSE;
+playBtn.title = __("暫停（影片與出場動畫一起）");
+playBtn.classList.add("on");
+
 window.addEventListener("blur", closeMenu);
 
 /** 選單項：分隔線、或一顆（可帶子選單）。 */
@@ -1189,7 +1251,9 @@ async function pngBase64(s: ExportedPage): Promise<string> {
 }
 
 async function saveOne(s: ExportedPage): Promise<void> {
-  if (inApp && current && pageHasVideo(current, s.index)) {
+  // 會動的頁存成 mp4：有出場動畫／輪播＝逐格烤（含頁上影片）；只有影片＝原本的合成路
+  const motion = inApp && current && pageHasMotion(current, s.index);
+  if (motion || (inApp && current && pageHasVideo(current, s.index))) {
     const path = await saveDialog({
       defaultPath: inDir("export", s.name.replace(/\.png$/, ".mp4")),
       filters: [{ name: __("影片"), extensions: ["mp4"] }],
@@ -1198,9 +1262,11 @@ async function saveOne(s: ExportedPage): Promise<void> {
     rememberDir("export", path);
     const title = $<HTMLSpanElement>("#sheetSub");
     const base = title.textContent ?? "";
-    title.textContent = __f("{base}　合成影片中…", { base });
-    try { await exportVideoPage(s.index, path); title.textContent = `${base}　✓ ${path.split("/").pop()}`; }
-    catch (x) { title.textContent = `${base}　✗ ${(x as Error).message ?? x}`; }
+    title.textContent = motion ? __f("{base}　烤動畫影格中…", { base }) : __f("{base}　合成影片中…", { base });
+    try {
+      await (motion ? exportAnimPage(s.index, path) : exportVideoPage(s.index, path));
+      title.textContent = `${base}　✓ ${path.split("/").pop()}`;
+    } catch (x) { title.textContent = `${base}　✗ ${(x as Error).message ?? x}`; }
     return;
   }
   if (inApp) {
@@ -1227,10 +1293,14 @@ $<HTMLButtonElement>("#saveAll").addEventListener("click", async () => {
     const title = $<HTMLSpanElement>("#sheetSub");
     const base = title.textContent ?? "";
     for (const s of shots) {
+      const isMotion = current ? pageHasMotion(current, s.index) : false;
       const isVideo = current ? pageHasVideo(current, s.index) : false;
-      title.textContent = (isVideo ? __f("{base}　合成影片第 {n} 頁…", { base, n: s.index + 1 })
+      title.textContent = (isMotion ? __f("{base}　烤動畫第 {n} 頁…", { base, n: s.index + 1 })
+        : isVideo ? __f("{base}　合成影片第 {n} 頁…", { base, n: s.index + 1 })
         : __f("{base}　輸出第 {n} 頁…", { base, n: s.index + 1 }));
-      if (isVideo) {
+      if (isMotion) {
+        await exportAnimPage(s.index, `${dir}/${s.name.replace(/\.png$/, ".mp4")}`);
+      } else if (isVideo) {
         await exportVideoPage(s.index, `${dir}/${s.name.replace(/\.png$/, ".mp4")}`);
       } else {
         await invoke("save_png", { path: `${dir}/${s.name}`, data: await pngBase64(s) });
@@ -1247,6 +1317,30 @@ $<HTMLButtonElement>("#muteBtn").addEventListener("click", (e) => {
   muted = !muted;
   (e.currentTarget as HTMLButtonElement).innerHTML = muted ? SOUND_ICON.off : SOUND_ICON.on;
 });
+
+/** 一頁的**動畫**匯出：逐格烤影格（與預覽同一條渲染路）→ alignvideo 編碼 mp4。無聲。 */
+async function exportAnimPage(index: number, dest: string): Promise<void> {
+  if (!current) return;
+  const dir = await invoke<string>("make_temp_dir");
+  const fps = Number($<HTMLSelectElement>("#fps").value) || 30;
+  const title = $<HTMLSpanElement>("#sheetSub");
+  const base = title.textContent ?? "";
+  const { count } = await buildAnimFrames(current, index, dir, { fps }, {
+    saveJpg: (path, data) => invoke("save_png", { path, data }),
+    videoUrl: videoUrl ?? null,
+    renderOpts: renderOpts(),
+    onProgress: (done, total) => {
+      if (done % 15 === 0 || done === total) {
+        title.textContent = __f("{base}　動畫影格 {done}/{total}…", { base, done, total });
+      }
+    },
+  });
+  const page = pageRect(current, index);
+  const spec = { output: dest, pageWidth: page.w, pageHeight: page.h,
+                 fps, mute: true, layers: [], frames: dir, frameCount: count };
+  await invoke("save_text", { path: `${dir}/spec.json`, contents: JSON.stringify(spec) });
+  await invoke("export_video", { spec: `${dir}/spec.json` });
+}
 
 /** 一頁的影片匯出：組規格→寫圖層 PNG→交給 alignvideo 合成 mp4。 */
 async function exportVideoPage(index: number, dest: string): Promise<void> {
@@ -1447,6 +1541,33 @@ async function trimBlock(b: Block): Promise<void> {
   setTimeout(() => { if (meta.textContent?.startsWith(__("已修剪"))) refreshMeta(); }, 2600);
 }
 
+/** 加 3D 物件：選 .glb → 複製進 assets/ → 新 block。專案裡它永遠是活的物件，
+ *  展示方式（慢轉圈／快轉煞停）與速率在右欄調；匯出時才逐格烤進影格。
+ *  只收 .glb——.gltf 會外掛散檔（.bin／貼圖），copy_asset 只搬一個檔案會搬斷。 */
+async function addModel(): Promise<Block | null> {
+  const dir = assetsDir();
+  if (!dir || !current) return null;
+  const src = await openDialog({
+    multiple: false,
+    defaultPath: lastDir("media"),
+    filters: [{ name: __("3D 物件（GLB）"), extensions: ["glb"] }],
+  });
+  if (typeof src !== "string") return null;
+  rememberDir("media", src);
+  const name = await invoke<string>("copy_asset", { src, destDir: dir });
+  // 3D 靠媒體伺服器載檔——新專案的第一個媒體是 3D 的話，這裡把 URL 接上
+  if (!videoUrl) {
+    const base = await mediaBaseOnce();
+    videoUrl = (f) => `${base}/${encodeURIComponent(`${dir}/${f}`)}`;
+    videos.attach(videoUrl);
+    editor.setVideos(videos.frames);
+  }
+  models.attach(videoUrl);
+  editor.setModels(models);
+  const w = current.canvasWidth * 0.45;
+  return baseBlock({ type: "model", model: { assetFileName: name } }, w, w);
+}
+
 async function addPhoto(): Promise<Block | null> {
   const dir = assetsDir();
   if (!dir) return null;
@@ -1507,6 +1628,9 @@ async function addBlock(kind: string): Promise<void> {
       break;
     case "photo":
       b = await addPhoto();
+      break;
+    case "model":
+      b = await addModel();
       break;
   }
   if (!b) return;

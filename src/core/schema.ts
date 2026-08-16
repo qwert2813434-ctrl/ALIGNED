@@ -16,6 +16,8 @@ export type TextAlign = "leading" | "center" | "trailing";
 export type VAlign = "top" | "middle" | "bottom";
 export type ShapeKind = "rectangle" | "ellipse" | "line";
 
+import type { BlockAnim } from "./anim";
+
 export interface TextBlock {
   text: string;            // AttributedString 已攤平成純文字
   inkColor?: string;       // 從 run 屬性取出的 CSS 色（見 runColor 的說明，優先於 colorHex）
@@ -42,6 +44,15 @@ export interface TextBlock {
 
 export interface MediaBlock {
   assetFileName: string;   // "" ＝空欄位槽
+  /** 多圖輪播（2026-08-16 加）：主圖之後的其他張。設了＝播放時這個框一直 loop 換圖。
+   *  只對 image 有意義；全部共用同一個 cropRect／遮罩／外框。 */
+  carouselAssets?: string[];
+  /** 輪播每張停的秒數，預設 CAROUSEL_INTERVAL。 */
+  carouselInterval?: number;
+  /** 輪播切換方式：cut＝直切（預設）；maskWipe＝連續遮罩（帶同方向位移）。 */
+  carouselMode?: "cut" | "maskWipe";
+  /** 連續遮罩的揭示方向，預設 left（從左）。與入場 maskWipe 同語彙。 */
+  carouselDir?: "up" | "down" | "left" | "right";
   cropRect: Rect;          // 正規化 0–1；(0,0,1,1) 有特殊語意，見 geometry.aspectFillCrop
   rotationDegrees?: number;// 拉直（-45…45），轉的是內容不是 block
   maskShape?: "rectangle" | "ellipse";
@@ -62,15 +73,36 @@ export interface ShapeBlock {
   textWrapMode?: string;
 }
 
+/** 3D 物件（2026-08-16）。專案裡它永遠是「活的物件」（.glb 進 assets/，這裡只存
+ *  引用＋展示參數）；匯出那一刻才逐格烤進影格。⚠️ 新內容型別＝舊版 iPad 會整檔拒讀，
+ *  iOS 端必須同步加 case（哪怕只畫佔位圖）。 */
+export interface ModelBlock {
+  assetFileName: string;
+  /** 展示方式：spin＝慢慢轉圈（循環）；spinStop＝快轉煞停（終點停在 yaw）。未設＝靜止。 */
+  mode?: "spin" | "spinStop";
+  /** spin：幾秒轉一圈，預設 MODEL_SECS_PER_TURN。 */
+  secsPerTurn?: number;
+  /** spinStop：轉幾圈（0.5 步進，半圈也行），預設 MODEL_TURNS。 */
+  turns?: number;
+  /** spinStop：煞停總秒數，預設 MODEL_SPIN_DUR。 */
+  dur?: number;
+  /** 靜止／終點角度（度）——排版上看到的那一面，也是快轉煞停的收尾面。 */
+  yaw?: number;
+}
+
 export type BlockContent =
   | { type: "text"; text: TextBlock }
   | { type: "textFlow"; text: TextBlock }
   | { type: "image"; media: MediaBlock }
   | { type: "video"; media: MediaBlock }
-  | { type: "shape"; shape: ShapeBlock };
+  | { type: "shape"; shape: ShapeBlock }
+  | { type: "model"; model: ModelBlock };
 
 export interface Block {
   id: string;
+  /** 出場動畫（2026-08-16 加）。未設＝不動畫，舊檔零影響；
+   *  encodeBlock 是展開式的，這個欄位自動進出存檔。 */
+  anim?: BlockAnim;
   frame: Rect;       // 專案共享座標空間（不是頁內座標）
   rotation: number;  // 度
   zIndex: number;
@@ -81,6 +113,10 @@ export interface Block {
 
 export interface Project {
   id: string;
+  /** 出場動畫跑完的停留秒數（未設＝ANIM_HOLD 5 秒）。循環與匯出都吃這個值。 */
+  animHold?: number;
+  /** 「陸續出現」排順序時，每個元件之間的間隔秒數（未設＝ANIM_STAGGER）。 */
+  animStagger?: number;
   name: string;
   createdAt: string;
   updatedAt: string;
@@ -150,6 +186,7 @@ function content(o: Record<string, unknown>): BlockContent {
     case "image":    return { type: "image", media: media(p) };
     case "video":    return { type: "video", media: media(p) };
     case "shape":    return { type: "shape", shape: p as unknown as ShapeBlock };
+    case "model":    return { type: "model", model: p as unknown as ModelBlock };
     default: throw new Error(__f("未知的 block 型別: {type}", { type }));
   }
 }
@@ -245,6 +282,9 @@ function encodeBlock(b: Block): unknown {
     }
     case "shape":
       c = { shape: { _0: { ...content.shape } } };
+      break;
+    case "model":
+      c = { model: { _0: { ...content.model } } };
       break;
   }
   return { ...bb, frame: encRect(frame), content: c };

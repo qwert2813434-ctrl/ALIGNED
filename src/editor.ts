@@ -9,9 +9,10 @@
 
 import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema";
 import { hex, resolvedFontSize, resolvedKerning } from "./core/schema";
-import { aspectFillCrop, pageIndexForX, pageRect, stageBounds } from "./core/geometry";
+import { aspectFillCrop, intersects, pageIndexForX, pageRect, stageBounds } from "./core/geometry";
 import { cssFont } from "./core/fonts";
 import { autoFitText, naturalSize, naturalTextSize, renderStage, textPrintLines } from "./core/render";
+import { ANIM_HOLD, ANIM_STAGGER, defaultDur, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import type { FilterAssets } from "./core/filters";
 import { resolvePosition, rotatedBounds, equalSpacingBadges, snapGuide, snapResizingEdge, type GuideLine, type SnapStrength, type SpacingBadge } from "./core/align";
 
@@ -128,6 +129,7 @@ export class Editor {
   private dirty = true;
   private images?: Map<string, CanvasImageSource>;
   private videos?: Map<string, CanvasImageSource>;
+  private models?: { render(b: Block, time?: number): CanvasImageSource | undefined };
   /** 紙張要用的顆粒貼片。沒給＝畫布不套紙張（匯出仍會套）——所以殼層一定要餵。 */
   private filters?: FilterAssets;
   private editing: { id: string; el: HTMLDivElement; orig: string } | null = null;
@@ -852,6 +854,7 @@ export class Editor {
       return;
     }
     if (this.pan) {
+      this.pickedPage = null;   // 自由平移＝不再跟著他點過的那一頁，回到看視野中心
       this.view.tx = this.pan.tx + (e.offsetX - this.pan.x);
       this.view.ty = this.pan.ty + (e.offsetY - this.pan.y);
       if (this.editing) this.syncOverlay();
@@ -1176,6 +1179,27 @@ export class Editor {
   }
 
   /** 畫布視野中心的專案座標——新元件放這裡。 */
+  /**
+   * 目前這一頁。**有選取元件就用它所在的頁**，沒有才用視野中心——
+   * 使用者的注意力在他選的東西上，不在畫面中央（2026-08-16 修：
+   * 選了第 6 頁的元件卻套用到第 5 頁）。
+   */
+  currentPageIndex(from?: Block): number {
+    const proj = this.project;
+    if (!proj) return 0;
+    // 順序＝使用者意圖由強到弱：指定的元件 → 選取中的元件 → 點過的頁縮圖 → 視野中心。
+    // 視野中心是最後的回落，因為 visibleRect 用的是整塊畫布寬度（含被右欄蓋住的部分），
+    // 幾何中心跟眼睛看到的中心不是同一個點——拿它當主要依據會挑錯頁（2026-08-16 修）。
+    const b = from ?? this.getSelected();
+    if (b) return pageIndexForX(proj, b.frame.x + b.frame.w / 2);
+    if (this.pickedPage !== null && this.pickedPage < proj.pageCount) return this.pickedPage;
+    const v = this.visibleRect();
+    return pageIndexForX(proj, v.x + v.w / 2);
+  }
+
+  /** 使用者最後明確指定的頁（點頁縮圖）。平移畫布會作廢——那時他是在自由瀏覽。 */
+  private pickedPage: number | null = null;
+
   centerPoint(): { x: number; y: number } {
     return { x: (this.canvas.clientWidth / 2 - this.view.tx) / this.view.scale,
              y: (this.canvas.clientHeight / 2 - this.view.ty) / this.view.scale };
@@ -1228,6 +1252,12 @@ export class Editor {
     this.dirty = true;
   }
 
+  /** 3D 物件的渲染入口（殼層的 modelpool）。 */
+  setModels(m?: { render(b: Block, time?: number): CanvasImageSource | undefined }): void {
+    this.models = m;
+    this.dirty = true;
+  }
+
   /** 復原／重做用：換一份專案資料但**保留視野與選取**（load 會重置視野，這裡不會）。 */
   swapProject(p: Project): void {
     this.project = p;
@@ -1239,6 +1269,7 @@ export class Editor {
   /** 視野置中到第 i 頁——頁面膠捲點擊用。 */
   focusPage(i: number): void {
     if (!this.project) return;
+    this.pickedPage = i;          // 使用者明講的那一頁——比任何幾何推算都準
     const page = pageRect(this.project, i);
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     const scale = Math.min(w / (page.w + 120), h / (page.h + 120));
@@ -1251,6 +1282,7 @@ export class Editor {
 
   // Mac 觸控板：兩指捲動＝平移、捏合（會帶 ctrlKey）＝縮放。這是 macOS 的標準語意。
   private wheel = (e: WheelEvent): void => {
+    this.pickedPage = null;   // 滾輪平移／縮放也是自由瀏覽
     e.preventDefault();
     if (e.ctrlKey) {
       const k = Math.exp(-e.deltaY * 0.01);
@@ -1277,6 +1309,120 @@ export class Editor {
 
   /** 診斷儀表（?diag=1）：重畫耗時 EMA 與次數；raf＝心跳數（沒 dirty 也算）。 */
   readonly frameStats = { ms: 0, paints: 0, raf: 0 };
+
+  /** 出場動畫試播。null＝沒在播（畫布走靜態路徑，與加動畫前完全一致）。
+   *  rAF 迴圈本來就一直在跑，這裡只是在播放期間餵 time 進渲染選項。 */
+  private animPlay: { t0: number; dur: number; lead: number; anims: Map<string, BlockAnim> } | null = null;
+  /** 播放狀態變了就吼一聲——工具列 icon 與影片的播放／暫停都靠它連動。 */
+  onAnimPlayChange?: (playing: boolean) => void;
+  /**
+   * 傳輸狀態。**預設就是播放中**——編輯畫布本來影片就會動，這個旗標
+   * 不能綁「有沒有設出場動畫」，不然還沒做動畫之前按播放鍵會沒反應（2026-08-16 修）。
+   */
+  private playing = true;
+
+  /**
+   * 播放出場動畫，**循環不停**（規格：加了效果就一直播，播放器語彙）。
+   * `only` 給了＝只播那一個元件（面板選效果時的即時回饋，循環間隔短）；
+   * 沒給＝整頁陸續登場，循環一輪含最後的停留 5 秒。
+   */
+  playAnim(only?: Block): void {
+    const anims = new Map<string, BlockAnim>();
+    if (only?.anim) {
+      // 只播那一個（面板即時回饋）。⚠️ only 沒有動畫時**不能早退**——
+      // 早退＝舊時間軸帶著過期快照繼續轉；落到下面重啟整台才會把它換掉
+      anims.set(only.id, { ...only.anim, delay: 0 });
+    } else {
+      // 整張畫布：**所有頁一起跑**——編輯第 3 頁時第 1 頁也該在動，
+      // 那才是輪播真正的樣子（2026-08-16 使用者要求）。
+      // 順序由各自存的 delay 決定，不在這裡編排。
+      const proj = this.project;
+      if (!proj) return;
+      for (const b of proj.blocks) if (b.anim) anims.set(b.id, b.anim);
+    }
+    // 沒有任何元件設過出場動畫也照樣進播放狀態——播放鍵管的是整個版面（含影片），
+    // 不是只管動畫。這裡早退的話影片就永遠不會被喚醒。
+    //
+    // 一輪＝「0 狀態」空拍 ＋ 出場 ＋ 停留（timelineCycle：**與匯出同一個算式**）。
+    // 空拍的理由：delay 0 的第一個元件在循環繞回的瞬間立刻重新入場，
+    // 看起來就是「永遠都在」（2026-08-16 使用者定案：循環＝0、1、2、3）。
+    const tempo = motionTempo(this.project?.blocks ?? []);
+    const { lead, cycle } = timelineCycle(anims.values(), tempo.periods,
+      this.project?.animHold ?? ANIM_HOLD, this.project?.animStagger ?? ANIM_STAGGER, tempo.minEnd);
+    this.animPlay = { t0: performance.now(), dur: cycle, lead, anims };
+    this.playing = true;
+    this.dirty = true;
+    this.onAnimPlayChange?.(true);
+  }
+
+  /**
+   * 一鍵陸續出現：把**這一頁**所有元件的延遲依序排開（上→下、左→右），寫進專案。
+   * 排完就是專案的一部分，播放鍵照著播即可——所以播放鍵不必再自己編排順序。
+   * 沒設效果的元件給預設：文字＝打字、物件＝淡入。
+   */
+  sequenceCurrentPage(from?: Block): void {
+    const proj = this.project;
+    if (!proj) return;
+    const page = pageRect(proj, this.currentPageIndex(from));
+    // 排序＝閱讀順序：同一「列」的算同高（容差 1/12 頁高），再由左到右。
+    // 不做容差的話，兩個肉眼齊平、但 y 差 3px 的元件會被排成一前一後，看起來就是亂的。
+    const row = page.h / 12;
+    // ⚠️ 判定「屬於這一頁」用**有沒有重疊**，不是起點、也不是中心點。
+    // 起點：滿版圖的起點在頁面左緣之前 → 漏掉。
+    // 中心點：**跨頁圖**的中心落在隔壁頁 → 還是漏掉（2026-08-16 錄影實證：
+    // 最左那條跨頁水波圖永遠不動，因為它從沒被排進任何一頁的順序）。
+    // 重疊：畫面上看得到的都算數，這才符合「排這一頁的順序」的直覺。
+    const list = proj.blocks
+      .filter((b) => intersects(b.frame, page))
+      .sort((a, b) => (Math.floor(a.frame.y / row) - Math.floor(b.frame.y / row))
+                      || (a.frame.x - b.frame.x));
+    const gap = proj.animStagger ?? ANIM_STAGGER;
+    list.forEach((b, i) => {
+      const isText = b.content.type === "text" || b.content.type === "textFlow";
+      const kind = b.anim?.kind ?? (isText ? "typewriter" : "fade");
+      const txt = isText ? (b.content as { text: { text: string } }).text.text : "";
+      b.anim = {
+        ...b.anim,
+        kind,
+        // **秒數也要給**——只寫延遲的話會回落到 0.9 秒，長文打字在 0.9 秒內跑完
+        // 等於「啪」一下就在那裡，看起來像沒有出場（2026-08-16 使用者反饋）。
+        // 這裡與面板選效果時走同一個 defaultDur，兩條路不能給出不同的節奏。
+        // 一鍵就要給出一致的節奏，所以秒數**重算**不沿用——
+        // 沿用的話，之前手調或試出來的怪值會殘留，整頁快慢不一
+        dur: defaultDur(kind, txt),
+        // **第一個一定是 0**：整頁時間軸從 0 起算，第一個元件照樣要從無到有跑一遍
+        delay: i === 0 ? 0 : Math.round(i * gap * 100) / 100,
+      };
+    });
+    this.dirty = true;
+    this.playAnim();          // 排完立刻放一次給他看
+  }
+
+  /** 一鍵移除：把這一頁所有元件的出場動畫清掉（「陸續出現」的反操作）。 */
+  clearCurrentPageAnims(from?: Block): void {
+    const proj = this.project;
+    if (!proj) return;
+    const page = pageRect(proj, this.currentPageIndex(from));
+    for (const b of proj.blocks) if (intersects(b.frame, page)) b.anim = undefined;
+    this.dirty = true;
+    if (this.playing) this.playAnim();   // 重算時間軸：沒動畫＝回靜態版面、影片照播
+  }
+
+  /** 暫停：影片與出場動畫一起停，畫面回到可編輯的靜態版面。 */
+  stopAnim(): void {
+    this.animPlay = null;
+    this.playing = false;
+    this.dirty = true;
+    this.onAnimPlayChange?.(false);
+  }
+
+  /** 正在播嗎——工具列 icon 用。 */
+  get animPlaying(): boolean { return this.playing; }
+
+  /** 工具列播放鍵：在播就停、沒播就整頁播。
+   *  **影片的播放／暫停由殼層透過 onAnimPlayChange 一起連動**——
+   *  規格：播放＝全版面（含影片）一起跑；暫停＝全部停回原始版面。 */
+  toggleAnim(): void { if (this.playing) this.stopAnim(); else this.playAnim(); }
 
   /** rAF 上一次跳動的時刻——看門狗用它判斷 rAF 是不是被節流了。 */
   private lastBeat = 0;
@@ -1308,6 +1454,18 @@ export class Editor {
   }
 
   private paint = (): void => {
+    // 狀態一致性：icon 說「播放中」就必須真的有時間軸在跑。
+    // 開檔時 playing 預設 true 但沒人啟動 animPlay，於是畫面是靜態的、
+    // 而且第一次按播放鍵會變成「暫停」（2026-08-16 診斷發現）。
+    if (this.playing && !this.animPlay && this.project) this.playAnim();
+    // 動畫播放期間每一格都要重畫——畫布平常是「有變動才畫」，不標記的話動畫只會停在第一格。
+    // 多圖輪播、3D 展示沒有出場動畫也要動，所以它們也算「活的」。
+    if (this.animPlay && (this.animPlay.anims.size
+        || this.project?.blocks.some((b) =>
+          (b.content.type === "image" && b.content.media.carouselAssets?.length)
+          || (b.content.type === "model" && b.content.model.mode)))) {
+      this.dirty = true;
+    }
     if (!this.dirty || !this.project) return;
     this.dirty = false;
     this.lastPaintAt = performance.now();
@@ -1352,10 +1510,18 @@ export class Editor {
     ctx.scale(this.view.scale, this.view.scale);
 
     const m = this.marquee;
+    // 播放中就餵 time 進去；播完自動歸零，畫布回靜態
+    let animOpts: { time?: number; anims?: Map<string, BlockAnim> } = {};
+    if (this.animPlay) {
+      const el = (performance.now() - this.animPlay.t0) / 1000;
+      // 循環。時間軸從 -lead 起跑：負的那段＝「0 狀態」，所有帶動畫的元件都停在
+      // 起點（畫面外／全透明），畫布是空的，然後才輪到第一個元件入場。
+      animOpts = { time: (el % this.animPlay.dur) - this.animPlay.lead, anims: this.animPlay.anims };
+    }
     renderStage(ctx, this.project,
-      { placeholderForMissingMedia: true, images: this.images, videos: this.videos,
+      { placeholderForMissingMedia: true, images: this.images, videos: this.videos, models: this.models,
         filters: this.filters, skipBlockId: this.editing?.id,
-        viewRect: this.visibleRect() }, {
+        viewRect: this.visibleRect(), ...animOpts }, {
       hideProjectGuides: this.guidesHidden,
       // 多選時多畫一圈群組外框——手把長在它的右下角，沒有框就看不出那顆在管什麼
       selection: [
