@@ -101,7 +101,10 @@ editor.onTextEdited = () => {
 // ── 專案載入 ──────────────────────────────────────────────────────────
 
 /** 需要哪些「素材×濾鏡」的組合。同一張圖套不同濾鏡算兩項；
- *  影片畫的是海報圖（`<影片名>.poster.jpg`）。 */
+ *  影片畫的是海報圖（`<影片名>.poster.jpg`）。
+ *  ⚠️ **輪播的後續張數也算**（`carouselAssets`）——只收 assetFileName 的話，
+ *  加圖當下有效（addCarouselImages 會直接塞進素材表），但**重開專案就只剩第一張**，
+ *  後面幾張畫成佔位框；連匯出的影片也會缺（2026-08-16 使用者回報）。 */
 function assetNames(p: Project): Map<string, { file: string; filter?: string }> {
   const out = new Map<string, { file: string; filter?: string }>();
   for (const b of p.blocks) {
@@ -109,7 +112,10 @@ function assetNames(p: Project): Map<string, { file: string; filter?: string }> 
     const m = b.content.media;
     if (!m.assetFileName) continue;
     const file = b.content.type === "video" ? `${m.assetFileName}.poster.jpg` : m.assetFileName;
-    out.set(file + (m.filterKey ? `|${m.filterKey}` : ""), { file, filter: m.filterKey });
+    const key = (f: string): string => f + (m.filterKey ? `|${m.filterKey}` : "");
+    out.set(key(file), { file, filter: m.filterKey });
+    // 輪播圖跟著框走，濾鏡也是框的——所以變體的鍵與主圖同一套算法
+    for (const f of m.carouselAssets ?? []) out.set(key(f), { file: f, filter: m.filterKey });
   }
   return out;
 }
@@ -333,11 +339,14 @@ async function ensureVariantFor(b: Block): Promise<void> {
   const m = b.content.media;
   if (!m.assetFileName) return;
   const file = b.content.type === "video" ? `${m.assetFileName}.poster.jpg` : m.assetFileName;
-  const key = file + (m.filterKey ? `|${m.filterKey}` : "");
-  if (assets.variants.has(key)) return;
-  const img = assets.raw.get(file);
-  if (!img) return;
-  assets.variants.set(key, m.filterKey ? filteredCanvas(img, m.filterKey, filterAssets) : img);
+  // 輪播圖與主圖共用框上的那顆濾鏡——漏掉的話換濾鏡後輪播到第二張就閃佔位框
+  for (const f of [file, ...(m.carouselAssets ?? [])]) {
+    const key = f + (m.filterKey ? `|${m.filterKey}` : "");
+    if (assets.variants.has(key)) continue;
+    const img = assets.raw.get(f);
+    if (!img) continue;
+    assets.variants.set(key, m.filterKey ? filteredCanvas(img, m.filterKey, filterAssets) : img);
+  }
 }
 
 /** 多圖輪播：選一張或多張圖，複製進 assets/ 後掛進這個框的輪播清單。
@@ -1734,28 +1743,44 @@ async function pasteClipboard(): Promise<void> {
 
   // 有媒體才需要 assets/（純文字連存檔位置都不用有）；拿不到時 assetsDir 已把原因寫在 meta
   const needsAssets = clip.blocks.some((b) =>
-    (b.content.type === "image" || b.content.type === "video") && b.content.media.assetFileName);
+    ((b.content.type === "image" || b.content.type === "video") && b.content.media.assetFileName)
+    || (b.content.type === "model" && b.content.model.assetFileName));
   const dir = needsAssets ? assetsDir() : null;
   if (needsAssets && !dir) return;
 
-  // 同一個來源只搬一次；影片海報跟著搬成 <新名>.poster.jpg（畫布與匯出畫的是它）
+  // 同一個來源只搬一次；影片海報跟著搬成 <新名>.poster.jpg（畫布與匯出畫的是它）。
+  // **一個 block 可能帶不只一個檔**：輪播圖整串、3D 的 .glb——只搬 assetFileName
+  // 的話，貼過去的輪播只剩第一張、3D 變佔位（2026-08-16 與載入端一起修）。
   const renamed = new Map<string, string>();
+  const glbs = new Set<string>();
   let missing = 0;
   if (dir) {
     for (const b of clip.blocks) {
-      if (b.content.type !== "image" && b.content.type !== "video") continue;
-      const name = b.content.media.assetFileName;
-      if (!name || renamed.has(name)) continue;
-      try {
-        const src = clip.assetSrc[name];
-        if (!src) throw new Error("no-src");
-        const newName = await invoke<string>("copy_asset", { src, destDir: dir });
-        if (b.content.type === "video") {
-          const ps = clip.assetSrc[`${name}.poster.jpg`];
-          if (ps) await invoke("copy_asset_as", { src: ps, destDir: dir, name: `${newName}.poster.jpg` });
-        }
-        renamed.set(name, newName);
-      } catch { missing++; }   // 來源檔搬不動＝畫佔位框，不擋整次貼上
+      const files: string[] = [];
+      let poster: string | null = null;
+      if (b.content.type === "image" || b.content.type === "video") {
+        const m = b.content.media;
+        if (m.assetFileName) files.push(m.assetFileName);
+        files.push(...(m.carouselAssets ?? []));
+        if (b.content.type === "video" && m.assetFileName) poster = m.assetFileName;
+      } else if (b.content.type === "model" && b.content.model.assetFileName) {
+        files.push(b.content.model.assetFileName);
+        glbs.add(b.content.model.assetFileName);
+      }
+      for (const name of files) {
+        if (renamed.has(name)) continue;
+        try {
+          const src = clip.assetSrc[name];
+          if (!src) throw new Error("no-src");
+          const newName = await invoke<string>("copy_asset", { src, destDir: dir });
+          if (poster === name) {
+            const ps = clip.assetSrc[`${name}.poster.jpg`];
+            if (ps) await invoke("copy_asset_as", { src: ps, destDir: dir, name: `${newName}.poster.jpg` });
+          }
+          if (glbs.has(name)) glbs.add(newName);
+          renamed.set(name, newName);
+        } catch { missing++; }   // 來源檔搬不動＝畫佔位框，不擋整次貼上
+      }
     }
   }
 
@@ -1774,6 +1799,7 @@ async function pasteClipboard(): Promise<void> {
     const isVid = new Set(copies.filter((b) => b.content.type === "video")
                                 .map((b) => b.content.type === "video" ? b.content.media.assetFileName : ""));
     for (const newName of renamed.values()) {
+      if (glbs.has(newName)) continue;                 // .glb 走 modelpool，不是圖
       const assetKey = isVid.has(newName) ? `${newName}.poster.jpg` : newName;
       if (assets.raw.has(assetKey)) continue;
       try {

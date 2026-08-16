@@ -26,11 +26,20 @@ export function buildClipboard(
 ): BlockClipboard {
   const assetSrc: Record<string, string> = {};
   for (const b of blocks) {
-    if (b.content.type !== "image" && b.content.type !== "video") continue;
-    const name = b.content.media.assetFileName;
-    if (!name || !assetsRoot) continue;
-    assetSrc[name] = `${assetsRoot}/${name}`;
-    if (b.content.type === "video") assetSrc[`${name}.poster.jpg`] = `${assetsRoot}/${name}.poster.jpg`;
+    if (!assetsRoot) continue;
+    if (b.content.type === "image" || b.content.type === "video") {
+      const m = b.content.media;
+      if (!m.assetFileName) continue;
+      assetSrc[m.assetFileName] = `${assetsRoot}/${m.assetFileName}`;
+      if (b.content.type === "video") {
+        assetSrc[`${m.assetFileName}.poster.jpg`] = `${assetsRoot}/${m.assetFileName}.poster.jpg`;
+      }
+      // 輪播的後續張數（漏了的話貼到新專案只剩第一張）
+      for (const f of m.carouselAssets ?? []) assetSrc[f] = `${assetsRoot}/${f}`;
+    } else if (b.content.type === "model" && b.content.model.assetFileName) {
+      // 3D 的 .glb 同理——不搬檔的話貼過去是個懸空檔名，只畫得出佔位
+      assetSrc[b.content.model.assetFileName] = `${assetsRoot}/${b.content.model.assetFileName}`;
+    }
   }
   return {
     projectId: project.id, canvasWidth: project.canvasWidth,
@@ -61,8 +70,14 @@ export function pasteBlocks(
     nb.locked = false;   // 鎖著的拷過去還鎖＝貼完點不到，先解開
     nb.frame = { ...nb.frame, x: nb.frame.x + dx + nudge, y: nb.frame.y + nudge };
     if ((nb.content.type === "image" || nb.content.type === "video") && nb.content.media.assetFileName) {
-      const nn = renamed.get(nb.content.media.assetFileName);
-      if (nn) nb.content.media.assetFileName = nn;
+      const m = nb.content.media;
+      const nn = renamed.get(m.assetFileName);
+      if (nn) m.assetFileName = nn;
+      // 輪播清單逐張改名（搬失敗的留舊名＝那一張畫佔位，其餘照常輪播）
+      if (m.carouselAssets?.length) m.carouselAssets = m.carouselAssets.map((f) => renamed.get(f) ?? f);
+    } else if (nb.content.type === "model" && nb.content.model.assetFileName) {
+      const nn = renamed.get(nb.content.model.assetFileName);
+      if (nn) nb.content.model.assetFileName = nn;
     }
     return nb;
   });
