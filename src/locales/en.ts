@@ -233,6 +233,7 @@ export const en: Record<string, string> = {
   "參考線顯示中": "Guides shown",
   "記憶欄": "Memory",
   "點＝套用；⌥點＝存入目前參考線；⇧點＝清空": "Click = apply; ⌥-click = save current guides; ⇧-click = clear",
+  "點＝套用｜⌥點＝存入目前參考線｜⇧點＝清空\n鍵盤：⌥1–9 套用、⇧⌥1–9 存入": "Click = apply | ⌥-click = save current guides | ⇧-click = clear\nKeys: ⌥1–9 apply, ⇧⌥1–9 save",
   "匯出範本失敗：{msg}": "Template export failed: {msg}",
 
   // ── 主畫面：頁面與元件選單 ──

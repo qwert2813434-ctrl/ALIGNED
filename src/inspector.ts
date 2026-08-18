@@ -459,6 +459,11 @@ export class Inspector {
       seg.append(b);
     }
     this.row(gs, __("記憶欄")).append(seg);
+    // 三種點法藏在滑過提示裡沒人看得到（2026-08-18 小高回饋）——直接寫在欄位底下
+    const slotHint = document.createElement("div");
+    slotHint.className = "hint pinhint";
+    slotHint.textContent = __("點＝套用｜⌥點＝存入目前參考線｜⇧點＝清空\n鍵盤：⌥1–9 套用、⇧⌥1–9 存入");
+    gs.append(slotHint);
     this.guideGenerator(gs, p);
     const list: [string, "x" | "y", number[]][] = [
       [__("垂直"), "x", p.guidesX ?? []], [__("水平"), "y", p.guidesY ?? []],
