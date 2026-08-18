@@ -224,6 +224,15 @@ export const en: Record<string, string> = {
   "匯入字型失敗：{msg}": "Font import failed: {msg}",
   "ALIGN 專案": "ALIGN project",
   "開啟失敗：{msg}": "Couldn't open: {msg}",
+  "3D 物件載入失敗：{f}——檔案可能過大，減面或縮貼圖後重新置入": "3D object failed to load: {f} — the file may be too large; reduce polygons or texture size and place it again",
+  "這顆模型 {mb} MB，偏大——載入慢或失敗時，建議減面或縮貼圖再置入": "This model is {mb} MB — on the heavy side. If it loads slowly or fails, reduce polygons or texture size and place it again",
+  "目前參考線已存進記憶欄 {n}": "Current guides saved to memory slot {n}",
+  "記憶欄 {n} 是空的——參考線面板上 ⌥點數字可存入": "Memory slot {n} is empty — ⌥-click a number in the guides panel to save into it",
+  "已套用參考線記憶欄 {n}": "Applied guide memory slot {n}",
+  "參考線已隱藏（⌘; 開回）": "Guides hidden (⌘; to show)",
+  "參考線顯示中": "Guides shown",
+  "記憶欄": "Memory",
+  "點＝套用；⌥點＝存入目前參考線；⇧點＝清空": "Click = apply; ⌥-click = save current guides; ⇧-click = clear",
   "匯出範本失敗：{msg}": "Template export failed: {msg}",
 
   // ── 主畫面：頁面與元件選單 ──

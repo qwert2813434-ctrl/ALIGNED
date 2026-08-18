@@ -101,6 +101,13 @@ export interface InspectorHooks {
     /** 鎖住＝畫布上滑鼠碰不到參考線（線還在、吸附照舊）。 */
     locked: () => boolean;
     toggleLocked: () => void;
+    /** 記憶欄 1–9（跨專案共用，存 localStorage）。slot 一律 1-based。 */
+    presets: {
+      filled: () => boolean[];
+      apply: (slot: number) => void;
+      save: (slot: number) => void;
+      clear: (slot: number) => void;
+    };
   };
   layers: {
     /** 圖層清單只列「現在看的那一頁」——跨頁全部列出來就變成一長條沒人看得懂。 */
@@ -433,6 +440,25 @@ export class Inspector {
       this.btn(__("垂直線"), () => this.hooks.guides.add("x")),
       this.btn(__("水平線"), () => this.hooks.guides.add("y")),
     );
+    // 記憶欄 1–9：點＝套用、⌥點＝存目前、⇧點＝清空；鍵盤 ⌥1–9 套用、⇧⌥1–9 存
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    const filled = this.hooks.guides.presets.filled();
+    for (let i = 1; i <= 9; i++) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = String(i);
+      b.classList.toggle("on", !!filled[i - 1]);
+      b.title = __("點＝套用；⌥點＝存入目前參考線；⇧點＝清空");
+      b.addEventListener("click", (e) => {
+        if (e.altKey) this.hooks.guides.presets.save(i);
+        else if (e.shiftKey) this.hooks.guides.presets.clear(i);
+        else this.hooks.guides.presets.apply(i);
+        this.rebuild();
+      });
+      seg.append(b);
+    }
+    this.row(gs, __("記憶欄")).append(seg);
     this.guideGenerator(gs, p);
     const list: [string, "x" | "y", number[]][] = [
       [__("垂直"), "x", p.guidesX ?? []], [__("水平"), "y", p.guidesY ?? []],

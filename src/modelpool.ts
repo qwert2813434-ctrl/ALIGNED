@@ -34,8 +34,15 @@ export class ModelPool {
   /** block.id → 該 block 的輸出畫布（renderer 共用，成品必須各自留一份）。 */
   private out = new Map<string, HTMLCanvasElement>();
   private url: ((file: string) => string) | null = null;
+  /** 載入排隊：**一次只載一顆**。90MB 級的模型並行抓會把 WKWebView 記憶體
+   *  推過線，GLTFLoader 靜靜失敗（2026-08-18 真專案重現：八張 33MP 照片在
+   *  記憶體裡時，兩顆 90MB .glb 並行載必失敗、逐顆載全過）。 */
+  private queue: string[] = [];
+  private busy = false;
+  /** file → 已失敗次數。記憶體壓力是暫態，先重試；三次才蓋章 failed。 */
+  private tries = new Map<string, number>();
 
-  constructor(private onFrame: () => void) {
+  constructor(private onFrame: () => void, private onFail?: (file: string) => void) {
     this.scene.add(this.holder);
   }
 
@@ -44,6 +51,8 @@ export class ModelPool {
     this.url = resolve;
     this.models.clear();
     this.out.clear();
+    this.queue = [];
+    this.tries.clear();
   }
 
   private ensureRenderer(): THREE.WebGLRenderer | null {
@@ -62,13 +71,36 @@ export class ModelPool {
   private load(file: string): void {
     if (this.models.has(file) || !this.url) return;
     this.models.set(file, "loading");
+    this.queue.push(file);
+    this.pump();
+  }
+
+  private pump(): void {
+    if (this.busy || !this.url) return;
+    const file = this.queue.shift();
+    if (file === undefined) return;
+    this.busy = true;
+    const next = (): void => { this.busy = false; this.pump(); };
     new GLTFLoader().load(this.url(file), (g) => {
       const root = g.scene;
       const box = new THREE.Box3().setFromObject(root);
       root.position.sub(box.getCenter(new THREE.Vector3()));   // 置中＝繞自己轉
       this.models.set(file, { root, size: box.getSize(new THREE.Vector3()) });
       this.onFrame();   // 載好了請畫布重畫一次
-    }, undefined, () => this.models.set(file, "failed"));
+      next();
+    }, undefined, () => {
+      const n = (this.tries.get(file) ?? 0) + 1;
+      this.tries.set(file, n);
+      if (n < 3) {
+        // 暫態失敗先放手：下一次重畫（或一秒後）會經 load() 重新排隊
+        this.models.delete(file);
+        setTimeout(() => { if (!this.models.has(file)) { this.load(file); this.onFrame(); } }, 1000);
+      } else {
+        this.models.set(file, "failed");
+        this.onFail?.(file);
+      }
+      next();
+    });
   }
 
   /** 有沒有任何 3D 物件設了展示方式（播放中要不要每格重畫）。 */

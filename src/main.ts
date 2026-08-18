@@ -187,6 +187,8 @@ const videos = new VideoPool(
 // 畫布上的 3D 物件（實作在 modelpool.ts）——WebGL 離屏渲染，餵給畫布的只是普通畫布
 const models = new ModelPool(() => {
   if (!sheet.classList.contains("on")) editor.refresh();
+}, (file) => {
+  meta.textContent = __f("3D 物件載入失敗：{f}——檔案可能過大，減面或縮貼圖後重新置入", { f: file });
 });
 
 type Origin =
@@ -419,6 +421,44 @@ async function pickMediaForBlock(b: Block): Promise<void> {
   commit("fill");
 }
 
+// ── 參考線記憶欄（1–9）──────────────────────────────────────────────
+// 跨專案共用（localStorage），只存 x/y 兩組頁內座標——套到不同尺寸的專案
+// 也不會炸，超出頁面的線畫不到而已。套用走 commit，⌘Z 一步救得回來。
+const GUIDE_PRESET_KEY = "align.guidePresets";
+function guidePresets(): Record<string, { x: number[]; y: number[] }> {
+  try { return JSON.parse(localStorage.getItem(GUIDE_PRESET_KEY) ?? "{}"); } catch { return {}; }
+}
+function saveGuidePreset(slot: number): void {
+  if (!current) return;
+  const all = guidePresets();
+  all[slot] = { x: [...(current.guidesX ?? [])], y: [...(current.guidesY ?? [])] };
+  localStorage.setItem(GUIDE_PRESET_KEY, JSON.stringify(all));
+  meta.textContent = __f("目前參考線已存進記憶欄 {n}", { n: slot });
+}
+function clearGuidePreset(slot: number): void {
+  const all = guidePresets();
+  delete all[slot];
+  localStorage.setItem(GUIDE_PRESET_KEY, JSON.stringify(all));
+}
+function applyGuidePreset(slot: number): void {
+  if (!current) return;
+  const g = guidePresets()[slot];
+  if (!g) { meta.textContent = __f("記憶欄 {n} 是空的——參考線面板上 ⌥點數字可存入", { n: slot }); return; }
+  current.guidesX = [...g.x];
+  current.guidesY = [...g.y];
+  editor.refresh();
+  inspector.show(current, editor.getSelected());
+  commit("guide");
+  meta.textContent = __f("已套用參考線記憶欄 {n}", { n: slot });
+}
+function toggleGuidesHidden(): void {
+  if (!current) return;
+  editor.guidesHidden = !editor.guidesHidden;
+  editor.refresh();
+  inspector.show(current, editor.getSelected());   // 面板開著＝「顯示中／已隱藏」跟著換字
+  meta.textContent = editor.guidesHidden ? __("參考線已隱藏（⌘; 開回）") : __("參考線顯示中");
+}
+
 const inspector = new Inspector($<HTMLElement>("#inspector"), {
   onChange: (opts) => {
     // 文字內容/樣式動了＝貼字盒要重算（量測要在字型已載入的 ctx 上做）
@@ -459,6 +499,12 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
   guides: {
     hidden: () => editor.guidesHidden,
     toggleHidden: () => { editor.guidesHidden = !editor.guidesHidden; editor.refresh(); },
+    presets: {
+      filled: () => { const all = guidePresets(); return Array.from({ length: 9 }, (_, i) => String(i + 1) in all); },
+      apply: (slot) => applyGuidePreset(slot),
+      save: (slot) => saveGuidePreset(slot),
+      clear: (slot) => clearGuidePreset(slot),
+    },
     add: (axis) => { editor.addGuide(axis); },
     remove: (axis, i) => {
       if (!current) return;
@@ -1577,6 +1623,12 @@ async function addModel(): Promise<Block | null> {
   }
   models.attach(videoUrl);
   editor.setModels(models);
+  // 大檔提醒：90MB 級的模型在大專案裡常載到失敗（2026-08-18 真案）——置入當下就講
+  try {
+    const head = await fetch(videoUrl(name), { method: "HEAD" });
+    const mb = Number(head.headers.get("Content-Length") ?? 0) / 1e6;
+    if (mb > 50) meta.textContent = __f("這顆模型 {mb} MB，偏大——載入慢或失敗時，建議減面或縮貼圖再置入", { mb: mb.toFixed(0) });
+  } catch { /* 提醒拿不到就算了 */ }
   const w = current.canvasWidth * 0.45;
   return baseBlock({ type: "model", model: { assetFileName: name } }, w, w);
 }
@@ -2041,6 +2093,7 @@ window.addEventListener("keydown", (e) => {
     if (e.key === "0") { e.preventDefault(); editor.fitAll(); }
     if (e.key === "=" || e.key === "+") { e.preventDefault(); editor.setZoom(Math.min(editor.zoom * 1.25, 4)); }
     if (e.key === "-") { e.preventDefault(); editor.setZoom(Math.max(editor.zoom / 1.25, 0.02)); }
+    if (e.key === ";") { e.preventDefault(); toggleGuidesHidden(); }   // ⌘;＝開關參考線（Photoshop 同款）
     // ⌘A＝選畫面正中那一頁的全部（跨頁全選在多頁專案裡幾乎都是誤觸）
     if (e.key === "a" && current) {
       e.preventDefault();
@@ -2053,6 +2106,14 @@ window.addEventListener("keydown", (e) => {
   }
   const ae = document.activeElement as HTMLElement | null;
   if (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable)) return;   // 正在輸入就別攔
+  // ⌥1–9＝套用參考線記憶欄、⇧⌥1–9＝存入目前參考線。
+  // 看 e.code 不看 e.key——Mac 上 ⌥ 會把數字鍵變成特殊字元（⌥1＝¡）
+  if (e.altKey && !e.metaKey && !e.ctrlKey && /^Digit[1-9]$/.test(e.code)) {
+    e.preventDefault();
+    const slot = Number(e.code.slice(5));
+    if (e.shiftKey) saveGuidePreset(slot); else applyGuidePreset(slot);
+    return;
+  }
   if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); deleteSelected(); return; }
   const sel = editor.selectionBlocks().filter((b) => !b.locked);
   if (!sel.length) return;
