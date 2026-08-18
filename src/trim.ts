@@ -77,7 +77,7 @@ export function openTrim(url: string, name: string): Promise<TrimResult | null> 
     root.id = "trimsheet";
     root.innerHTML = `
       <div id="trimcard">
-        <h2>修剪影片<span id="trimname"></span></h2>
+        <h2>${__("修剪影片")}<span id="trimname"></span></h2>
         <video id="trimvid" muted playsinline></video>
         <div id="trimbar">
           <div id="trimstrip"></div>
@@ -93,9 +93,9 @@ export function openTrim(url: string, name: string): Promise<TrimResult | null> 
           <span id="trimwarn"></span>
         </div>
         <div class="acts">
-          <button id="trimcancel">取消</button>
-          <button id="trimreset">整支</button>
-          <button id="trimok" class="primary">完成</button>
+          <button id="trimcancel">${__("取消")}</button>
+          <button id="trimreset">${__("整支")}</button>
+          <button id="trimok" class="primary">${__("完成")}</button>
         </div>
       </div>`;
     document.body.append(root);
