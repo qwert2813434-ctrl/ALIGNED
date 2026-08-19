@@ -12,7 +12,7 @@ import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema"
 import { hex, resolvedFontSize, resolvedKerning } from "./core/schema";
 import { aspectFillCrop, intersects, pageIndexForX, pageRect, stageBounds } from "./core/geometry";
 import { cssFont } from "./core/fonts";
-import { autoFitText, naturalSize, naturalTextSize, renderStage, textPrintLines } from "./core/render";
+import { autoFitText, columnHeight, naturalSize, naturalTextSize, renderStage, textPrintLines } from "./core/render";
 import { ANIM_HOLD, ANIM_STAGGER, defaultDur, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import type { FilterAssets } from "./core/filters";
 import { resolvePosition, rotatedBounds, equalSpacingBadges, snapGuide, snapResizingEdge, type GuideLine, type SnapStrength, type SpacingBadge } from "./core/align";
@@ -107,6 +107,7 @@ export class Editor {
   private textSizing: {
     id: string; key: "br" | "right" | "bottom";
     startFrame: Rect; startFontSize: number;
+    startColH: number;                          // 直排下緣用：起手欄高（見 textResizeTo）
     from: { x: number; y: number };
   } | null = null;
   /** 群組等比縮放（多選右下角那顆手把）。左上固定，整組連字級一起放大縮小。 */
@@ -327,7 +328,8 @@ export class Editor {
       const ox = 1 + off / Math.max(f.w, 1), oy = 1 + off / Math.max(f.h, 1);
       const out: Handle[] = [{ key: "br", ...cornerPoint(f, b.rotation, ox, oy) }];
       if (!t.vertical) out.push({ key: "right", ...cornerPoint(f, b.rotation, ox, 0.5), bar: "v" });
-      if (t.isBodyFrame) out.push({ key: "bottom", ...cornerPoint(f, b.rotation, 0.5, oy), bar: "h" });
+      // 下緣：長文框＝容器高；直排標題＝欄高（換行約束，等同橫排右緣壓段落）
+      if (t.isBodyFrame || t.vertical) out.push({ key: "bottom", ...cornerPoint(f, b.rotation, 0.5, oy), bar: "h" });
       return out;
     }
     if (!resizable(b)) return [];
@@ -548,8 +550,9 @@ export class Editor {
    *   right＝欄寬 manualWidth——夾在 8% 頁寬與「單行自然寬」之間：再拉寬
    *      只會多出空白、破壞外緣吸附，所以手把停在最後一個字上（iOS 同款上限，
    *      文字夠長就能跨頁）。左緣釘住，右緣跟著指標。
-   *   bottom＝框高 manualHeight——長文框限定；容器可以比內容矮（限制文字
-   *      範圍就是長文框的用途），只留一個不會整個縮沒的小地板。
+   *   bottom＝框高 manualHeight——長文框：容器可以比內容矮（限制文字
+   *      範圍就是長文框的用途），只留一個不會整個縮沒的小地板；
+   *      直排標題：同一顆手把語意變成欄高（直排的換行約束在縱軸）。
    * 只有拖曳中的這一個 block 被改動，鬆手走 onCommit → 快照 undo。
    */
   private textResizeTo(at: { x: number; y: number }): void {
@@ -587,6 +590,13 @@ export class Editor {
       t.manualWidth = Math.round(Math.min(Math.max(w, minW), Math.max(nat.w, minW)));
       if (t.isBodyFrame) b.frame = { ...b.frame, w: t.manualWidth };
       else autoFitText(this.ctx, p);
+    } else if (t.vertical && !t.isBodyFrame) {
+      // 直排標題：下緣＝欄高（換行約束）。用「起手欄高＋位移」而不是拿 frame 高回推——
+      // frame 高是墨跡結果，回灌當約束就成循環相依，小拖曳會讓欄裂開（columnHeight 註解那顆雷）。
+      const edge = snapEdge(f0.y + f0.h + dy, "horizontal");
+      const colH = s.startColH + (edge - (f0.y + f0.h));
+      t.manualHeight = Math.round(Math.max(colH, p.canvasWidth * 0.06));
+      autoFitText(this.ctx, p);   // 重排＋收貼字盒（直排錨右緣，字待在原地）
     } else {
       const h = snapEdge(f0.y + f0.h + dy, "horizontal") - f0.y;
       t.manualHeight = Math.round(Math.max(h, p.canvasWidth * 0.06));
@@ -696,6 +706,7 @@ export class Editor {
         this.textSizing = {
           id: sel.id, key: hk, startFrame: { ...sel.frame },
           startFontSize: resolvedFontSize(sel.content.text, this.project.canvasWidth),
+          startColH: columnHeight(sel.content.text, this.project.pageHeight),
           from: p,
         };
         this.dirty = true;

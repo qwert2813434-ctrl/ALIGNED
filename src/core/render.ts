@@ -395,7 +395,8 @@ function drawBlock(
     case "text":
     case "textFlow": {
       const t = b.content.text;
-      // 長文框＝固定容器：超出裁切、可繞排。直排的長文框維持欄排路徑。
+      // 長文框＝固定容器：橫排走 drawBodyFrame（裁切＋可繞排）；
+      // 直排走 drawText 內的固定容器分支（整欄制＋裁切，2026-08-19）。
       if (t.isBodyFrame === true && t.vertical !== true) {
         drawBodyFrame(ctx, project, b, t, f.w, f.h);
       } else {
@@ -776,8 +777,20 @@ function drawText(
   drawTextBackground(ctx, t, w, h, size);
   applyTextShadow(ctx, t, size);
 
-  if (t.vertical) drawVertical(ctx, t, w, size, kern, columnHeight(t, pageHeight));
-  else drawHorizontal(ctx, t, w, h, size, kern);
+  if (t.vertical) {
+    if (t.isBodyFrame === true) {
+      // 直排長文框＝固定容器（與橫排 drawBodyFrame 同義）：整欄放不下就不排
+      // （對齊橫排「整行放不下就停」的規矩），再裁切保底擋住殘餘墨跡。
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, w, h);
+      ctx.clip();
+      drawVertical(ctx, t, w, size, kern, columnHeight(t, pageHeight), true);
+      ctx.restore();
+    } else {
+      drawVertical(ctx, t, w, size, kern, columnHeight(t, pageHeight));
+    }
+  } else drawHorizontal(ctx, t, w, h, size, kern);
 }
 
 /**
@@ -813,7 +826,7 @@ function wrap(ctx: CanvasRenderingContext2D, text: string, maxW: number, kern: n
  * 再拿它回去當切欄約束就成了循環相依：框一縮、每欄裝得下的字變少、
  * 四個字被切成兩欄（2026-08-01 實際踩過，第 1 頁的「作品名稱」當場裂開）。
  */
-function columnHeight(t: TextBlock, pageHeight: number): number {
+export function columnHeight(t: TextBlock, pageHeight: number): number {
   return t.manualHeight ?? pageHeight * 0.6;
 }
 
@@ -1105,6 +1118,7 @@ function drawVertical(
   size: number,
   kern: number,
   colH: number,
+  wholeColumnsOnly = false,
 ): void {
   const v = verticalMetrics(ctx, t, size, kern, colH);
   const ltr = t.verticalLeftToRight === true;
@@ -1115,6 +1129,8 @@ function drawVertical(
     // 欄心距框邊 inkW/2——與 verticalMetrics 的 extentW 同一個約定，
     // 所以貼字盒會剛好包住墨跡，兩邊不會各算各的。
     const cx = ltr ? v.inkW / 2 + i * v.pitch : w - v.inkW / 2 - i * v.pitch;
+    // 長文框：整欄放不下容器就不排（RTL 溢出在左、LTR 在右，一條件兩向都蓋）
+    if (wholeColumnsOnly && (cx - v.inkW / 2 < -0.5 || cx + v.inkW / 2 > w + 0.5)) return;
     let y = 0;
     for (const ch of col) {
       const m = ctx.measureText(ch);
