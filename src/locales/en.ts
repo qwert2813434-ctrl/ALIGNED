@@ -132,6 +132,8 @@ export const en: Record<string, string> = {
   "垂直線": "Vertical guide",
   "水平線": "Horizontal guide",
   "刪除": "Delete",
+  "清除": "Clear",
+  "刪除全部參考線": "Delete all guides",
   "已鎖定：畫布上碰不到，改數值或解鎖": "Locked — can't be grabbed on canvas. Edit the value or unlock.",
   "畫布上可直接拖；拖出頁面外＝丟掉": "Drag directly on the canvas. Drag past the page to discard.",
   "還沒有參考線。加一條，或從畫布上拖出來": "No guides yet. Add one, or pull one off the canvas edge.",

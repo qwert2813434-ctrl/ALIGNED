@@ -143,6 +143,7 @@ export class Inspector {
   setPanel(p: SidePanel): SidePanel {
     this.panel = this.panel === p ? "none" : p;
     this.rebuild();
+    this.el.scrollTop = 0;   // 換面板＝換內容，從頭看
     return this.panel;
   }
   get activePanel(): SidePanel { return this.panel; }
@@ -152,10 +153,16 @@ export class Inspector {
     this.hotGuide = { axis, index };
     this.panel = "guides";
     this.rebuild();
+    this.el.querySelector(".row.hot")?.scrollIntoView({ block: "nearest" });
   }
 
-  /** 換類型／換遮罩之類的結構變化後整面重建（值變化不重建——會炸掉正在打字的輸入框）。 */
-  private rebuild(): void { this.show(this.project, this.block); }
+  /** 換類型／換遮罩之類的結構變化後整面重建（值變化不重建——會炸掉正在打字的輸入框）。
+   *  重建前後保留捲動位置——不保留的話，捲到下面點一下參數整欄彈回頂端（2026-08-19 小高回饋）。 */
+  private rebuild(): void {
+    const top = this.el.scrollTop;
+    this.show(this.project, this.block);
+    this.el.scrollTop = top;
+  }
 
   show(project: Project | null, block: Block | null): void {
     this.project = project;
@@ -440,6 +447,16 @@ export class Inspector {
       this.btn(__("垂直線"), () => this.hooks.guides.add("x")),
       this.btn(__("水平線"), () => this.hooks.guides.add("y")),
     );
+    if ((p.guidesX?.length ?? 0) + (p.guidesY?.length ?? 0) > 0) {
+      this.row(gs, __("清除")).append(this.btn(__("刪除全部參考線"), () => {
+        p.guidesX = [];
+        p.guidesY = [];
+        GEN_BATCH.delete(p.id);
+        this.hotGuide = null;
+        this.rebuild();
+        this.emit();
+      }));
+    }
     // 記憶欄 1–9：點＝套用、⌥點＝存目前、⇧點＝清空；鍵盤 ⌥1–9 套用、⇧⌥1–9 存
     const seg = document.createElement("div");
     seg.className = "seg";
