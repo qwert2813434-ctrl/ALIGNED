@@ -27,6 +27,10 @@ const project: Project = {
       { isBodyFrame: true, manualHeight: 420 }),
     // ③ 對照組：直排標題「未設欄高」→ 預設頁高 60% 欄高，行為不應改變
     mkText("t3", 90, 700, 200, 500, "對照組未設欄高", {}),
+    // ④ 直排標點：括號轉 90°、句逗頓號頂右位、！？直立
+    mkText("t4", 640, 700, 400, 560,
+      "他說：「排版（直排）很難嗎？」不會——用《ALIGNED》就好、真的。等等…你看！",
+      { manualHeight: 560, fontSize: 44 }),
   ],
 };
 

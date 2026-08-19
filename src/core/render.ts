@@ -1111,6 +1111,14 @@ function drawHorizontal(
  * 因為黑體自然欄距 1.5em、宋/明/粉圓只有 1.0em——不補償的話同一個行距值在不同
  * 字體看起來差很多。這版先用 iOS 的預設落點 1.22em，只有預設字體會準。
  */
+// 直排標點（2026-08-19）：iOS 端 CoreText 的 'vert' 特性會自動換直排字形，
+// canvas 沒有這條路，用幾何等價做——
+//   轉 90°＝括號、書名號、破折號、刪節號、波浪、底線（順時針轉即是直排形）；
+//   頂右位＝句逗頓號（直排的點座落在字格右上，不轉）。
+// ！？：；照台灣直排慣例維持直立。半形英數維持現狀（逐字直立）。
+const VERT_ROTATE = new Set([..."（）「」『』《》〈〉【】〔〕〖〗﹙﹚()[]{}＜＞<>—–―ー～〜…‥＝=＿_￣"]);
+const VERT_SHIFT  = new Set([..."、。，．"]);
+
 function drawVertical(
   ctx: CanvasRenderingContext2D,
   t: TextBlock,
@@ -1134,7 +1142,20 @@ function drawVertical(
     let y = 0;
     for (const ch of col) {
       const m = ctx.measureText(ch);
-      ctx.fillText(ch, cx - m.width / 2, y + m.actualBoundingBoxAscent);
+      if (VERT_ROTATE.has(ch)) {
+        // 繞字格中心順時針轉 90°；轉完把墨跡置中（括號的墨在 em 裡偏一側，不置中會歪）
+        ctx.save();
+        ctx.translate(cx, y + size / 2);
+        ctx.rotate(Math.PI / 2);
+        ctx.fillText(ch, -m.width / 2,
+          (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2);
+        ctx.restore();
+      } else if (VERT_SHIFT.has(ch)) {
+        // 句逗頓號：墨跡從字格左下搬到右上（直排排版慣例），位移半個字格
+        ctx.fillText(ch, cx - m.width / 2 + size * 0.5, y + m.actualBoundingBoxAscent - size * 0.5);
+      } else {
+        ctx.fillText(ch, cx - m.width / 2, y + m.actualBoundingBoxAscent);
+      }
       y += v.advance;
     }
   });
