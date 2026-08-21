@@ -14,7 +14,7 @@
 
 ![ALIGNED for Mac](docs/intro.gif)
 
-▶︎ 高畫質版：**[Vimeo（19 秒・60p）](https://vimeo.com/1220157836)** ｜ [mp4](docs/intro.mp4) ｜ [一分鐘功能導覽](docs/demo.mp4)
+▶︎ **[一分鐘功能導覽](docs/demo.mp4)**（有新功能會隨版本更新）
 
 ## 下載
 
