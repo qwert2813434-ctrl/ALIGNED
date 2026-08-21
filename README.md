@@ -12,10 +12,9 @@
 拖曳吸附、參考線、群組對齊、九顆濾鏡、影片頁（匯出 mp4）、輕量範本交換、
 系統字型＋字型檔匯入——桌面大螢幕十頁攤開，一眼驗收。
 
-[![ALIGNED 桌面版形象片（19 秒）](docs/screenshots/intro-poster.jpg)](https://vimeo.com/1220157836)
+[![ALIGNED for Mac](docs/screenshots/intro-poster.jpg)](https://vimeo.com/1220157836)
 
-▶︎ **[形象片・Vimeo（19 秒，60p）](https://vimeo.com/1220157836)** ｜ 輕量版直接在 GitHub 播：**[docs/intro.mp4](docs/intro.mp4)**
-▶︎ **[一分鐘說明影片](docs/demo.mp4)**（功能導覽；有新功能會隨版本更新）
+▶︎ **[看 19 秒（Vimeo・60p）](https://vimeo.com/1220157836)** ｜ [輕量版](docs/intro.mp4) ｜ [一分鐘功能導覽](docs/demo.mp4)
 
 ## 下載
 
