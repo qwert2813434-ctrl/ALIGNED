@@ -26,7 +26,7 @@
 
 這兩個連結**永遠指向最新版**，發新版不用改。想看各版本更新內容或抓舊版 → [Releases](https://github.com/qwert2813434-ctrl/ALIGNED/releases)。
 
-📱 iPhone／iPad 版正在 App Store 審核中，上架後在這裡補連結。
+📱 **[iPhone／iPad 版 — App Store](https://apps.apple.com/tw/app/id6791646266)**（免費下載，進階功能 Pro 訂閱、7 天免費試用）
 
 **Mac 系統需求**：Apple Silicon（M1 或更新）、macOS 13 Ventura 或更新。
 已通過 Apple 公證（Developer ID 簽名＋Notarization），下載後直接打開即可，不需要任何繞過步驟。
