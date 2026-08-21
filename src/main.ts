@@ -1,4 +1,4 @@
-import { __, __f, keys, localizeTitles } from "./i18n";
+import { __, __f, keys, localizeTitles, locale, setLocale } from "./i18n";
 // ALIGN Core 的 Mac 殼組裝。
 //
 // 同一份程式跑兩種環境：
@@ -2015,6 +2015,9 @@ $<HTMLButtonElement>("#gearBtn").addEventListener("click", (e) => {
     "-",
     { label: __("回報問題（Email）"), run: reportBugMail },
     { label: __("回報問題（GitHub Issues）"), run: () => { void invoke("open_url", { url: `${REPO}/issues/new` }); } },
+    "-",
+    // 語言：手動切換（2026-08-21，之前只跟系統語言走、沒有入口）。存 localStorage 後整頁重載。
+    { label: locale() === "zh" ? "Language: English" : "語言：繁體中文", run: () => { setLocale(locale() === "zh" ? "en" : "zh"); } },
     "-",
     { label: __("檢查更新"), key: `v${appVersion}`, run: () => {
       void checkUpdate(true).then((got) => {
