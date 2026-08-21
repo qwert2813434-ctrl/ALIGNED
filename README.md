@@ -12,9 +12,10 @@
 拖曳吸附、參考線、群組對齊、九顆濾鏡、影片頁（匯出 mp4）、輕量範本交換、
 系統字型＋字型檔匯入——桌面大螢幕十頁攤開，一眼驗收。
 
-![ALIGNED Mac 版編輯畫面](docs/screenshots/hero.png)
+[![ALIGNED 桌面版形象片（19 秒）](docs/screenshots/intro-poster.jpg)](https://vimeo.com/1220157836)
 
-▶︎ **[一分鐘說明影片](docs/demo.mp4)**（點進去直接播放；有新功能會隨版本更新）
+▶︎ **[形象片・Vimeo（19 秒，60p）](https://vimeo.com/1220157836)** ｜ 輕量版直接在 GitHub 播：**[docs/intro.mp4](docs/intro.mp4)**
+▶︎ **[一分鐘說明影片](docs/demo.mp4)**（功能導覽；有新功能會隨版本更新）
 
 ## 下載
 
@@ -179,7 +180,7 @@ public/fonts  ← 23 個內嵌字型，從 iOS 專案 Sources/Fonts/ 複製
 
 ## ⏸ 待小高定奪（會影響架構，先別自己決定）
 
-1. **`.alignproj` 的跨平台容器**。現在是 AppleArchive + LZFSE，只有 Apple 平台解得開
+1. ~~**`.alignproj` 的跨平台容器**~~ **✅ 2026-08-21 小高拍板＝① zip**（讀舊 LZFSE 相容、寫出改 zip、三平台共用；未動工）。原題：現在是 AppleArchive + LZFSE，只有 Apple 平台解得開
    （Mac 可以呼叫系統的 `aa`，**Android／Windows 沒有**）。三條路：
    ① 跨平台版一律改用 zip（要處理與 iOS 既有檔的相容）；
    ② Mac 讀寫 `.alignproj`、Android 只吃裸 `project.json`；
