@@ -1,5 +1,10 @@
 # ALIGNED for Mac
 
+**English:** ALIGNED is a free, open-source layout editor for multi-page Instagram carousels — the whole carousel is one continuous canvas, images cross the page seams, and it slices on export. Built by a working ad film director in Taiwan.
+**[Official site (English) → aligned-app.github.io/en](https://aligned-app.github.io/en/)** — downloads, feature tour and FAQ. Mac (Apple Silicon, macOS 13+, notarized) / Windows 10+ 64-bit. GPL-3.0; the name and logo are trademarks — if you fork, please rename. The documentation below is in Traditional Chinese.
+
+---
+
 **IG 輪播的跨頁對齊排版工作檯（Mac・免費・開源）。**
 由台灣廣告導演 [Armin Kao／小高](https://arminkao.com) 依自己的工作流打造。
 
@@ -12,6 +17,8 @@
 ▶︎ **[一分鐘說明影片](docs/demo.mp4)**（點進去直接播放；有新功能會隨版本更新）
 
 ## 下載
+
+🌐 **[官網（下載・說明・FAQ）](https://aligned-app.github.io/zh-Hant/)**
 
 👉 **[下載 ALIGNED for Mac（DMG）](https://github.com/qwert2813434-ctrl/ALIGNED/releases/latest/download/ALIGNED-macOS-arm64.dmg)**
 
