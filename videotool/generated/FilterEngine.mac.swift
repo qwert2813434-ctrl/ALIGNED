@@ -106,6 +106,7 @@ enum FilterEngine {
         .workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB) as Any
     ])
 
+    private static let paperLock = NSLock()
 
 
 

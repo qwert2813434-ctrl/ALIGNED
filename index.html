@@ -50,6 +50,12 @@
   /* 開著的面板／開關要看得出「亮」——一排工具全同色，狀態等於不存在 */
   .island button.on { background: color-mix(in srgb, #2F7CF6 15%, transparent); color: #2F7CF6; }
   .island svg { display: block; }
+  /* 塗鴉桌面版先行（2026-08-25）：iPad 版還在測，畫筆鈕掛小藍 Beta 字樣，
+     iOS 送審跟上後拿掉 */
+  #doodleBtn { position: relative; }
+  #doodleBtn::after { content: "Beta"; position: absolute; top: -1px; right: -2px;
+    font-size: 7.5px; font-weight: 700; letter-spacing: .02em; color: #2F7CF6;
+    line-height: 1; pointer-events: none; }
   .island .glyph { color: var(--ink2); margin: 0 2px 0 8px; }
   .island select { border: none; background: transparent; color: var(--ink);
                    font: inherit; font-size: 12.5px; padding: 0 4px 0 0;
