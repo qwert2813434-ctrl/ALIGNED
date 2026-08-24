@@ -477,6 +477,7 @@ export const en: Record<string, string> = {
   "開始畫": "Start drawing",
   "橡皮擦": "Eraser",
   "另起新塗鴉": "New doodle layer",
+  "新塗鴉": "New doodle",
   "筆刷": "Brush",
   "鋼筆": "Pen",
   "麥克筆": "Marker",
@@ -518,4 +519,19 @@ export const en: Record<string, string> = {
   "幅度": "Amount",
   "生長": "Grow",
   "塗鴉模式：直接畫；⌘Z 回上一筆、Esc 或再按畫筆離開": "Doodle mode: just draw; ⌘Z undoes a stroke, Esc or the pen button leaves",
+
+  // ── 字體商店（2026-08-25）──
+  "字體商店": "Font Store",
+  "讀取字體清單中…": "Loading font list…",
+  "讀不到字體清單——檢查網路後點一下重試": "Couldn't load the font list — check your connection and tap to retry",
+  "。全部為開放授權可商業使用；下載的字體只進 ALIGNED，不裝進系統。": ". All open-licensed for commercial use; downloaded fonts live inside ALIGNED only — nothing is installed system-wide.",
+  "下載": "Get",
+  "已安裝": "Installed",
+  "繁中完整": "Traditional Chinese",
+  "日系展示": "Japanese display",
+  "歐文": "Latin",
+  "韓文": "Korean",
+  "補齊專案字體中：{names}…": "Fetching fonts this project uses: {names}…",
+  "已自動補齊專案字體：{names}": "Fetched the fonts this project uses: {names}",
+  "這個專案缺字體且目前抓不到——暫以預設字型顯示，連網後開字體商店補": "This project needs fonts that can't be fetched right now — showing the default font; open the Font Store once you're online",
 };

@@ -8,6 +8,8 @@ import { __, __f, keys, localizeTitles, locale, setLocale } from "./i18n";
 //   assets/，LZFSE 也解不了）——那是開發便利，不是產品路徑。
 import { decodeProject, encodeProject, type Block, type Project } from "./core/schema";
 import { loadFonts, registerSystemFonts, registerUserFont, type DynamicFont } from "./core/fonts";
+import { restoreStoreFonts, unresolvedNames, repairable, downloadStoreFont } from "./core/fontstore";
+import { openFontStore } from "./fontstoreui";
 import { applyFilter, loadFilterAssets, type FilterAssets } from "./core/filters";
 import type { SnapStrength } from "./core/align";
 import { Editor } from "./editor";
@@ -690,10 +692,26 @@ async function localUrl(absPath: string): Promise<string> {
 }
 
 /** 開一個指定路徑的專案——⌘O 與 ?open=（診斷用旗標）共用同一條路。 */
+/// 缺字型守門員（版面穩定鐵則：不默默 fallback）——專案用到、還沒裝的商店字
+/// 在 show() 之前自動補下載，第一次量測就用對的字。斷網補不到就先開，
+/// meta 提示去字體商店補；目錄對不回來的（被刪的匯入字）本來就修不了。
+async function ensureProjectFonts(p: Project): Promise<void> {
+  try {
+    const missing = await repairable(unresolvedNames(p.blocks));
+    if (!missing.length) return;
+    meta.textContent = __f("補齊專案字體中：{names}…", { names: missing.map((f) => f.label).join("、") });
+    for (const f of missing) await downloadStoreFont(f);
+    meta.textContent = __f("已自動補齊專案字體：{names}", { names: missing.map((f) => f.label).join("、") });
+  } catch {
+    meta.textContent = __("這個專案缺字體且目前抓不到——暫以預設字型顯示，連網後開字體商店補");
+  }
+}
+
 async function openPath(path: string): Promise<void> {
   await autosaveNow();   // 換專案前 flush，理由同 openSample
   const r = await invoke<{ json: string; asset_dir: string | null; root_dir: string }>("load_project", { path });
   const p = decodeProject(JSON.parse(r.json));
+  await ensureProjectFonts(p);
   origin = path.endsWith(".alignproj")
     ? { kind: "alignproj", path, root: r.root_dir }
     : { kind: "json", path };
@@ -719,7 +737,9 @@ function openBrowser(): void {
     const f = input.files?.[0];
     if (!f) return;
     origin = { kind: "sample" };   // 瀏覽器拿不到路徑，存檔一律走下載
-    show(decodeProject(JSON.parse(await f.text())));
+    const p = decodeProject(JSON.parse(await f.text()));
+    await ensureProjectFonts(p);
+    show(p);
   };
   input.click();
 }
@@ -2041,6 +2061,12 @@ $<HTMLButtonElement>("#gearBtn").addEventListener("click", (e) => {
     { label: __("回報問題（Email）"), run: reportBugMail },
     { label: __("回報問題（GitHub Issues）"), run: () => { void invoke("open_url", { url: `${REPO}/issues/new` }); } },
     "-",
+    // 字體商店：47 套開放授權可商用字（選集致敬壹加壹 What'Sub），下載進
+    // IndexedDB、不裝進系統。裝／移除後重畫選單（字型下拉每次 rebuild 都重讀目錄）。
+    { label: __("字體商店"), run: () => {
+      openFontStore(() => { inspector.show(current, editor.getSelected()); });
+    } },
+    "-",
     // 語言：手動切換（2026-08-21，之前只跟系統語言走、沒有入口）。存 localStorage 後整頁重載。
     { label: locale() === "zh" ? "Language: English" : "語言：繁體中文", run: () => { setLocale(locale() === "zh" ? "en" : "zh"); } },
     "-",
@@ -2198,7 +2224,7 @@ function zoomProbe(): void {
 // ── 啟動 ──────────────────────────────────────────────────────────────
 (async () => {
   // 字型必須先載完再畫——canvas 對還沒載入的字型會靜默回落系統字型，不報錯只是全錯。
-  [, filterAssets] = await Promise.all([loadFonts(), loadFilterAssets()]);
+  [, filterAssets] = await Promise.all([loadFonts(), loadFilterAssets(), restoreStoreFonts()]);
   editor.setFilters(filterAssets);   // 沒餵的話畫布不會套整頁紙張（匯出卻會），所見即所不得
 
   const sample = $<HTMLSelectElement>("#sample");

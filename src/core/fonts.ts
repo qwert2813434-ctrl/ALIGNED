@@ -82,6 +82,8 @@ export interface DynamicFont { label: string; ps: string; path: string | null }
 
 /** 檢視器選單用的動態目錄，開機時由殼層填。 */
 export const fontCatalog = {
+  /** 字體商店下載的字型（IndexedDB，重開還在）——見 fontstore.ts */
+  store: [] as { label: string; value: string }[],
   /** 匯入的字型檔（App 資料夾 UserFonts/） */
   custom: [] as { label: string; value: string }[],
   /** 這台電腦裝的字型（一家族一代表面） */
@@ -120,6 +122,35 @@ export async function registerUserFont(f: DynamicFont, url: string): Promise<boo
   DYNAMIC_CSS.set(f.ps, `"${f.ps}"`);
   fontCatalog.custom.push({ label: f.label, value: f.ps });
   return true;
+}
+
+/**
+ * 字體商店家族登記（fontstore.ts 在還原與下載完成時呼叫）。
+ * key＝家族鍵（400 那面的 PostScript 名，跟 iOS 同一套儲存模型）；
+ * faces＝五字階→具體字面（單字重傳 null，粗細滑桿自然沒作用）。
+ * FontFace 本身由呼叫端先 add 完（量測鐵則：load 完才能進渲染）。
+ */
+export function registerStoreFamily(key: string, label: string, faces: string[] | null): void {
+  if (faces) {
+    FAMILIES[key] = faces;
+    for (const f of faces) DYNAMIC_CSS.set(f, `"${f}"`);
+  }
+  DYNAMIC_CSS.set(key, `"${key}"`);
+  if (!fontCatalog.store.some((x) => x.value === key)) {
+    fontCatalog.store.push({ label, value: key });
+  }
+}
+
+export function unregisterStoreFamily(key: string): void {
+  for (const f of FAMILIES[key] ?? []) DYNAMIC_CSS.delete(f);
+  delete FAMILIES[key];
+  DYNAMIC_CSS.delete(key);
+  fontCatalog.store = fontCatalog.store.filter((x) => x.value !== key);
+}
+
+/** 這個 PostScript 名目前有沒有東西能渲染（內嵌／系統／匯入／商店）。 */
+export function canRender(ps: string): boolean {
+  return Boolean(FILES[ps] || DYNAMIC_CSS.has(ps) || SYSTEM_CSS[ps]);
 }
 
 /**
