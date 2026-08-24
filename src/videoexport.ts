@@ -51,7 +51,8 @@ export function pageHasMotion(p: Project, index: number): boolean {
     && b.frame.y < page.y + page.h && page.y < b.frame.y + b.frame.h
     && (!!b.anim
       || (b.content.type === "image" && !!b.content.media.carouselAssets?.length)
-      || (b.content.type === "model" && !!b.content.model.mode)));
+      || (b.content.type === "model" && !!b.content.model.mode)
+      || (b.content.type === "doodle" && !!(b.content.doodle.play || b.content.doodle.wobble))));
 }
 
 /** 烤片的目標像素——**偶數**（H.264 的 chroma 取樣要求），與工具端的 roundEven 一致。 */

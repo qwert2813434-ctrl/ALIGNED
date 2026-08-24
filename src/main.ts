@@ -75,7 +75,7 @@ editor.onSelect = (b: Block | null) => {
   if (b == null && editor.selectionBlocks().length > 1) return;
   inspector.show(current, b);
   if (!b) { info.textContent = ""; return; }
-  const kind = { text: __("文字"), textFlow: __("續流文字"), image: __("圖片"), video: __("影片"), shape: __("形狀"), model: __("3D 物件") }[b.content.type];
+  const kind = { text: __("文字"), textFlow: __("續流文字"), image: __("圖片"), video: __("影片"), shape: __("形狀"), model: __("3D 物件"), doodle: __("塗鴉") }[b.content.type];
   const f = b.frame;
   info.textContent = `${kind}　${Math.round(f.x)}, ${Math.round(f.y)}　${Math.round(f.w)}×${Math.round(f.h)}`
     + (b.rotation ? `　${Math.round(b.rotation)}°` : "");
@@ -567,6 +567,15 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
     duplicate: () => duplicateSelection(),
     remove: () => deleteSelected(),
   },
+  // 塗鴉模式：筆的設定住在 editor.doodle，面板只是代理
+  doodle: {
+    active: () => !!editor.doodle,
+    pen: () => editor.doodle ? { ...editor.doodle } : null,
+    setPen: (p) => { if (editor.doodle) Object.assign(editor.doodle, p); },
+    begin: (b) => editor.beginDoodle(b),
+    end: () => editor.endDoodle(),
+    newLayer: () => editor.newDoodleLayer(),
+  },
   // 出場動畫——面板選了效果就在畫布上循環播放，不必匯出
   playAnim: (b) => editor.playAnim(b),
   sequenceAll: (b) => editor.sequenceCurrentPage(b),
@@ -899,6 +908,18 @@ editor.onGuidesChanged = () => {
 
 editor.onContentMode = (on) => {
   meta.textContent = on ? __("搬照片模式：拖曳＝在框內移動照片，Esc 離開") : "";
+};
+editor.onDoodleMode = (on) => {
+  $<HTMLButtonElement>("#doodleBtn").classList.toggle("on", on);
+  meta.textContent = on ? __("塗鴉模式：直接畫；⌘Z 回上一筆、Esc 或再按畫筆離開") : "";
+  inspector.show(current, editor.getSelected());
+};
+// 每一筆各自一步 undo（tag 帶流水號，不讓 900ms 合併窗把連續幾筆黏成一步）
+let strokeSeq = 0;
+editor.onDoodleStroke = () => {
+  inspector.show(current, editor.getSelected());
+  scheduleThumbs();
+  commit(`doodle${strokeSeq++}`);
 };
 
 // ── 開場首頁 ──────────────────────────────────────────────────────────
@@ -1697,6 +1718,10 @@ async function addBlock(kind: string): Promise<void> {
     case "model":
       b = await addModel();
       break;
+    case "doodle":
+      // 塗鴉不是「加一個東西」而是切模式：第一筆落下才生成 block
+      if (editor.doodle) editor.endDoodle(); else editor.beginDoodle();
+      return;
   }
   if (!b) return;
   current.blocks.push(b);

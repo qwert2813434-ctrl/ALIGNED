@@ -13,6 +13,7 @@
 // ⚠️ 尚未接上專案存檔與 UI（Stage 2）。目前設定由呼叫端以 Map 餵入。
 
 import type { Rect } from "./schema";
+import { DOODLE_TRAVEL_DUR } from "./doodle";
 
 /** 停留秒數的**預設值**——規格是 5 秒，但長文入場 30 秒配 5 秒停留就走味了，
  *  所以真正的值存在 Project.animHold，這裡只是沒設時的回落。 */
@@ -36,6 +37,8 @@ export function textRevealDur(text: string, charsPerSec = 8): number {
 /** 這個效果是不是「把文字攤開」型（預設秒數要吃字數）。 */
 export const isTextReveal = (k: AnimKind): boolean =>
   k === "typewriter" || k === "textPhrase" || k === "textFlicker";
+
+/** 塗鴉的生長出場：reveal 語意（0…1 沿路徑長度），渲染端交給 drawDoodle。 */
 
 /**
  * 每種效果的合理預設秒數。
@@ -82,7 +85,8 @@ export type AnimKind =
   | "slide"         // 物件：位移出場
   | "fade"          // 物件：淡入
   | "scale"         // 物件：縮放出場
-  | "maskWipe";     // 物件：遮罩出場（遮罩未到位時內容仍有定向位移）
+  | "maskWipe"      // 物件：遮罩出場（遮罩未到位時內容仍有定向位移）
+  | "draw";         // 塗鴉：生長（沿畫的順序長出來）
 
 export type AnimDir = "up" | "down" | "left" | "right";
 
@@ -114,7 +118,7 @@ export interface AnimState {
   /** 文字顯示比例 0…1。未給＝全部顯示。 */
   reveal?: number;
   /** 文字顯示的切法：逐字／逐句／隨機閃現。 */
-  revealMode?: "char" | "phrase" | "flicker";
+  revealMode?: "char" | "phrase" | "flicker" | "draw";
 }
 
 /** 靜止狀態（沒有動畫、或動畫已結束）。 */
@@ -178,7 +182,8 @@ export function timelineCycle(
 export function motionTempo(
   blocks: Iterable<{ content: { type: string;
     media?: { carouselAssets?: string[]; carouselInterval?: number };
-    model?: { mode?: "spin" | "spinStop"; secsPerTurn?: number; dur?: number } } }>,
+    model?: { mode?: "spin" | "spinStop"; secsPerTurn?: number; dur?: number };
+    doodle?: { play?: "travel"; travelDur?: number; wobble?: string } } }>,
 ): { periods: number[]; minEnd: number } {
   const periods: number[] = [];
   let minEnd = 0;
@@ -191,6 +196,10 @@ export function motionTempo(
     if (c.type === "model" && c.model) {
       if (c.model.mode === "spin") periods.push(Math.max(0.5, c.model.secsPerTurn ?? MODEL_SECS_PER_TURN));
       if (c.model.mode === "spinStop") minEnd = Math.max(minEnd, c.model.dur ?? MODEL_SPIN_DUR);
+    }
+    // 塗鴉巡線：一圈的秒數進週期，循環繞回時頭尾才接得上
+    if (c.type === "doodle" && c.doodle?.play === "travel") {
+      periods.push(Math.max(0.3, c.doodle.travelDur ?? DOODLE_TRAVEL_DUR));
     }
   }
   return { periods, minEnd };
@@ -222,7 +231,8 @@ export function animStateAt(
       return { ...REST, scale: p1 <= 0 ? 0 : ease(p1) };
     }
     // 單段：照 kind 入場到版面位置。還沒開始＝停在起點（起點本來就在畫面外或全透明）
-    return atProgress(a, p1 <= 0 ? 0 : ease(p1), frame, page, vertical);
+    // 塗鴉生長走**等速**——畫畫是勻速把線拉出來，緩出會像最後在拖慢（2026-08-23）
+    return atProgress(a, p1 <= 0 ? 0 : a.kind === "draw" ? p1 : ease(p1), frame, page, vertical);
   }
   if (!s2) return REST;   // 單段：入場完＝定格在版面位置
 
@@ -259,6 +269,8 @@ function atProgress(
     }
     case "textFlicker":
       return { ...REST, reveal: p, revealMode: "flicker" };
+    case "draw":
+      return { ...REST, reveal: p, revealMode: "draw" };
 
     // ── 物件：方向可自訂 ──
     case "slide": {

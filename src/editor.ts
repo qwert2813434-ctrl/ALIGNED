@@ -15,6 +15,7 @@ import { cssFont } from "./core/fonts";
 import { autoFitText, columnHeight, naturalSize, naturalTextSize, renderStage, textPrintLines } from "./core/render";
 import { ANIM_HOLD, ANIM_STAGGER, defaultDur, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import type { FilterAssets } from "./core/filters";
+import { drawDoodle, doodleGrowDur, speedPress, streamlinePts, packStrokes, strokeHit, thinPoints, unpackStrokes, type BrushKind, type DoodleBlock } from "./core/doodle";
 import { resolvePosition, rotatedBounds, equalSpacingBadges, snapGuide, snapResizingEdge, type GuideLine, type SnapStrength, type SpacingBadge } from "./core/align";
 
 interface View { scale: number; tx: number; ty: number }
@@ -126,6 +127,18 @@ export class Editor {
   private rotating: { id: string; start: number; from: { x: number; y: number } } | null = null;
   /** 參考線：可以在畫布上直接拖，拖出頁面外就是丟掉（Photoshop 的語意）。 */
   private guideDrag: { axis: "x" | "y"; index: number } | null = null;
+  /**
+   * 塗鴉模式（2026-08-23）：筆落在畫布＝畫一筆。第一筆自動生成塗鴉 block（它本身就是
+   * 頁面上的一層，不用分圖層），之後的筆都進同一個 block，直到離開模式或另起新塗鴉。
+   * `id` 是目前在畫的那個 block；null＝下一筆會新建。橡皮擦＝整筆擦（碰到就刪那一筆）。
+   */
+  doodle: { id: string | null; brush: BrushKind; color: string; width: number; eraser: boolean } | null = null;
+  /** 正在畫的那一筆（專案座標），鬆手才打包進 block。 */
+  private stroke: { pts: { x: number; y: number }[] } | null = null;
+  /** 一筆畫完／擦掉一筆（殼層記 undo、刷新面板）。 */
+  onDoodleStroke?: (b: Block) => void;
+  /** 進出塗鴉模式（殼層更新工具列／提示）。 */
+  onDoodleMode?: (on: boolean) => void;
   /** 參考線的顯示開關（只是看不看得到，不會刪掉）。 */
   guidesHidden = false;
   private dirty = true;
@@ -185,7 +198,7 @@ export class Editor {
       const hk = this.hitHandle(p);
       // 游標就是說明書：手把上顯示縮放/裁切/旋轉，物件上顯示可搬動
       const g = this.hitGuide(p);
-      canvas.style.cursor = this.contentId ? "grab"
+      canvas.style.cursor = this.doodle ? "crosshair" : this.contentId ? "grab"
         : g ? (g.axis === "x" ? "ew-resize" : "ns-resize")
         : hk ? (this.rKey ? "crosshair" : isEdge(hk) ? (hk === "left" || hk === "right" ? "ew-resize" : "ns-resize") : "nwse-resize")
         : this.hit(p) ? "move" : this.spaceHeld ? "grab" : "default";
@@ -196,6 +209,7 @@ export class Editor {
       if (e.code === "Space") this.spaceHeld = true;
       if (e.code === "KeyR" && !e.metaKey && !e.ctrlKey) { this.rKey = true; this.dirty = true; }
       if (e.key === "Escape" && this.contentId) this.exitContentMode();
+      if (e.key === "Escape" && this.doodle) this.endDoodle();
     });
     window.addEventListener("keyup", (e) => {
       if (e.code === "Space") this.spaceHeld = false;
@@ -690,6 +704,13 @@ export class Editor {
     if (!this.project) return;
     this.canvas.setPointerCapture(e.pointerId);
     const p = this.at(e);
+    // 塗鴉模式：筆優先於一切（空白鍵／中鍵仍可平移）
+    if (this.doodle && !this.spaceHeld && e.button === 0) {
+      if (this.doodle.eraser) { this.eraseAt(p); return; }
+      this.stroke = { pts: [p] };
+      this.dirty = true;
+      return;
+    }
     // 手把優先於命中——角落一定同時落在 block 上，先問手把才拉得動
     const hk = this.hitHandle(p);
     if (hk === "group") { this.beginGroupScale(); return; }
@@ -820,6 +841,14 @@ export class Editor {
   }
 
   private move = (e: PointerEvent): void => {
+    if (this.stroke) {
+      const p = this.at(e);
+      if (this.doodle?.eraser) { this.eraseAt(p); return; }
+      this.stroke.pts.push(p);
+      this.dirty = true;
+      return;
+    }
+    if (this.doodle?.eraser && e.buttons === 1) { this.eraseAt(this.at(e)); return; }
     if (this.guideDrag) {
       const p = this.project;
       if (p) {
@@ -953,6 +982,7 @@ export class Editor {
 
   private up = (e: PointerEvent): void => {
     if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId);
+    if (this.stroke) { this.finishStroke(); return; }
     // 參考線拖到頁面外＝丟掉（Photoshop 的語意，不用再開面板刪）
     if (this.guideDrag && this.project) {
       const p = this.project;
@@ -979,6 +1009,119 @@ export class Editor {
     if (dragged) this.onCommit?.();
   };
 
+  // ── 塗鴉 ──────────────────────────────────────────────────────────────
+
+  /** 進塗鴉模式。給 target＝接著畫進那個既有塗鴉；不給＝下一筆新建。 */
+  beginDoodle(target?: Block): void {
+    this.endEdit(true);
+    this.exitContentMode();
+    const cw = this.project?.canvasWidth ?? 1080;
+    const prev = this.doodle;
+    this.doodle = {
+      id: target?.content.type === "doodle" ? target.id : null,
+      brush: prev?.brush ?? "pen", color: prev?.color ?? "1A1A1A",
+      width: prev?.width ?? Math.round(cw * 0.012), eraser: false,
+    };
+    if (target) this.select(target.id);
+    this.dirty = true;
+    this.onDoodleMode?.(true);
+  }
+
+  endDoodle(): void {
+    if (!this.doodle) return;
+    this.stroke = null;
+    this.doodle = null;
+    this.canvas.style.cursor = "default";
+    this.dirty = true;
+    this.onDoodleMode?.(false);
+  }
+
+  /** 另起一張新塗鴉（同模式，下一筆不再進舊的 block）。 */
+  newDoodleLayer(): void {
+    if (this.doodle) { this.doodle.id = null; this.select(null); }
+  }
+
+  private finishStroke(): void {
+    const s = this.stroke, m = this.doodle, proj = this.project;
+    this.stroke = null;
+    if (!s || !m || !proj) return;
+    // 螢幕上 1.5px 以內的點丟掉——滑鼠手抖會產生一堆密點
+    const pts = thinPoints(streamlinePts(s.pts), 1.5 / this.view.scale);
+    // 滑鼠沒有筆壓：用速度模擬（快＝細、慢＝粗、頭尾收細）
+    const press = speedPress(pts, m.width);
+    let b = m.id ? proj.blocks.find((k) => k.id === m.id) : undefined;
+    const existing = b && b.content.type === "doodle"
+      ? unpackStrokes(b.content.doodle, b.frame) : [];
+    const all = [...existing, { pts, w: m.width, color: m.color, brush: m.brush, press }];
+    const packed = packStrokes(all, m.width * 1.6);
+    if (b && b.content.type === "doodle") {
+      b.frame = packed.frame;
+      b.content.doodle.strokes = packed.strokes;
+    } else {
+      const zs = proj.blocks.map((k) => k.zIndex);
+      b = {
+        id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`,
+        frame: packed.frame, rotation: 0, zIndex: (zs.length ? Math.max(...zs) : 0) + 1,
+        locked: false, opacity: 1,
+        content: { type: "doodle", doodle: { strokes: packed.strokes } },
+      };
+      proj.blocks.push(b);
+      m.id = b.id;
+    }
+    this.select(b.id);
+    this.dirty = true;
+    this.onDoodleStroke?.(b);
+  }
+
+  /** 橡皮擦：碰到哪一筆就刪那一筆（只擦目前這張塗鴉；沒指定＝擦最上層碰到的塗鴉）。 */
+  private eraseAt(p: { x: number; y: number }): void {
+    const proj = this.project, m = this.doodle;
+    if (!proj || !m) return;
+    const tol = 6 / this.view.scale;
+    const cands = m.id ? proj.blocks.filter((k) => k.id === m.id)
+      : [...proj.blocks].filter((k) => k.content.type === "doodle").sort((a, b) => b.zIndex - a.zIndex);
+    for (const b of cands) {
+      if (b.content.type !== "doodle") continue;
+      const i = strokeHit(b.content.doodle, b.frame, p, tol);
+      if (i < 0) continue;
+      const rest = unpackStrokes(b.content.doodle, b.frame);
+      rest.splice(i, 1);
+      if (!rest.length) {
+        proj.blocks = proj.blocks.filter((k) => k.id !== b.id);
+        if (m.id === b.id) m.id = null;
+        this.select(null);
+      } else {
+        const packed = packStrokes(rest, Math.max(...rest.map((r) => r.w)) * 1.6);
+        b.frame = packed.frame;
+        b.content.doodle.strokes = packed.strokes;
+        this.select(b.id);
+      }
+      this.dirty = true;
+      this.onDoodleStroke?.(b);
+      return;
+    }
+  }
+
+  /** 正在畫的那一筆：直接用成品渲染器畫（打包成暫時的塗鴉），看到的就是落筆後的樣子。 */
+  private paintLiveStroke(ctx: CanvasRenderingContext2D): void {
+    const s = this.stroke, m = this.doodle;
+    if (!s || !m || s.pts.length === 0) return;
+    const live = streamlinePts(s.pts);
+    const packed = packStrokes([{ pts: live, w: m.width, color: m.color, brush: m.brush,
+      press: speedPress(live, m.width) }], m.width * 1.6);
+    ctx.save();
+    ctx.translate(packed.frame.x, packed.frame.y);
+    drawDoodle(ctx, { strokes: packed.strokes }, packed.frame.w, packed.frame.h);
+    ctx.restore();
+  }
+
+  /** 目前塗鴉模式對到的 block（面板用）。 */
+  doodleBlock(): (Block & { content: { type: "doodle"; doodle: DoodleBlock } }) | null {
+    const id = this.doodle?.id;
+    const b = id ? this.project?.blocks.find((k) => k.id === id) : undefined;
+    return b && b.content.type === "doodle" ? (b as Block & { content: { type: "doodle"; doodle: DoodleBlock } }) : null;
+  }
+
   // ── 行內文字編輯 ────────────────────────────────────────────────────
   // 桌面的正路：雙擊文字、直接在畫布上打字。做法＝疊一層 contenteditable，
   // 字型／字距／行高／縮放全部跟畫布同步，編輯期間畫布跳過該 block（skipBlockId）。
@@ -990,6 +1133,7 @@ export class Editor {
     const b = this.hit(pos);
     if (!b) return;
     if (b.content.type === "text" || b.content.type === "textFlow") { this.startEdit(b); return; }
+    if (b.content.type === "doodle") { this.beginDoodle(b); return; }
     if (b.content.type === "image" || b.content.type === "video") {
       // 空欄位框＝範本的填圖欄位，雙擊直接選檔（iOS 的「點欄位挑照片」對應到桌面）
       if (!b.content.media.assetFileName) { this.onFillSlot?.(b); return; }
@@ -1391,7 +1535,8 @@ export class Editor {
     const gap = proj.animStagger ?? ANIM_STAGGER;
     list.forEach((b, i) => {
       const isText = b.content.type === "text" || b.content.type === "textFlow";
-      const kind = b.anim?.kind ?? (isText ? "typewriter" : "fade");
+      const isDoodle = b.content.type === "doodle";
+      const kind = b.anim?.kind ?? (isText ? "typewriter" : isDoodle ? "draw" : "fade");
       const txt = isText ? (b.content as { text: { text: string } }).text.text : "";
       b.anim = {
         ...b.anim,
@@ -1401,7 +1546,8 @@ export class Editor {
         // 這裡與面板選效果時走同一個 defaultDur，兩條路不能給出不同的節奏。
         // 一鍵就要給出一致的節奏，所以秒數**重算**不沿用——
         // 沿用的話，之前手調或試出來的怪值會殘留，整頁快慢不一
-        dur: defaultDur(kind, txt),
+        dur: kind === "draw" && b.content.type === "doodle"
+          ? doodleGrowDur(b.content.doodle, b.frame.w, b.frame.h) : defaultDur(kind, txt),
         // **第一個一定是 0**：整頁時間軸從 0 起算，第一個元件照樣要從無到有跑一遍
         delay: i === 0 ? 0 : Math.round(i * gap * 100) / 100,
       };
@@ -1475,7 +1621,8 @@ export class Editor {
     if (this.animPlay && (this.animPlay.anims.size
         || this.project?.blocks.some((b) =>
           (b.content.type === "image" && b.content.media.carouselAssets?.length)
-          || (b.content.type === "model" && b.content.model.mode)))) {
+          || (b.content.type === "model" && b.content.model.mode)
+          || (b.content.type === "doodle" && (b.content.doodle.play || b.content.doodle.wobble))))) {
       this.dirty = true;
     }
     if (!this.dirty || !this.project) return;
@@ -1548,6 +1695,7 @@ export class Editor {
       guides: this.guides,
       badges: this.badges,
     });
+    this.paintLiveStroke(ctx);
     const ms = performance.now() - ft0;
     this.frameStats.ms = this.frameStats.ms * 0.8 + ms * 0.2;
     this.frameStats.paints++;

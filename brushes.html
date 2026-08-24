@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><title>ALIGNED 塗鴉筆刷總覽</title>
+<style>
+  body{margin:0;background:#efece6;font:14px/1.5 -apple-system,"PingFang TC",sans-serif;color:#222}
+  h1{font-weight:500;font-size:18px;letter-spacing:.2em;margin:28px 32px 8px}
+  p.note{margin:0 32px 20px;color:#777;font-size:12px;letter-spacing:.08em}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:18px;padding:0 32px 40px}
+  .card{background:#f7f4ee;border-radius:12px;padding:12px 14px 8px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  .card h2{margin:0 0 6px;font-size:13px;font-weight:500;letter-spacing:.15em;display:flex;justify-content:space-between}
+  .card h2 span{color:#999;font-weight:400;letter-spacing:.05em;font-family:ui-monospace,monospace;font-size:11px}
+  canvas{display:block;width:100%;height:auto}
+</style></head>
+<body>
+<h1>塗鴉筆刷總覽</h1>
+<p class="note">每張＝同一條手寫筆畫（黑）＋曲線（紅）＋圓圈（藍）＋一個點，筆寬 14／專案寬 1080；用 App 本人的渲染器畫，看到什麼就是什麼。</p>
+<div class="grid" id="grid"></div>
+<script type="module" src="/src/brushes.ts"></script>
+</body></html>

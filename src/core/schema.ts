@@ -17,6 +17,8 @@ export type VAlign = "top" | "middle" | "bottom";
 export type ShapeKind = "rectangle" | "ellipse" | "line";
 
 import type { BlockAnim } from "./anim";
+import type { DoodleBlock } from "./doodle";
+export type { DoodleBlock, DoodleStroke, BrushKind, DoodleWobble } from "./doodle";
 
 export interface TextBlock {
   text: string;            // AttributedString 已攤平成純文字
@@ -96,7 +98,9 @@ export type BlockContent =
   | { type: "image"; media: MediaBlock }
   | { type: "video"; media: MediaBlock }
   | { type: "shape"; shape: ShapeBlock }
-  | { type: "model"; model: ModelBlock };
+  | { type: "model"; model: ModelBlock }
+  /** 塗鴉（2026-08-23）。定義在 doodle.ts。⚠️ 同 model：新型別＝舊版 iPad 拒讀，iOS 要同步加 case。 */
+  | { type: "doodle"; doodle: DoodleBlock };
 
 export interface Block {
   id: string;
@@ -192,6 +196,7 @@ function content(o: Record<string, unknown>): BlockContent {
     case "video":    return { type: "video", media: media(p) };
     case "shape":    return { type: "shape", shape: p as unknown as ShapeBlock };
     case "model":    return { type: "model", model: p as unknown as ModelBlock };
+    case "doodle":   return { type: "doodle", doodle: p as unknown as DoodleBlock };
     default: throw new Error(__f("未知的 block 型別: {type}", { type }));
   }
 }
@@ -290,6 +295,9 @@ function encodeBlock(b: Block): unknown {
       break;
     case "model":
       c = { model: { _0: { ...content.model } } };
+      break;
+    case "doodle":
+      c = { doodle: { _0: { ...content.doodle } } };
       break;
   }
   return { ...bb, frame: encRect(frame), content: c };

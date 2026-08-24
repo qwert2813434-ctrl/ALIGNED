@@ -1,4 +1,5 @@
 import { __, __f } from "./i18n";
+import { BRUSHES, BRUSH_ORDER, DOODLE_TAIL, DOODLE_TRAVEL_DUR, DOODLE_WOBBLE_AMP, doodleGrowDur, type BrushKind, type DoodleBlock, type DoodleWobble } from "./core/doodle";
 import { additiveClick } from "./platform";
 // 屬性檢視器——獨立元件（企劃約束：畫布／頁面膠捲／屬性檢視器三塊必須可分離，
 // 摺疊機與手機版面靠這個）。
@@ -37,6 +38,7 @@ const LAYER_ICON: Record<Block["content"]["type"], string> = {
   video: svg('<rect x="2.8" y="4" width="12.4" height="10" rx="1.6"/><path d="M7.6 6.9l4 2.1-4 2.1z"/>'),
   model: svg('<path d="M9 2.6l5.6 3.2v6.4L9 15.4 3.4 12.2V5.8z"/><path d="M3.4 5.8L9 9l5.6-3.2"/><path d="M9 9v6.4"/>'),
   shape: svg('<rect x="3.2" y="3.2" width="8" height="8" rx="1.2"/><circle cx="11.4" cy="11.4" r="3.4"/>'),
+  doodle: svg('<path d="M3 13.5c2.2-5 3.6-7.4 5-7.4 1.6 0 .4 5.6 2 5.6 1.2 0 2.2-3.2 5-6.2"/>'),
 };
 const LOCK_ON = svg('<rect x="4" y="8" width="10" height="6.4" rx="1.4"/><path d="M6.4 8V6.2a2.6 2.6 0 015.2 0V8"/>');
 const LOCK_OFF = svg('<rect x="4" y="8" width="10" height="6.4" rx="1.4"/><path d="M6.4 8V6.2a2.6 2.6 0 015-1.1"/>');
@@ -68,6 +70,7 @@ function layerName(b: Block): string {
     return { rectangle: __("矩形"), ellipse: __("圓形"), line: __("線條") }[c.shape.kind] ?? __("形狀");
   }
   if (c.type === "model") return __("3D 物件");
+  if (c.type === "doodle") return __f("塗鴉（{n} 筆）", { n: c.doodle.strokes.length });
   return c.media.assetFileName ? (c.type === "video" ? __("影片") : __("圖片")) : __("空欄位");
 }
 
@@ -90,7 +93,15 @@ export interface InspectorHooks {
   addCarousel?: (block: Block) => void;
   /** 匯入字型檔（開選檔框→存 UserFonts→註冊）。回匯入結果，null＝取消或失敗。 */
   importFont?: () => Promise<{ label: string; value: string } | null>;
-  /** 多選時的整組操作。 */
+  /** 塗鴉模式（editor.doodle 的代理）。 */
+  doodle?: {
+    active: () => boolean;
+    pen: () => { brush: BrushKind; color: string; width: number; eraser: boolean } | null;
+    setPen: (p: { brush?: BrushKind; color?: string; width?: number; eraser?: boolean }) => void;
+    begin: (b?: Block) => void;
+    end: () => void;
+    newLayer: () => void;
+  };
   /** 改整份專案的畫布形狀（頁內位置與尺寸都不動）。 */
   changeRatio: (w: number, h: number) => void;
   guides: {
@@ -178,6 +189,8 @@ export class Inspector {
       this.el = host;
     }
     if (!project || !block) {
+      // 塗鴉模式還沒落第一筆：先給筆刷面板，讓他挑好再畫
+      if (project && this.hooks.doodle?.active()) { this.doodlePanel(null, null); return; }
       // 空狀態不放教學文字（2026-08-16 使用者：版面說明文字全拿掉；教學歸操作導覽）
       if (project) this.projectPanel(project);
       return;
@@ -188,6 +201,92 @@ export class Inspector {
       case "shape": this.shape(block.content.shape); break;
       case "image": case "video": this.media(block, block.content.media); break;
       case "model": this.model3d(block, block.content.model); break;
+      case "doodle": this.doodlePanel(block, block.content.doodle); break;
+    }
+  }
+
+  /**
+   * 塗鴉（2026-08-23 小高規格）：筆刷／顏色／筆寬＝**下一筆**的設定（同一張可以多色多筆刷），
+   * 「整張套用」才改既有筆畫。動作＝巡線（前面長、後面消失，循環）；筆刷感＝線本身在動
+   * （沸騰／飄／疊線）。生長出場在「出場方式」裡選「生長」。橡皮擦＝整筆擦。
+   */
+  private doodlePanel(b: Block | null, d: DoodleBlock | null): void {
+    const dk = this.hooks.doodle;
+    const s = this.section(__("塗鴉"));
+    const active = !!dk?.active();
+    const pen = dk?.pen() ?? { brush: "pen" as BrushKind, color: "1A1A1A", width: 12, eraser: false };
+
+    // 模式列：繼續畫／完成、橡皮擦、另起新塗鴉
+    const modeRow = this.row(s, __("模式"));
+    const seg = document.createElement("div"); seg.className = "seg";
+    if (!active) {
+      seg.append(this.btn(b ? __("繼續畫") : __("開始畫"), () => { dk?.begin(b ?? undefined); this.rebuild(); }));
+    } else {
+      const er = this.btn(__("橡皮擦"), () => { dk?.setPen({ eraser: !pen.eraser }); this.rebuild(); });
+      if (pen.eraser) er.classList.add("on");
+      seg.append(er);
+      seg.append(this.btn(__("另起新塗鴉"), () => { dk?.newLayer(); this.rebuild(); }));
+      seg.append(this.btn(__("完成"), () => { dk?.end(); this.rebuild(); }));
+    }
+    modeRow.append(seg);
+
+    this.row(s, __("筆刷")).append(this.select(
+      BRUSH_ORDER.map((k) => [k, __(BRUSHES[k].name)] as [string, string]),
+      pen.brush, (v) => dk?.setPen({ brush: v as BrushKind, eraser: false }),
+    ));
+    this.row(s, __("顏色")).append(this.color(pen.color, (v) => dk?.setPen({ color: v, eraser: false })));
+    this.row(s, __("筆寬")).append(this.num(pen.width, { min: 1, max: 200, step: 1 }, (v) => dk?.setPen({ width: v, eraser: false })));
+    if (b && d && d.strokes.length) {
+      const short = Math.min(b.frame.w, b.frame.h);
+      this.row(s, "").append(this.btn(__("整張套用目前筆刷"), () => {
+        for (const st of d.strokes) { st.brush = pen.brush; st.color = pen.color; st.w = pen.width / short; }
+        this.emit();
+      }));
+    }
+    if (!b || !d) return;
+
+    const play = (): void => this.hooks.playAnim?.();
+    // 動作：生長＝出場「生長」的捷徑（同一個欄位），移動＝巡線
+    const motion = b.anim?.kind === "draw" ? "grow" : d.play ?? "";
+    this.row(s, __("動作")).append(this.select(
+      [["", __("靜止")], ["grow", __("生長")], ["travel", __("移動")]],
+      motion, (v) => {
+        if (v === "grow") {
+          d.play = undefined;
+          b.anim = { ...(b.anim ?? {}), kind: "draw", dur: doodleGrowDur(d, b.frame.w, b.frame.h) };
+        } else {
+          if (b.anim?.kind === "draw") b.anim = undefined;
+          d.play = (v || undefined) as DoodleBlock["play"];
+        }
+        this.rebuild(); this.emit(); play();
+      },
+    ));
+    if (motion === "grow" && b.anim) {
+      this.row(s, __("秒數")).append(
+        this.num(b.anim.dur ?? ANIM_DUR, { min: 0.2, max: ANIM_DUR_MAX, step: 0.1 },
+                 (v) => { b.anim = { ...b.anim!, dur: v }; this.emit(); play(); }),
+      );
+    }
+    if (motion) {
+      // 順序＝一筆接一筆（照畫的順序）；同時＝每一筆各自同時動
+      this.row(s, __("筆畫")).append(this.select(
+        [["", __("照順序")], ["sync", __("同時")]], d.sync ? "sync" : "",
+        (v) => { d.sync = v ? true : undefined; this.emit(); play(); },
+      ));
+    }
+    if (d.play === "travel") {
+      this.row(s, __("一圈秒數")).append(this.num(d.travelDur ?? DOODLE_TRAVEL_DUR, { min: 0.3, max: 30, step: 0.1 },
+        (v) => { d.travelDur = v; this.emit(); play(); }));
+      this.row(s, __("尾巴長度")).append(this.num(Math.round((d.tail ?? DOODLE_TAIL) * 100), { min: 5, max: 100, step: 5 },
+        (v) => { d.tail = v / 100; this.emit(); play(); }));
+    }
+    this.row(s, __("筆刷感")).append(this.select(
+      [["", __("無")], ["boil", __("沸騰")], ["sketch", __("疊線")]],
+      d.wobble ?? "", (v) => { d.wobble = (v || undefined) as DoodleWobble; this.rebuild(); this.emit(); play(); },
+    ));
+    if (d.wobble) {
+      this.row(s, __("幅度")).append(this.num(Math.round((d.wobbleAmp ?? DOODLE_WOBBLE_AMP) * 1000), { min: 1, max: 60, step: 1 },
+        (v) => { d.wobbleAmp = v / 1000; this.emit(); play(); }));
     }
   }
 
@@ -787,10 +886,12 @@ export class Inspector {
    */
   private animRow(s: HTMLElement, b: Block): void {
     const isText = b.content.type === "text" || b.content.type === "textFlow";
+    const isDoodle = b.content.type === "doodle";
     const kinds: [string, string][] = isText
       ? [["", __("無")], ["typewriter", __("打字")], ["textPhrase", __("逐句")],
          ["textSlide", __("位移")], ["textFlicker", __("隨機閃現")]]
-      : [["", __("無")], ["slide", __("位移")], ["fade", __("淡入")],
+      : [["", __("無")], ...(isDoodle ? [["draw", __("生長")] as [string, string]] : []),
+         ["slide", __("位移")], ["fade", __("淡入")],
          ["scale", __("縮放")], ["maskWipe", __("遮罩")]];
     const play = (): void => this.hooks.playAnim?.(b);
 
@@ -807,7 +908,9 @@ export class Inspector {
       // **換效果就重算秒數**——沿用前一個效果的值會出事：長文選過「打字」算出 30 秒，
       // 再換「位移」就變成慢動作 30 秒。手調過的值在換效果時一併重置，這是可預期的。
       const txt = b.content.type === "text" || b.content.type === "textFlow" ? b.content.text.text : "";
-      b.anim = { ...(b.anim ?? {}), kind, dur: defaultDur(kind, txt) };
+      const dur = kind === "draw" && b.content.type === "doodle"
+        ? doodleGrowDur(b.content.doodle, b.frame.w, b.frame.h) : defaultDur(kind, txt);
+      b.anim = { ...(b.anim ?? {}), kind, dur };
       this.rebuild();
       this.emit();
       play();                      // 選了就立刻在畫布上播一次——不用匯出才知道長怎樣

@@ -2196,6 +2196,58 @@ async function run(): Promise<void> {
     check("版本比較：2.0 > 1.9.9（段數不齊補零）", isNewer("2.0", "1.9.9"));
   }
 
+  // ── 塗鴉（2026-08-23）：真指標事件畫兩筆→一個 block、框包住筆畫；橡皮擦整筆擦；Esc 離開 ──
+  {
+    const p = project([]);
+    editor.load(p);
+    editor.snapStrength = "none";
+    const strokes: string[] = [];
+    editor.onDoodleStroke = (b) => strokes.push(b.id);
+    editor.beginDoodle();
+    check("塗鴉：進模式", !!editor.doodle);
+    const draw = (pts: [number, number][]) => {
+      pointer("pointerdown", pts[0][0], pts[0][1]);
+      for (const [x, y] of pts.slice(1)) pointer("pointermove", x, y);
+      pointer("pointerup", pts[pts.length - 1][0], pts[pts.length - 1][1]);
+    };
+    draw([[200, 200], [300, 260], [400, 200], [500, 300]]);
+    const d1 = p.blocks.find((b) => b.content.type === "doodle");
+    check("塗鴉：第一筆落下自動生成 block", !!d1 && strokes.length === 1, `blocks=${p.blocks.length}`);
+    draw([[220, 600], [600, 620]]);
+    const d2 = p.blocks.filter((b) => b.content.type === "doodle");
+    const dd = d2[0]?.content.type === "doodle" ? d2[0].content.doodle : null;
+    check("塗鴉：第二筆進同一個 block（不另開）", d2.length === 1 && dd?.strokes.length === 2,
+          `blocks=${d2.length} strokes=${dd?.strokes.length}`);
+    const f = d2[0].frame;
+    check("塗鴉：框包住兩筆（含留白）", f.x < 200 && f.y < 200 && f.x + f.w > 600 && f.y + f.h > 620,
+          `frame=${Math.round(f.x)},${Math.round(f.y)} ${Math.round(f.w)}×${Math.round(f.h)}`);
+    // 點座標正規化後還原要回到原位（±1）
+    const sx = f.x + dd!.strokes[1].pts[0] * f.w, sy = f.y + dd!.strokes[1].pts[1] * f.h;
+    check("塗鴉：正規化座標可還原", near(sx, 220, 1) && near(sy, 600, 1), `${sx.toFixed(1)},${sy.toFixed(1)}`);
+    // round-trip 存檔
+    const rt = decodeProject(JSON.parse(JSON.stringify(encodeProject(p))));
+    const rb = rt.blocks[0];
+    check("塗鴉：存檔 round-trip 保留筆畫", rb.content.type === "doodle" && rb.content.doodle.strokes.length === 2);
+    // 橡皮擦：碰第二筆（直線中段）
+    editor.doodle!.eraser = true;
+    pointer("pointerdown", 400, 610); pointer("pointerup", 400, 610);
+    check("塗鴉：橡皮擦整筆擦掉", dd!.strokes.length === 1 && strokes.length === 3, `strokes=${dd!.strokes.length}`);
+    // 擦到最後一筆＝block 消失（點起筆處——streamline 平滑會挪動中段的點，起點是錨定的）
+    pointer("pointerdown", 200, 200); pointer("pointerup", 200, 200);
+    check("塗鴉：擦光＝block 移除", p.blocks.length === 0, `blocks=${p.blocks.length}`);
+    editor.doodle!.eraser = false;
+    draw([[100, 100], [150, 150]]);
+    editor.newDoodleLayer();
+    draw([[800, 100], [850, 150]]);
+    check("塗鴉：另起新塗鴉＝第二個 block", p.blocks.filter((b) => b.content.type === "doodle").length === 2);
+    editor.endDoodle();
+    check("塗鴉：離開模式", !editor.doodle);
+    // 離開後點擊＝回到正常選取
+    pointer("pointerdown", 125, 125); pointer("pointerup", 125, 125);
+    check("塗鴉：離開後點塗鴉＝選取（不畫）", editor.getSelected()?.content.type === "doodle" && p.blocks.length === 2);
+    editor.onDoodleStroke = undefined;
+  }
+
   const pass = results.filter((r) => r.ok).length;
   const out = document.querySelector<HTMLDivElement>("#out")!;
   out.innerHTML = results.map((r) =>

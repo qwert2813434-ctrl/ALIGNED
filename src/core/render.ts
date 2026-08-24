@@ -17,6 +17,7 @@ import type { GuideLine, SpacingBadge } from "./align";
 import type { FilterAssets } from "./filters";
 import { applyPaper } from "./paper";
 import { animStateAt, carouselAt, maskWipeState, revealText, type BlockAnim } from "./anim";
+import { drawDoodle } from "./doodle";
 import { freeIntervals, wrapHoles } from "./textwrap";
 
 /** 直排的預設欄距（em）。iOS：baseline 1.5em 減掉 defaultVerticalLineSpacing 0.28em。 */
@@ -166,10 +167,10 @@ export function renderPage(
 
   // 多圖輪播：時間決定畫哪一張；遮罩模式在切換窗內畫兩張（舊的全幅＋新的從左揭示）。
   // 包在 drawBlock 外面——出場動畫的變換已套在 ctx 上，輪播就在同一個座標系裡發生。
-  const drawTimed = (blk: Block): void => {
+  const drawTimed = (blk: Block, reveal?: number): void => {
     if (blk.content.type !== "image" || !blk.content.media.carouselAssets?.length
         || opts.time === undefined) {
-      drawBlock(ctx, project, blk, page, opts, pageLight);
+      drawBlock(ctx, project, blk, page, opts, pageLight, reveal);
       return;
     }
     const m = blk.content.media;
@@ -214,9 +215,10 @@ export function renderPage(
       let bb = b;
       if (st.reveal !== undefined && b.content.type === "text") {
         bb = { ...b, content: { ...b.content,
-          text: { ...b.content.text, text: revealText(b.content.text.text, st.reveal, st.revealMode) } } };
+          text: { ...b.content.text, text: revealText(b.content.text.text, st.reveal, st.revealMode === "draw" ? "char" : st.revealMode) } } };
       }
-      drawTimed(bb);
+      // 塗鴉生長＝reveal 交給 drawDoodle 沿路徑裁（不換內容）
+      drawTimed(bb, st.revealMode === "draw" ? st.reveal : undefined);
       ctx.restore();
     } else {
       drawTimed(b);
@@ -376,6 +378,8 @@ function drawBlock(
   page: Rect,
   opts: RenderOptions,
   pageLight = true,
+  /** 塗鴉生長出場的比例（只有 doodle 用）。 */
+  reveal?: number,
 ): void {
   const { frame: f } = b;
   // 平移到頁內座標，並把原點移到 block 中心（旋轉繞中心）
@@ -407,6 +411,10 @@ function drawBlock(
     case "image":
     case "video":
       drawMedia(ctx, b.content.media, f.w, f.h, opts, pageLight);
+      break;
+    case "doodle":
+      // 塗鴉：時間給巡線／筆刷感動態，reveal 給生長；都沒有＝靜態全畫
+      drawDoodle(ctx, b.content.doodle, f.w, f.h, opts.time, reveal);
       break;
     case "model": {
       // 3D 物件：向 modelpool 要「時間 time 的那一格」——渲染核心只認得 CanvasImageSource
