@@ -484,6 +484,7 @@ export const en: Record<string, string> = {
   "鉛筆": "Pencil",
   "筆寬": "Width",
   "整張套用目前筆刷": "Apply brush to all strokes",
+  "套用全部": "Apply to all",
   "動作": "Motion",
   "移動（前長後消）": "Travel (grow ahead, fade behind)",
   "一圈秒數": "Seconds per loop",

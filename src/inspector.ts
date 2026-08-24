@@ -258,19 +258,49 @@ export class Inspector {
     }
     modeRow.append(seg);
 
-    this.row(s, __("筆刷")).append(this.select(
+    // 套用邏輯（2026-08-25 小高回饋重定）：
+    // ・選取既有塗鴉（非作畫中）＝改了**立即全套用**——跟文字面板「選了就改」同直覺。
+    // ・作畫中＝設定只管下一筆（多色多筆刷規格），每個參數列尾各給一顆「套用全部」，
+    //   顏色/粗細/筆刷可以分開套，不再整包綁死。
+    const short = b ? Math.min(b.frame.w, b.frame.h) : 1;
+    const live = !active && !!b && !!d && d.strokes.length > 0;
+    const applyEach = (fn: (st: DoodleBlock["strokes"][number]) => void): void => {
+      if (!d) return;
+      for (const st of d.strokes) fn(st);
+      this.emit();
+    };
+    // 「套用全部」點下去才現抓目前的筆（setPen 不重畫面板，抓建面板時的 pen 會是舊值）
+    const applyBtn = (fn: (p: NonNullable<ReturnType<NonNullable<typeof dk>["pen"]>>) => void): HTMLButtonElement | null =>
+      active && d && d.strokes.length
+        ? this.btn(__("套用全部"), () => { const p = dk?.pen(); if (p) fn(p); })
+        : null;
+
+    const brushRow = this.row(s, __("筆刷"));
+    brushRow.append(this.select(
       BRUSH_ORDER.map((k) => [k, __(BRUSHES[k].name)] as [string, string]),
-      pen.brush, (v) => dk?.setPen({ brush: v as BrushKind, eraser: false }),
+      pen.brush, (v) => {
+        dk?.setPen({ brush: v as BrushKind, eraser: false });
+        if (live) applyEach((st) => { st.brush = v as BrushKind; });
+      },
     ));
-    this.row(s, __("顏色")).append(this.color(pen.color, (v) => dk?.setPen({ color: v, eraser: false })));
-    this.row(s, __("筆寬")).append(this.num(pen.width, { min: 1, max: 200, step: 1 }, (v) => dk?.setPen({ width: v, eraser: false })));
-    if (b && d && d.strokes.length) {
-      const short = Math.min(b.frame.w, b.frame.h);
-      this.row(s, "").append(this.actBtn(ACT.applyAll, __("整張套用目前筆刷"), () => {
-        for (const st of d.strokes) { st.brush = pen.brush; st.color = pen.color; st.w = pen.width / short; }
-        this.emit();
-      }));
-    }
+    const brushApply = applyBtn((p) => applyEach((st) => { st.brush = p.brush; }));
+    if (brushApply) brushRow.append(brushApply);
+
+    const colorRow = this.row(s, __("顏色"));
+    colorRow.append(this.color(pen.color, (v) => {
+      dk?.setPen({ color: v, eraser: false });
+      if (live) applyEach((st) => { st.color = v; });
+    }));
+    const colorApply = applyBtn((p) => applyEach((st) => { st.color = p.color; }));
+    if (colorApply) colorRow.append(colorApply);
+
+    const widthRow = this.row(s, __("筆寬"));
+    widthRow.append(this.num(pen.width, { min: 1, max: 200, step: 1 }, (v) => {
+      dk?.setPen({ width: v, eraser: false });
+      if (live) applyEach((st) => { st.w = v / short; });
+    }));
+    const widthApply = applyBtn((p) => applyEach((st) => { st.w = p.width / short; }));
+    if (widthApply) widthRow.append(widthApply);
     if (!b || !d) return;
 
     const play = (): void => this.hooks.playAnim?.();
