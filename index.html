@@ -25,10 +25,15 @@
 
   header { display: flex; gap: 10px; align-items: center; flex: none;
            padding: 9px 16px; background: var(--chrome);
-           border-bottom: 1px solid var(--line); }
+           border-bottom: 1px solid var(--line);
+           /* 視窗不夠寬時工具列可以橫捲，別把右邊的工具裁到抓不到
+              （2026-08-25 小高回報；細捲軸只在溢出時出現） */
+           overflow-x: auto; scrollbar-width: thin; }
   #title { font-weight: 600; font-size: 14px; white-space: nowrap; }
   #meta, #info { font-size: 12px; color: var(--ink2);
                  font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* 狀態訊息先讓位（可截斷），工具島永遠優先佔位 */
+  #meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
   .spacer { margin-left: auto; }
 
   /* 膠囊島：白卡浮在米白上，icon 一律單色線性 */

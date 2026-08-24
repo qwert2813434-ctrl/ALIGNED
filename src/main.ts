@@ -2160,6 +2160,17 @@ window.addEventListener("keydown", (e) => {
   }
   const ae = document.activeElement as HTMLElement | null;
   if (ae && (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName) || ae.isContentEditable)) return;   // 正在輸入就別攔
+  // B＝進／出畫筆（2026-08-25 小高要的快捷鍵）。選著塗鴉按 B＝續畫那張；
+  // 再按 B 或 Esc 離開。裸鍵不帶修飾，正在輸入的情況上面已經擋掉。
+  if (e.key.toLowerCase() === "b" && !e.metaKey && !e.ctrlKey && !e.altKey && current) {
+    e.preventDefault();
+    if (editor.doodle) { editor.endDoodle(); } else {
+      const selB = editor.getSelected();
+      editor.beginDoodle(selB?.content.type === "doodle" ? selB : undefined);
+    }
+    inspector.show(current, editor.getSelected());
+    return;
+  }
   // ⌥1–9＝套用參考線記憶欄、⇧⌥1–9＝存入目前參考線。
   // 看 e.code 不看 e.key——Mac 上 ⌥ 會把數字鍵變成特殊字元（⌥1＝¡）
   if (e.altKey && !e.metaKey && !e.ctrlKey && /^Digit[1-9]$/.test(e.code)) {
