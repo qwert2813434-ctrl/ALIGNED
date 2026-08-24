@@ -43,6 +43,27 @@ const LAYER_ICON: Record<Block["content"]["type"], string> = {
 const LOCK_ON = svg('<rect x="4" y="8" width="10" height="6.4" rx="1.4"/><path d="M6.4 8V6.2a2.6 2.6 0 015.2 0V8"/>');
 const LOCK_OFF = svg('<rect x="4" y="8" width="10" height="6.4" rx="1.4"/><path d="M6.4 8V6.2a2.6 2.6 0 015-1.1"/>');
 
+/** 動作鈕 icon（2026-08-25 蘋果式定案）：icon＋文字、icon 當輔助不取代字；
+ *  名詞參數列不加 icon；同一顆 icon 全 App 只代表一件事（垃圾桶＝刪、勾＝完成…）。
+ *  樣本間＝01 - 研究/樣本間/介面/檢視器icon化.html（含四語寬度壓力測試）。 */
+const ACT = {
+  eraser: svg('<path d="M7.3 15 3.2 10.9a1.35 1.35 0 0 1 0-1.9L9.7 2.5a1.35 1.35 0 0 1 1.9 0l3.9 3.9a1.35 1.35 0 0 1 0 1.9L8.6 15H7.3Z"/><path d="M5.6 8.5l5 5"/>'),
+  done: svg('<path d="M3.2 9.6 7 13.6 14.8 5"/>'),
+  // 新塗鴉＝塗鴉線＋實心徽章加號（第二輪 D 定案：實心塊在 13px 的對比最強）
+  newDoodle: svg('<path d="M2.6 12.2c2-4 3.2-6 4.4-6 1.4 0 .6 4.4 2 4.4.9 0 1.7-2 3.4-4.2"/><circle cx="13" cy="12.6" r="4" fill="currentColor" stroke="none"/><path d="M13 10.6v4 M11 12.6h4" stroke="var(--card)" stroke-width="1.5"/>'),
+  pen: svg('<path d="M10.6 3.6l3.8 3.8-7.6 7.6-4.6 1 1-4.6z"/><path d="M9.2 5l3.8 3.8"/>'),
+  applyAll: svg('<rect x="2.8" y="2.8" width="12.4" height="12.4" rx="2"/><path d="M5.6 9.3 7.9 11.6 12.4 6.4"/>'),
+  trash: svg('<path d="M3.2 5h11.6 M7 5V3.8a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V5 M4.6 5l.8 9a1.1 1.1 0 0 0 1.1 1h5a1.1 1.1 0 0 0 1.1-1l.8-9"/>'),
+  eye: svg('<path d="M2.4 9s2.4-4.2 6.6-4.2S15.6 9 15.6 9s-2.4 4.2-6.6 4.2S2.4 9 2.4 9Z"/><circle cx="9" cy="9" r="1.9"/>'),
+  eyeOff: svg('<path d="M2.4 9s2.4-4.2 6.6-4.2S15.6 9 15.6 9s-2.4 4.2-6.6 4.2S2.4 9 2.4 9Z"/><path d="M3.6 14.4 14.4 3.6"/>'),
+  vline: svg('<path d="M9 2.6v12.8"/><path d="M4 5.5v7 M14 5.5v7" stroke-dasharray="1.6 2.2"/>'),
+  hline: svg('<path d="M2.6 9h12.8"/><path d="M5.5 4h7 M5.5 14h7" stroke-dasharray="1.6 2.2"/>'),
+  copy: svg('<rect x="2.8" y="2.8" width="9" height="9" rx="1.4"/><path d="M6.2 12.6v1a1.6 1.6 0 0 0 1.6 1.6h5.8a1.6 1.6 0 0 0 1.6-1.6V7.8a1.6 1.6 0 0 0-1.6-1.6h-1"/>'),
+  front: svg('<rect x="6.4" y="2.6" width="9" height="9" rx="1.4"/><rect x="2.6" y="6.4" width="9" height="9" rx="1.4" stroke-dasharray="2 2.4"/>'),
+  back: svg('<rect x="2.6" y="6.4" width="9" height="9" rx="1.4"/><rect x="6.4" y="2.6" width="9" height="9" rx="1.4" stroke-dasharray="2 2.4"/>'),
+  fit: svg('<path d="M3 4h12"/><path d="M3 14h12"/><path d="M9 6.4v5.2 M7 8.4 9 6.4l2 2 M7 9.6l2 2 2-2"/>'),
+};
+
 /** 對齊按鈕圖示（2026-08-14 icon 化）：頁面／群組對齊＝基準線＋方塊，
  *  文字對齊＝橫杠（行的形狀）。單色線性，titles 照樣講人話。 */
 const ALIGN_ICON: Record<GroupAlign, string> = {
@@ -178,11 +199,16 @@ export class Inspector {
   show(project: Project | null, block: Block | null): void {
     this.project = project;
     this.block = block;
+    // .pin 是自己的捲動容器（max-height 46vh）——重畫會整個換新，捲動位置要
+    // 自己帶過去，不然參考線的數字調一格、emit 觸發重畫，整欄就彈回頂端，
+    // 連續按上下鍵變成不可能（2026-08-25 小高回報）。
+    const pinTop = this.el.querySelector<HTMLDivElement>(".pin")?.scrollTop ?? 0;
     this.el.replaceChildren();
     if (project && this.panel !== "none") {
       const pin = document.createElement("div");
       pin.className = "pin";
       this.el.append(pin);
+      if (pinTop) requestAnimationFrame(() => { pin.scrollTop = pinTop; });
       const host = this.el;
       this.el = pin;
       if (this.panel === "guides") this.guidesPanel(project); else this.layersPanel(project);
@@ -216,17 +242,19 @@ export class Inspector {
     const active = !!dk?.active();
     const pen = dk?.pen() ?? { brush: "pen" as BrushKind, color: "1A1A1A", width: 12, eraser: false };
 
-    // 模式列：繼續畫／完成、橡皮擦、另起新塗鴉
-    const modeRow = this.row(s, __("模式"));
+    // 模式列：繼續畫／完成、橡皮擦、新塗鴉。蘋果式（2026-08-25）：不放「模式」
+    // 左標籤——按鈕自己會說話，省下的 52px 剛好讓三顆 icon＋文字收在一行。
+    const modeRow = document.createElement("div"); modeRow.className = "row";
+    s.append(modeRow);
     const seg = document.createElement("div"); seg.className = "seg";
     if (!active) {
-      seg.append(this.btn(b ? __("繼續畫") : __("開始畫"), () => { dk?.begin(b ?? undefined); this.rebuild(); }));
+      seg.append(this.actBtn(ACT.pen, b ? __("繼續畫") : __("開始畫"), () => { dk?.begin(b ?? undefined); this.rebuild(); }));
     } else {
-      const er = this.btn(__("橡皮擦"), () => { dk?.setPen({ eraser: !pen.eraser }); this.rebuild(); });
+      const er = this.actBtn(ACT.eraser, __("橡皮擦"), () => { dk?.setPen({ eraser: !pen.eraser }); this.rebuild(); });
       if (pen.eraser) er.classList.add("on");
       seg.append(er);
-      seg.append(this.btn(__("另起新塗鴉"), () => { dk?.newLayer(); this.rebuild(); }));
-      seg.append(this.btn(__("完成"), () => { dk?.end(); this.rebuild(); }));
+      seg.append(this.actBtn(ACT.newDoodle, __("新塗鴉"), () => { dk?.newLayer(); this.rebuild(); }));
+      seg.append(this.actBtn(ACT.done, __("完成"), () => { dk?.end(); this.rebuild(); }));
     }
     modeRow.append(seg);
 
@@ -238,7 +266,7 @@ export class Inspector {
     this.row(s, __("筆寬")).append(this.num(pen.width, { min: 1, max: 200, step: 1 }, (v) => dk?.setPen({ width: v, eraser: false })));
     if (b && d && d.strokes.length) {
       const short = Math.min(b.frame.w, b.frame.h);
-      this.row(s, "").append(this.btn(__("整張套用目前筆刷"), () => {
+      this.row(s, "").append(this.actBtn(ACT.applyAll, __("整張套用目前筆刷"), () => {
         for (const st of d.strokes) { st.brush = pen.brush; st.color = pen.color; st.w = pen.width / short; }
         this.emit();
       }));
@@ -359,9 +387,9 @@ export class Inspector {
     this.pageAlignRow(s, () => blocks);
 
     const acts = this.row(s, "");
-    acts.append(this.btn(__("複製一份"), () => this.hooks.group.duplicate()));
-    const danger = this.btn(__f("刪除 {n} 個（⌫）", { n: blocks.length }), () => this.hooks.group.remove());
-    danger.className = "danger";
+    acts.append(this.actBtn(ACT.copy, __("複製一份"), () => this.hooks.group.duplicate()));
+    const danger = this.actBtn(ACT.trash, __f("刪除 {n} 個（⌫）", { n: blocks.length }), () => this.hooks.group.remove());
+    danger.classList.add("danger");
     acts.append(danger);
 
     // ── 文字批次調整（2026-08-14）：選取裡的文字一起改 ──
@@ -439,7 +467,7 @@ export class Inspector {
         })));
 
       // 貼字寬（絕對對齊 2026-08-14）：把選取裡殘留的手動寬度一次收乾淨
-      const snugAll = this.btn(__("貼字寬（全部）"), () => {
+      const snugAll = this.actBtn(ACT.fit, __("貼字寬（全部）"), () => {
         const p = this.project;
         if (!p) return;
         let n = 0;
@@ -535,19 +563,21 @@ export class Inspector {
   private guidesPanel(p: Project): void {
     const gs = this.section(__("參考線"));
     const row = this.row(gs, __("狀態"));
-    const eye = this.btn(this.hooks.guides.hidden() ? __("已隱藏") : __("顯示中"),
-                         () => { this.hooks.guides.toggleHidden(); this.rebuild(); });
-    eye.classList.toggle("on", !this.hooks.guides.hidden());
-    const lock = this.btn(this.hooks.guides.locked() ? __("已鎖定") : __("可拖曳"),
-                          () => { this.hooks.guides.toggleLocked(); this.rebuild(); });
-    lock.classList.toggle("on", this.hooks.guides.locked());
+    const hidden = this.hooks.guides.hidden();
+    const eye = this.actBtn(hidden ? ACT.eyeOff : ACT.eye, hidden ? __("已隱藏") : __("顯示中"),
+                            () => { this.hooks.guides.toggleHidden(); this.rebuild(); });
+    eye.classList.toggle("on", !hidden);
+    const locked = this.hooks.guides.locked();
+    const lock = this.actBtn(locked ? LOCK_ON : LOCK_OFF, locked ? __("已鎖定") : __("可拖曳"),
+                             () => { this.hooks.guides.toggleLocked(); this.rebuild(); });
+    lock.classList.toggle("on", locked);
     row.append(eye, lock);
     this.row(gs, __("新增")).append(
-      this.btn(__("垂直線"), () => this.hooks.guides.add("x")),
-      this.btn(__("水平線"), () => this.hooks.guides.add("y")),
+      this.actBtn(ACT.vline, __("垂直線"), () => this.hooks.guides.add("x")),
+      this.actBtn(ACT.hline, __("水平線"), () => this.hooks.guides.add("y")),
     );
     if ((p.guidesX?.length ?? 0) + (p.guidesY?.length ?? 0) > 0) {
-      this.row(gs, __("清除")).append(this.btn(__("刪除全部參考線"), () => {
+      this.row(gs, __("清除")).append(this.actBtn(ACT.trash, __("刪除全部參考線"), () => {
         p.guidesX = [];
         p.guidesY = [];
         GEN_BATCH.delete(p.id);
@@ -593,7 +623,8 @@ export class Inspector {
             if (axis === "x") (p.guidesX ??= [])[i] = nv; else (p.guidesY ??= [])[i] = nv;
             this.emit();
           }),
-          this.btn(__("刪除"), () => this.hooks.guides.remove(axis, i)),
+          // 列表列的刪除＝垃圾桶單獨站（規則裡唯一 icon 不帶字的例外）
+          this.iconBtn(ACT.trash, __("刪除"), () => this.hooks.guides.remove(axis, i)),
         );
       });
     }
@@ -871,11 +902,11 @@ export class Inspector {
     this.animRow(s, b);
     const layer = this.row(s, __("圖層"));
     layer.append(
-      this.btn(__("移到最前"), () => this.hooks.reorder(b, "front")),
-      this.btn(__("移到最後"), () => this.hooks.reorder(b, "back")),
+      this.actBtn(ACT.front, __("移到最前"), () => this.hooks.reorder(b, "front")),
+      this.actBtn(ACT.back, __("移到最後"), () => this.hooks.reorder(b, "back")),
     );
-    const danger = this.btn(__("刪除元件"), () => this.hooks.remove(b));
-    danger.className = "danger";
+    const danger = this.actBtn(ACT.trash, __("刪除元件"), () => this.hooks.remove(b));
+    danger.classList.add("danger");
     this.row(s, "").append(danger);
   }
 
@@ -1024,7 +1055,7 @@ export class Inspector {
     // 貼字寬（絕對對齊 2026-08-14）：ClaudeForge 或舊檔會殘留過寬的手動寬度，
     // 框的「空氣」全從這來——吸附咬的是框，框鬆了什麼都對不準。一鍵收乾淨。
     if (!t.vertical && t.manualWidth != null) {
-      const sb = this.btn(__("貼字寬"), () => {
+      const sb = this.actBtn(ACT.fit, __("貼字寬"), () => {
         const p = this.project, b = this.block;
         if (p && b && snugTextWidth(measureCtx(), b, p.canvasWidth, p.pageHeight)) {
           this.rebuild();
@@ -1382,6 +1413,7 @@ export class Inspector {
       sel.append(g);
     };
     group(__("介面字體"), FONT_CHOICES);
+    group(__("字體商店"), fontCatalog.store);
     group(__("自訂"), fontCatalog.custom);
     group(__("系統字體"), fontCatalog.system);
     if (!o.mixed && cur && ![...sel.options].some((x) => x.value === cur)) {
@@ -1442,6 +1474,14 @@ export class Inspector {
     b.type = "button";
     b.textContent = label;
     b.addEventListener("click", fn);
+    return b;
+  }
+
+  /** icon＋文字動作鈕（蘋果式）：icon 在前當輔助、文字保底；縮字不砍字。 */
+  private actBtn(icon: string, label: string, fn: () => void): HTMLButtonElement {
+    const b = this.btn(label, fn);
+    b.insertAdjacentHTML("afterbegin", icon);
+    b.classList.add("act");
     return b;
   }
 
