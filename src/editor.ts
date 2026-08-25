@@ -7,15 +7,15 @@
 // `offsetX/offsetY` 取自**真事件**是唯一兩種語意下都乾淨、也不受捲動影響的量。
 // rect 只配拿來量尺寸。
 
-import { additiveClick } from "./platform";
+import { additiveClick, uiDark } from "./platform";
 import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema";
 import { hex, resolvedFontSize, resolvedKerning } from "./core/schema";
 import { aspectFillCrop, intersects, pageIndexForX, pageRect, stageBounds } from "./core/geometry";
 import { cssFont } from "./core/fonts";
 import { autoFitText, columnHeight, naturalSize, naturalTextSize, renderStage, textPrintLines } from "./core/render";
-import { ANIM_HOLD, ANIM_STAGGER, defaultDur, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
+import { ANIM_STAGGER, defaultDur, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import type { FilterAssets } from "./core/filters";
-import { drawDoodle, doodleGrowDur, speedPress, streamlinePts, packStrokes, strokeHit, thinPoints, unpackStrokes, type BrushKind, type DoodleBlock } from "./core/doodle";
+import { drawDoodle, doodleGrowDur, speedPress, streamlinePts, packStrokes, strokeHit, thinPoints, unpackStrokes, type BrushKind, type DoodleBlock , getSoftPrefs, softSnapshot } from "./core/doodle";
 import { resolvePosition, rotatedBounds, equalSpacingBadges, snapGuide, snapResizingEdge, type GuideLine, type SnapStrength, type SpacingBadge } from "./core/align";
 
 interface View { scale: number; tx: number; ty: number }
@@ -1047,12 +1047,15 @@ export class Editor {
     if (!s || !m || !proj) return;
     // 螢幕上 1.5px 以內的點丟掉——滑鼠手抖會產生一堆密點
     const pts = thinPoints(streamlinePts(s.pts), 1.5 / this.view.scale);
-    // 滑鼠沒有筆壓：用速度模擬（快＝細、慢＝粗、頭尾收細）
-    const press = speedPress(pts, m.width);
+    // 滑鼠沒有筆壓：用速度模擬（快＝細、慢＝粗、頭尾收細）。
+    // 軟鉛筆吃「速度影響」偏好（1＝原汁、0＝等寬）；烤進 press 資料，跨裝置渲染才一致。
+    const press = softSpeedPress(pts, m.width, m.brush);
     let b = m.id ? proj.blocks.find((k) => k.id === m.id) : undefined;
     const existing = b && b.content.type === "doodle"
       ? unpackStrokes(b.content.doodle, b.frame) : [];
-    const all = [...existing, { pts, w: m.width, color: m.color, brush: m.brush, press }];
+    // 軟鉛筆：把「非預設偏好」快照烤進筆畫——之後改偏好不回頭改畫過的東西
+    const all = [...existing, { pts, w: m.width, color: m.color, brush: m.brush, press,
+      sp: m.brush === "soft" ? softSnapshot() : undefined }];
     const packed = packStrokes(all, m.width * 1.6);
     if (b && b.content.type === "doodle") {
       b.frame = packed.frame;
@@ -1108,7 +1111,7 @@ export class Editor {
     if (!s || !m || s.pts.length === 0) return;
     const live = streamlinePts(s.pts);
     const packed = packStrokes([{ pts: live, w: m.width, color: m.color, brush: m.brush,
-      press: speedPress(live, m.width) }], m.width * 1.6);
+      press: softSpeedPress(live, m.width, m.brush) }], m.width * 1.6);
     ctx.save();
     ctx.translate(packed.frame.x, packed.frame.y);
     drawDoodle(ctx, { strokes: packed.strokes }, packed.frame.w, packed.frame.h);
@@ -1408,6 +1411,9 @@ export class Editor {
     this.dirty = true;
   }
 
+  /** 影片長度查詢（殼層＝VideoPool 的 metadata）。播放時間軸「隨影片播完」規則要用。 */
+  videoDur?: (file: string) => number | undefined;
+
   /** 3D 物件的渲染入口（殼層的 modelpool）。 */
   setModels(m?: { render(b: Block, time?: number): CanvasImageSource | undefined }): void {
     this.models = m;
@@ -1502,9 +1508,9 @@ export class Editor {
     // 一輪＝「0 狀態」空拍 ＋ 出場 ＋ 停留（timelineCycle：**與匯出同一個算式**）。
     // 空拍的理由：delay 0 的第一個元件在循環繞回的瞬間立刻重新入場，
     // 看起來就是「永遠都在」（2026-08-16 使用者定案：循環＝0、1、2、3）。
-    const tempo = motionTempo(this.project?.blocks ?? []);
+    const tempo = motionTempo(this.project?.blocks ?? [], this.videoDur);
     const { lead, cycle } = timelineCycle(anims.values(), tempo.periods,
-      this.project?.animHold ?? ANIM_HOLD, this.project?.animStagger ?? ANIM_STAGGER, tempo.minEnd);
+      effectiveHold(tempo, this.project?.animHold), this.project?.animStagger ?? ANIM_STAGGER, tempo.minEnd);
     this.animPlay = { t0: performance.now(), dur: cycle, lead, anims };
     this.playing = true;
     this.dirty = true;
@@ -1637,7 +1643,7 @@ export class Editor {
     const dpr = window.devicePixelRatio || 1;
     const ctx = this.ctx;
     const stage = stageBounds(this.project);
-    const dark = this.darkQuery.matches;
+    const dark = uiDark();   // 手動外觀（齒輪選單）優先，沒設才是系統
 
     // 工作區底色：白頁面放在白底上看不到邊界——鋪一層中性「桌面」色，
     // 頁面用陰影浮起來（Figma／Keynote 同語彙）。跟著系統深淺色走。
@@ -1678,7 +1684,7 @@ export class Editor {
       animOpts = { time: (el % this.animPlay.dur) - this.animPlay.lead, anims: this.animPlay.anims };
     }
     renderStage(ctx, this.project,
-      { placeholderForMissingMedia: true, images: this.images, videos: this.videos, models: this.models,
+      { placeholderForMissingMedia: true, images: this.images, mattes: this.images, videos: this.videos, models: this.models,
         filters: this.filters, skipBlockId: this.editing?.id,
         viewRect: this.visibleRect(), ...animOpts }, {
       hideProjectGuides: this.guidesHidden,
@@ -1700,4 +1706,13 @@ export class Editor {
     this.frameStats.ms = this.frameStats.ms * 0.8 + ms * 0.2;
     this.frameStats.paints++;
   };
+}
+
+
+/** 速度模擬筆壓＋軟鉛筆的「速度影響」偏好（spd=1 原汁、0 等寬；只動軟鉛筆，其他筆刷零風險）。 */
+function softSpeedPress(pts: { x: number; y: number }[], width: number, brush?: string): number[] {
+  const press = speedPress(pts, width);
+  if (brush !== "soft") return press;
+  const k = getSoftPrefs().spd;
+  return k >= 1 ? press : press.map((v) => 1 + (v - 1) * k);
 }

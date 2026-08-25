@@ -1,5 +1,5 @@
 import { __, __f } from "./i18n";
-import { BRUSHES, BRUSH_ORDER, DOODLE_TAIL, DOODLE_TRAVEL_DUR, DOODLE_WOBBLE_AMP, doodleGrowDur, type BrushKind, type DoodleBlock, type DoodleWobble } from "./core/doodle";
+import { BRUSHES, BRUSH_ORDER, DOODLE_TAIL, DOODLE_TRAVEL_DUR, DOODLE_WOBBLE_AMP, doodleGrowDur, softSnapshot, type BrushKind, type DoodleBlock, type DoodleWobble } from "./core/doodle";
 import { additiveClick } from "./platform";
 // 屬性檢視器——獨立元件（企劃約束：畫布／頁面膠捲／屬性檢視器三塊必須可分離，
 // 摺疊機與手機版面靠這個）。
@@ -10,6 +10,7 @@ import type { Block, MediaBlock, ModelBlock, Project, ShapeBlock, TextAlign, Tex
 import { FONT_CHOICES, WEIGHT_LABELS, fontCatalog } from "./core/fonts";
 import { FILTER_KEYS, FILTER_LABELS } from "./core/filters";
 import { alignToPage } from "./core/group";
+import { pageRect } from "./core/geometry";
 import type { GroupAlign, GroupAxis } from "./core/group";
 import { paperScope, snugTextWidth } from "./core/render";
 import { ANIM_DUR, ANIM_DUR_MAX, ANIM_HOLD, ANIM_HOLD_MAX, ANIM_STAGE2_DUR, ANIM_STAGE2_SCALE, ANIM_STAGGER, ANIM_STAGGER_MAX, CAROUSEL_INTERVAL, MODEL_SECS_PER_TURN, MODEL_SPIN_DUR, MODEL_TURNS, defaultDur, type AnimDir, type AnimKind, type Stage2 } from "./core/anim";
@@ -103,6 +104,8 @@ export interface InspectorHooks {
   reorder: (block: Block, dir: "front" | "back") => void;
   /** 播放出場動畫。給 block＝只播那一個（面板即時回饋）；不給＝整個版面。 */
   playAnim?: (block?: Block) => void;
+  /** 開筆刷偏好設定視窗（齒輪選單同一扇；塗鴉面板的齒輪鈕）。 */
+  openBrushPrefs?: () => void;
   /** 一鍵把整頁的出場順序排開（寫進專案），排完自動播一次。 */
   sequenceAll?: (from?: Block) => void;
   /** 一鍵把整頁的出場動畫清掉（陸續出現的反操作）。 */
@@ -112,6 +115,24 @@ export interface InspectorHooks {
   fillMedia: (block: Block) => void;
   /** 多圖輪播：開選檔框（可多選）把圖加進這個框的輪播清單。 */
   addCarousel?: (block: Block) => void;
+  /** 去背：跑一次主體抽取，遮罩寫進 assets/ 並掛上 matteFileName。
+   *  回訊息字串給面板顯示（覆蓋率可疑、抽不到⋯），null＝沒事。 */
+  makeMatte?: (block: Block) => Promise<string | null>;
+  /** 打開去背編輯間（橡皮擦／粉紅預覽／羽化外擴）。 */
+  editMatte?: (block: Block) => Promise<void>;
+  /** 去背模型：內建（Vision）／BiRefNet（選配，要下載）。
+   *  選單寫模型名稱不寫「進階」（2026-08-25 小高定案）。 */
+  matteModel?: {
+    get: () => string;
+    installed: () => boolean;
+    /** 選 BiRefNet 但還沒裝＝先下載；下載失敗就留在內建。 */
+    choose: (key: string) => Promise<void>;
+    remove: () => Promise<void>;
+  };
+  /** 內建材質清單。label 只當 hover 提示，按鈕上顯示的是 url 那張縮圖。 */
+  matteTextures?: () => { key: string; label: string; url: string }[];
+  /** 把材質填進去背出來的形狀裡。key = null ＝自己選一張圖。 */
+  fillTexture?: (block: Block, key: string | null) => Promise<void>;
   /** 匯入字型檔（開選檔框→存 UserFonts→註冊）。回匯入結果，null＝取消或失敗。 */
   importFont?: () => Promise<{ label: string; value: string } | null>;
   /** 塗鴉模式（editor.doodle 的代理）。 */
@@ -277,14 +298,26 @@ export class Inspector {
 
     const brushRow = this.row(s, __("筆刷"));
     brushRow.append(this.select(
-      BRUSH_ORDER.map((k) => [k, __(BRUSHES[k].name)] as [string, string]),
+      BRUSH_ORDER.map((k) => [k, __(BRUSHES[k].name) + (k === "soft" ? "（New）" : "")] as [string, string]),
       pen.brush, (v) => {
         dk?.setPen({ brush: v as BrushKind, eraser: false });
-        if (live) applyEach((st) => { st.brush = v as BrushKind; });
+        if (live) applyEach((st) => { st.brush = v as BrushKind; stampSp(st); });
       },
     ));
-    const brushApply = applyBtn((p) => applyEach((st) => { st.brush = p.brush; }));
+    // 換到軟鉛筆＝蓋當下偏好快照；換走＝清掉（sp 只對軟鉛筆有意義）
+    const stampSp = (st: DoodleBlock["strokes"][number]): void => {
+      st.sp = st.brush === "soft" ? softSnapshot() : undefined;
+    };
+    const brushApply = applyBtn((p) => applyEach((st) => { st.brush = p.brush; stampSp(st); }));
     if (brushApply) brushRow.append(brushApply);
+    if (this.hooks.openBrushPrefs) {
+      const gear = document.createElement("button");
+      gear.className = "act";
+      gear.title = __("筆刷偏好設定");
+      gear.innerHTML = '<svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.6"/><path d="M10 3.2v2M10 14.8v2M3.2 10h2M14.8 10h2M5.2 5.2l1.4 1.4M13.4 13.4l1.4 1.4M14.8 5.2l-1.4 1.4M6.6 13.4l-1.4 1.4"/></svg>';
+      gear.addEventListener("click", () => this.hooks.openBrushPrefs?.());
+      brushRow.append(gear);
+    }
 
     const colorRow = this.row(s, __("顏色"));
     colorRow.append(this.color(pen.color, (v) => {
@@ -345,6 +378,22 @@ export class Inspector {
     if (d.wobble) {
       this.row(s, __("幅度")).append(this.num(Math.round((d.wobbleAmp ?? DOODLE_WOBBLE_AMP) * 1000), { min: 1, max: 60, step: 1 },
         (v) => { d.wobbleAmp = v / 1000; this.emit(); play(); }));
+    }
+    // 縮放拉桿（2026-08-26 小高：「塗鴉是物件了，要有拉桿縮放」，iPad 同款）。
+    // 倍率相對「拉桿起手」那一刻（±1 → 1/3×…3×），繞中心等比；放手歸中、
+    // 基準重抓——往大往小永遠有行程，不會拉到底卡住。筆畫座標是 frame 正規化的，
+    // 縮 frame 就是縮整張塗鴉。
+    {
+      let base: { x: number; y: number; w: number; h: number } | null = null;
+      const slider = this.range(0, -1, 1, 0.01, (t) => {
+        base ??= { ...b.frame };
+        const f = Math.max(0.05, Math.pow(3, t));
+        b.frame = { x: base.x + base.w * (1 - f) / 2, y: base.y + base.h * (1 - f) / 2,
+                    w: base.w * f, h: base.h * f };
+        this.emit();
+      });
+      slider.addEventListener("change", () => { slider.value = "0"; base = null; });
+      this.row(s, __("縮放")).append(slider);
     }
   }
 
@@ -565,10 +614,7 @@ export class Inspector {
       this.num(p.animStagger ?? ANIM_STAGGER, { min: 0, max: ANIM_STAGGER_MAX, step: 0.05 },
                (v) => { p.animStagger = v; this.emit(); }),
     );
-    this.row(a, __("停留")).append(
-      this.num(p.animHold ?? ANIM_HOLD, { min: 0, max: ANIM_HOLD_MAX, step: 0.5 },
-               (v) => { p.animHold = v; this.emit(); }),
-    );
+    this.holdRow(a);
     const i = this.hooks.layers.currentPage();
     const bgSec = this.section(__("頁面背景"));
     this.row(bgSec, __f("第 {n} 頁", { n: i + 1 })).append(
@@ -1023,13 +1069,7 @@ export class Inspector {
     // 停留就擺在秒數旁邊——調節奏時兩個數字要一起看。
     // 值本身是**整頁共用**（停留是頁面跑完的那段靜止，不是單一元件的屬性），
     // 所以這裡寫的是專案設定，專案面板那列是同一個值。
-    const proj = this.project;
-    if (proj) {
-      this.row(s, __("停留")).append(
-        this.num(proj.animHold ?? ANIM_HOLD, { min: 0, max: ANIM_HOLD_MAX, step: 0.5 },
-                 (v) => { proj.animHold = v; this.emit(); play(); }),
-      );
-    }
+    this.holdRow(s, play);
   }
 
   private text(t: TextBlock): void {
@@ -1248,6 +1288,77 @@ export class Inspector {
         this.hooks.ensureVariant(b).then(() => this.emit());
       },
     ));
+    // 去背——與「遮罩」是兩件事：遮罩是幾何形狀，去背是照片內容的主體輪廓。
+    // 兩者可以並存（先被形狀裁、再被去背裁），所以分成兩列不合併。
+    if (this.hooks.makeMatte && m.assetFileName) {
+      if (this.hooks.matteModel) {
+        const mm = this.hooks.matteModel;
+        const mrow = this.row(s, __("模型"));
+        mrow.append(this.select(
+          [["vision", __("內建")],
+           ["birefnet", mm.installed() ? "BiRefNet" : __("BiRefNet（下載 109 MB）")]],
+          mm.get(),
+          (v) => { void mm.choose(v).finally(() => this.rebuild()); },
+        ));
+        if (mm.installed()) {
+          mrow.append(this.btn(__("移除模型"), () => { void mm.remove().finally(() => this.rebuild()); }));
+        }
+      }
+      const row = this.row(s, __("去背"));
+      { const nt = document.createElement("i"); nt.className = "new-tag"; nt.textContent = "New"; row.append(nt); }
+      const run = this.btn(m.matteFileName ? __("重跑") : __("去背"), () => void (async () => {
+        row.querySelectorAll("button").forEach((n) => { (n as HTMLButtonElement).disabled = true; });
+        // finally 一定要有：中途爆掉而沒解鎖的話，整列鈕就永遠是灰的，
+        // 使用者看到的是「按了沒反應」——比一個錯誤訊息難查得多。
+        try {
+          const msg = await this.hooks.makeMatte!(b);
+          if (msg) this.hooks.onChange(); // 訊息由殼層的狀態列顯示（面板沒有訊息位）
+        } finally {
+          this.rebuild();
+        }
+      })());
+      row.append(run);
+      if (m.matteFileName && this.hooks.editMatte) {
+        row.append(this.btn(__("修…"), () => { void this.hooks.editMatte!(b); }));
+      }
+      if (m.matteFileName) {
+        row.append(this.btn(__("移除"), () => {
+          m.matteFileName = undefined; m.matteInverted = undefined;
+          this.rebuild(); this.emit();
+        }));
+      }
+      // 填材質＝參考圖那個效果：疊一層材質、用同一張遮罩挖出主體，
+      // 底下那張變回完整的照片。手動要四步，這一列一次做完。
+      if (m.matteFileName && this.hooks.fillTexture && this.hooks.matteTextures) {
+        const fillRow = this.row(s, __("填材質"));
+        const fill = (key: string | null) => {
+          fillRow.querySelectorAll("button").forEach((n) => { (n as HTMLButtonElement).disabled = true; });
+          void this.hooks.fillTexture!(b, key).finally(() => this.rebuild());
+        };
+        // 按鈕框本身就是那塊材質——名字只留在 hover 的 title，一排小方塊比一排字好認
+        const swatch = (title: string, url: string | null, run: () => void): HTMLButtonElement => {
+          const n = document.createElement("button");
+          n.className = url ? "texsw" : "texsw plain dashed";
+          n.title = title;
+          if (url) n.style.backgroundImage = `url('${url}')`;
+          else n.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" '
+            + 'stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+          n.onclick = run;
+          return n;
+        };
+        for (const t of this.hooks.matteTextures()) {
+          fillRow.append(swatch(t.label, t.url, () => fill(t.key)));
+        }
+        fillRow.append(swatch(__("自選…"), null, () => fill(null)));
+      }
+      if (m.matteFileName) {
+        this.row(s, __("保留哪一邊")).append(this.select(
+          [["", __("主體")], ["1", __("背景")]],
+          m.matteInverted ? "1" : "",
+          (v) => { m.matteInverted = v ? true : undefined; this.emit(); },
+        ));
+      }
+    }
     this.row(s, __("遮罩")).append(this.select(
       [["", __("無")], ["rectangle", __("圓角矩形")], ["ellipse", __("橢圓")]],
       m.maskShape ?? "",
@@ -1370,6 +1481,45 @@ export class Inspector {
     h.textContent = titleText;
     this.el.append(h);
     return this.el;
+  }
+
+
+  /** 這一頁有沒有「會播的內容」（影片／輪播／3D 展示／塗鴉巡線）。
+   *  有＝停留自動跟著播放長度（core/anim effectiveHold），停留鈕換成說明章
+   *  （2026-08-26 使用者定：只有純出場動畫的頁才需要手動停留）。 */
+  private pagePlayback(): { auto: boolean; video: boolean } {
+    const proj = this.project;
+    if (!proj) return { auto: false, video: false };
+    const page = pageRect(proj, this.hooks.layers.currentPage());
+    let auto = false, video = false;
+    for (const b of proj.blocks) {
+      if (!(b.frame.x < page.x + page.w && page.x < b.frame.x + b.frame.w
+            && b.frame.y < page.y + page.h && page.y < b.frame.y + b.frame.h)) continue;
+      const c = b.content;
+      if (c.type === "video" && c.media.assetFileName) { auto = true; video = true; }
+      else if (c.type === "image" && c.media.carouselAssets?.length) auto = true;
+      else if (c.type === "model" && c.model.mode) auto = true;
+      else if (c.type === "doodle" && c.doodle.play === "travel") auto = true;
+    }
+    return { auto, video };
+  }
+
+  /** 停留列：手動秒數，或（頁上有會播的內容時）「隨影片播完」章。 */
+  private holdRow(parent: HTMLElement, onChange?: () => void): void {
+    const row = this.row(parent, __("停留"));
+    const pb = this.pagePlayback();
+    if (pb.auto) {
+      const tag = document.createElement("span");
+      tag.className = "holdauto";
+      tag.textContent = pb.video ? __("隨影片播完") : __("隨循環播完");
+      tag.title = __("這一頁有會播的內容——停留自動跟著最長的播放長度，影片不會被腰斬。");
+      row.append(tag);
+      return;
+    }
+    const proj = this.project;
+    if (!proj) return;
+    row.append(this.num(proj.animHold ?? ANIM_HOLD, { min: 0, max: ANIM_HOLD_MAX, step: 0.5 },
+                        (v) => { proj.animHold = v; this.emit(); onChange?.(); }));
   }
 
   private row(parent: HTMLElement, label: string): HTMLDivElement {

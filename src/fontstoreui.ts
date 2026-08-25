@@ -1,3 +1,4 @@
+import { uiDark } from "./platform";
 // 字體商店的桌面 UI：齒輪選單「字體商店」開的置中面板。
 // 每套字用預先渲好的樣張圖（未下載前這台機器沒有這套字，只能用圖），
 // 亮暗跟系統主題走；點下載即裝進字型選單、已裝可移除。
@@ -48,7 +49,7 @@ async function render(onChanged: () => void): Promise<void> {
     body.append(retry);
     return;
   }
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const dark = uiDark();   // 手動外觀（齒輪選單）優先，沒設才是系統
   const installed = getInstalled();
   body.innerHTML = "";
   for (const [key, title] of CATS) {

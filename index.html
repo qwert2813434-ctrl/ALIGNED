@@ -13,10 +13,14 @@
     --chrome: #FFFFFF; --card: #FFFFFF; --line: #E2E2E7;
     --ink: #1E1E23; --ink2: #75757C;
   }
+  /* 外觀手動切換：html[data-theme] 蓋過系統；沒設＝跟系統（原行為）。
+     ⚠️ 深色 token 因此有兩份，改色要同步。#sheet[data-theme] 是匯出台自己的機制，別共用。 */
   @media (prefers-color-scheme: dark) {
-    :root { --chrome: #1D1E22; --card: #292A30; --line: #3A3B42;
+    :root:not([data-theme="light"]) { --chrome: #1D1E22; --card: #292A30; --line: #3A3B42;
             --ink: #F2F2F5; --ink2: #A9A9B2; }
   }
+  :root[data-theme="dark"] { --chrome: #1D1E22; --card: #292A30; --line: #3A3B42;
+          --ink: #F2F2F5; --ink2: #A9A9B2; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; overflow: hidden; }
   body { display: flex; flex-direction: column;
@@ -117,6 +121,8 @@
   #inspector button.on { background: color-mix(in srgb, var(--ink) 14%, var(--card)); }
   #inspector button.danger { color: #B3402F; border-color: color-mix(in srgb, #B3402F 40%, var(--line)); }
   #inspector .hint { color: var(--ink2); padding: 22px 4px; white-space: pre-line; line-height: 1.9; }
+  /* 停留自動章：頁上有會播的內容（影片／輪播）時，停留鈕換成這個說明 */
+  #inspector .holdauto { color: var(--ink2); font-size: 12px; line-height: 26px; cursor: help; }
   /* 釘在側欄上方的面板：自己捲，別把下面的屬性擠出畫面 */
   #inspector .pin { max-height: 46vh; overflow-y: auto; margin: -4px -6px 6px;
                     padding: 0 6px 6px; border-bottom: 1px solid var(--line); }
@@ -248,6 +254,60 @@
   #newcard button.primary { background: #2F7CF6; border-color: #2F7CF6; color: #fff; }
 
   /* 修剪視窗：底片條上兩根把手夾出選取範圍，外面壓暗。照 iOS VideoTrimView 的語彙 */
+  /* 去背編輯間（2026-08-25）——控制面板固定在左側，捲動畫布時滑桿一直在手邊 */
+  /* z-index 要壓過右鍵選單（20）——進編輯間前選單還開著的話會浮在上面 */
+  #mattesheet { position: fixed; inset: 0; z-index: 22; display: flex; background: var(--chrome); }
+  #mattebar { width: 244px; flex: 0 0 244px; display: flex; flex-direction: column; gap: 16px;
+    padding: 20px 18px; overflow-y: auto; background: var(--card); border-right: 1px solid var(--line); }
+  #mattebar .grp { display: flex; flex-direction: column; gap: 7px; }
+  #mattebar .lab { font-size: 11px; letter-spacing: .1em; color: var(--ink2); text-transform: uppercase;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  #mattebar .lab i { font-style: normal; text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+  #mattebar .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  #mattebar .sect { font-size: 10px; letter-spacing: .14em; color: var(--ink2); opacity: .7;
+    text-transform: uppercase; border-top: 1px solid var(--line); padding-top: 12px; }
+  #mattebar button.chip { background: transparent; border: 1px solid var(--line); color: var(--ink2);
+    padding: 5px 10px; font: inherit; font-size: 12px; border-radius: 6px; cursor: pointer; }
+  #mattebar button.chip:hover { color: var(--ink); }
+  #mattebar button.chip.on { background: var(--ink); color: var(--chrome); border-color: var(--ink); }
+  #mattebar button.chip:disabled { opacity: .35; cursor: default; }
+  #mattebar button.chip kbd { margin-left: 5px; opacity: .55; border: 1px solid currentColor;
+    border-radius: 3px; padding: 0 4px; font: inherit; font-size: 10px; }
+  #mattebar input[type=range] { width: 100%; }
+  #mattebar .keys { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line);
+    font-size: 11px; color: var(--ink2); line-height: 1.9; }
+  #mattebar .keys b { color: var(--ink); display: block; margin-bottom: 2px; }
+  #mattebar .keys .k { display: flex; justify-content: space-between; gap: 10px; }
+  #mattebar .keys kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px;
+    font: inherit; font-size: 10px; color: var(--ink); }
+  #mattebar .acts { display: flex; gap: 8px; }
+  #mattebar .acts button { flex: 1; padding: 7px 0; border-radius: 7px; border: 1px solid var(--line);
+    background: transparent; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+  #mattebar .acts button.primary { background: var(--ink); color: var(--chrome); border-color: var(--ink); }
+  /* 材質選擇：按鈕框本身就是那塊材質，不寫名字（名字只留在 hover 的 title）。
+     右欄與編輯間共用同一組樣式，兩邊看起來才是同一件事。 */
+  /* background-size 是裁切不是縮放：整張 1400² 縮進 36px 會糊成一坨灰，
+     什麼材質都長一樣。裁一塊 220px 的角落下來看，橫線就是橫線、墨點就是墨點。
+     使用者自選的圖是照片不是材質，那要看全貌，所以走 .photo 的 cover。 */
+  .texsw { width: 36px; height: 36px; padding: 0; flex: none; border-radius: 7px;
+    border: 1px solid var(--line); background-size: 220px; background-position: center;
+    cursor: pointer; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .texsw.photo { background-size: cover; }
+  .texsw.on { border-color: var(--ink); box-shadow: 0 0 0 2px var(--ink); }
+  .texsw:disabled { opacity: .35; cursor: default; }
+  .texsw.plain { background: transparent; color: var(--ink2); }
+  .texsw.plain:hover { color: var(--ink); }
+  .texsw.dashed { border-style: dashed; }
+
+  #mattestage { flex: 1; position: relative; overflow: hidden;
+    background-image: repeating-conic-gradient(rgba(128,128,128,.10) 0 25%, transparent 0 50%);
+    background-size: 18px 18px; }
+  #mattecv { position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+    cursor: none; touch-action: none; }
+  #mattehud { position: absolute; left: 14px; bottom: 12px; font-size: 12px; color: var(--ink2);
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 10px; pointer-events: none; }
+
   #trimsheet { position: fixed; inset: 0; z-index: 14; display: flex;
                align-items: center; justify-content: center;
                background: color-mix(in srgb, var(--ink) 30%, transparent); backdrop-filter: blur(3px); }
@@ -314,6 +374,8 @@
                     cursor: pointer; text-align: left; }
   #ctxmenu button:hover { background: #2F7CF6; color: #fff; }
   #ctxmenu hr { border: none; border-top: 1px solid var(--line); margin: 4px 8px; }
+  /* 選單行首 icon（2026-08-26 起選單一律配 icon）：跟字垂直對中、留 8px 間距 */
+  #ctxmenu .mi { display: inline-flex; vertical-align: -2px; margin-right: 8px; }
   /* 子選單：滑到那一列才展開，往右長出來 */
   #ctxmenu .hassub { position: relative; }
   #ctxmenu .sub { display: none; position: absolute; left: 100%; top: -5px; min-width: 130px;
@@ -413,6 +475,9 @@
   #hint { font-size: 11px; letter-spacing: .22em; color: var(--ink2);
           font-variant-numeric: tabular-nums; }
   #hint2 { font-size: 10.5px; letter-spacing: .2em; color: var(--faint); }
+  /* 新功能標（2026-08-26 小高：「新功能都幫我加上 New」；下一版拿掉） */
+  .new-tag { font-style: normal; font-size: 9px; font-weight: 700; color: #2F7CF6;
+    border: 1px solid rgba(47,124,246,.4); border-radius: 4px; padding: 0 4px; flex: none; }
 </style>
 </head>
 <body>
@@ -423,7 +488,7 @@
     <span id="info"></span>
     <span class="spacer"></span>
     <span class="island" id="addbar">
-      <button data-kind="text" title="加文字"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6V4.5h11V6"/><path d="M10 4.5V15"/><path d="M7.5 15.5h5"/></svg></button><button data-kind="rectangle" title="加矩形"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="13" height="10" rx="1.5"/></svg></button><button data-kind="ellipse" title="加圓形"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6.5"/></svg></button><button data-kind="line" title="加線條"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 15.5l11-11"/></svg></button><button data-kind="photo" title="加照片"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="7.3" cy="8.2" r="1.25"/><path d="M3.4 13.6l3.8-2.9 3.4 2.5 2.4-1.7 3.6 2.5"/></svg></button><button data-kind="doodle" id="doodleBtn" title="塗鴉（畫筆；Esc 離開）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 15.5c.4-2.6 1-4 2-5l7.6-7.6 2.5 2.5L8 13c-1 1-2.4 1.6-4.5 2.5z"/><path d="M11.6 4.4l2.5 2.5"/></svg></button><button data-kind="model" title="加 3D 物件"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.8l6.2 3.6v7.2L10 17.2 3.8 13.6V6.4z"/><path d="M3.8 6.4L10 10l6.2-3.6"/><path d="M10 10v7.2"/></svg></button>
+      <button data-kind="text" title="加文字"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6V4.5h11V6"/><path d="M10 4.5V15"/><path d="M7.5 15.5h5"/></svg></button><button id="shapeBtn" title="加圖形（矩形／圓形／線條）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3.5" width="9.5" height="9.5" rx="1.5"/><circle cx="13" cy="13.5" r="4.2"/></svg></button><button data-kind="photo" title="加照片"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="7.3" cy="8.2" r="1.25"/><path d="M3.4 13.6l3.8-2.9 3.4 2.5 2.4-1.7 3.6 2.5"/></svg></button><button data-kind="doodle" id="doodleBtn" title="塗鴉（畫筆；Esc 離開）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 15.5c.4-2.6 1-4 2-5l7.6-7.6 2.5 2.5L8 13c-1 1-2.4 1.6-4.5 2.5z"/><path d="M11.6 4.4l2.5 2.5"/></svg></button><button data-kind="model" title="加 3D 物件"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.8l6.2 3.6v7.2L10 17.2 3.8 13.6V6.4z"/><path d="M3.8 6.4L10 10l6.2-3.6"/><path d="M10 10v7.2"/></svg></button>
     </span>
     <span class="island">
       <button id="guidesBtn" title="參考線"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="13" height="13" rx="1.6" opacity=".45"/><path d="M8 2.6v14.8"/><path d="M2.6 12.4h14.8"/></svg></button><button id="layersBtn" title="圖層"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.8l6.6 3.5L10 9.8 3.4 6.3z"/><path d="M3.4 10.2L10 13.7l6.6-3.5"/><path d="M3.4 14l6.6 3.5 6.6-3.5"/></svg></button><button id="infoBtn" title="專案資訊（頁數・尺寸・選取座標）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6.5"/><path d="M10 9.3v3.9"/><path d="M10 6.8v.01"/></svg></button>

@@ -59,6 +59,13 @@ export interface MediaBlock {
   rotationDegrees?: number;// 拉直（-45…45），轉的是內容不是 block
   maskShape?: "rectangle" | "ellipse";
   maskCornerRadius?: number;  // 短邊一半的分數
+  /** 去背遮罩（2026-08-25）：assets/ 裡的**灰階** PNG，白＝留、黑＝去，與原圖同尺寸。
+   *  存灰階不存切好的圖，是因為留人／反轉／人形當窗口填材質是同一張遮罩換合成方式；
+   *  多存一份切好的圖只會多一份會跟原圖漂移的資產。
+   *  與 maskShape 是兩件事，可以並存（先被形狀裁、再被去背遮罩裁）。 */
+  matteFileName?: string;
+  /** 反轉遮罩：留背景、把主體挖掉。未設＝留主體。 */
+  matteInverted?: boolean;
   strokeHex?: string;
   strokeWidth?: number;       // 短邊分數
   excludesText?: boolean;

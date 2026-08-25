@@ -40,7 +40,15 @@ for (const key of BRUSH_ORDER) {
   g.scale(2, 2);
   g.fillStyle = "#f7f4ee"; g.fillRect(0, 0, W, H);
   g.translate(packed.frame.x, packed.frame.y);
-  drawDoodle(g, { strokes: packed.strokes }, packed.frame.w, packed.frame.h);
+  // 一張卡炸掉不准拖垮整頁——錯誤直接印在卡上（總覽頁的用途就是抓這種）
+  try {
+    drawDoodle(g, { strokes: packed.strokes }, packed.frame.w, packed.frame.h);
+  } catch (x) {
+    const err = document.createElement("p");
+    err.style.color = "#c0392b";
+    err.textContent = `渲染炸了：${(x as Error).stack ?? x}`;
+    card.append(err);
+  }
   card.append(c);
   grid.append(card);
 }

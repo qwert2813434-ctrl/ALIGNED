@@ -10,6 +10,7 @@ import { decodeProject, encodeProject, type Block, type Project } from "./core/s
 import { loadFonts, registerSystemFonts, registerUserFont, type DynamicFont } from "./core/fonts";
 import { restoreStoreFonts, unresolvedNames, repairable, downloadStoreFont } from "./core/fontstore";
 import { openFontStore } from "./fontstoreui";
+import { initSoftPrefs, openBrushPrefs } from "./brushprefs";
 import { applyFilter, loadFilterAssets, type FilterAssets } from "./core/filters";
 import type { SnapStrength } from "./core/align";
 import { Editor } from "./editor";
@@ -27,6 +28,7 @@ import { VideoPool, hiddenHost } from "./videopool";
 import { ModelPool } from "./modelpool";
 import { Gallery } from "./gallery";
 import { openTrim } from "./trim";
+import { openMatteRoom } from "./matteroom";
 import { checkUpdate } from "./updatecheck";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -34,8 +36,19 @@ import { open as openDialog, save as saveDialog, ask } from "@tauri-apps/plugin-
 import { startTour, tourActive, tourNotify, type Rect as TourRect, type TourStep } from "./tour";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
+import { listen } from "@tauri-apps/api/event";
 
 declare const __BUILD_STAMP__: string;
+
+initSoftPrefs();   // 軟鉛筆偏好：畫任何東西之前先讀回（渲染參數是模組態）
+
+// 外觀：localStorage "alignedTheme" = "light" | "dark"；沒存＝跟系統（原行為）。
+// 要在任何 UI 建立前套，不然開機閃一下系統色。
+const savedTheme = localStorage.getItem("alignedTheme");
+if (savedTheme === "light" || savedTheme === "dark") {
+  document.documentElement.dataset.theme = savedTheme;
+  document.documentElement.style.colorScheme = savedTheme;   // 原生控件／捲軸也跟著
+}
 
 // ── 檔案對話框「分類記憶」：開專案／放媒體／匯出／字型各記各的起始資料夾 ──
 // macOS 面板的位置記憶是全 App 一份，匯出去過哪、開專案面板就被帶去哪（2026-08-14 Armin 指正）。
@@ -107,8 +120,12 @@ editor.onTextEdited = () => {
  *  ⚠️ **輪播的後續張數也算**（`carouselAssets`）——只收 assetFileName 的話，
  *  加圖當下有效（addCarouselImages 會直接塞進素材表），但**重開專案就只剩第一張**，
  *  後面幾張畫成佔位框；連匯出的影片也會缺（2026-08-16 使用者回報）。 */
-function assetNames(p: Project): Map<string, { file: string; filter?: string }> {
-  const out = new Map<string, { file: string; filter?: string }>();
+export function matteKey(file: string, inverted?: boolean): string {
+  return `matte:${file}${inverted ? "!" : ""}`;
+}
+
+function assetNames(p: Project): Map<string, { file: string; filter?: string; matte?: boolean; inverted?: boolean }> {
+  const out = new Map<string, { file: string; filter?: string; matte?: boolean; inverted?: boolean }>();
   for (const b of p.blocks) {
     if (b.content.type !== "image" && b.content.type !== "video") continue;
     const m = b.content.media;
@@ -118,6 +135,9 @@ function assetNames(p: Project): Map<string, { file: string; filter?: string }> 
     out.set(key(file), { file, filter: m.filterKey });
     // 輪播圖跟著框走，濾鏡也是框的——所以變體的鍵與主圖同一套算法
     for (const f of m.carouselAssets ?? []) out.set(key(f), { file: f, filter: m.filterKey });
+    // 去背遮罩：不套濾鏡（它不是要看的圖，是 alpha 來源），
+    // 但正反兩面算兩個變體——反轉是每個 block 各自的設定。
+    if (m.matteFileName) out.set(matteKey(m.matteFileName, m.matteInverted), { file: m.matteFileName, matte: true, inverted: m.matteInverted });
   }
   return out;
 }
@@ -127,6 +147,26 @@ interface LoadedAssets {
   variants: Map<string, CanvasImageSource>;
   /** 原圖。檢視器換濾鏡時從這裡重生變體。 */
   raw: Map<string, HTMLImageElement>;
+}
+
+/** 灰階遮罩 → alpha 遮罩（白＝不透明）。載入時轉一次，之後渲染只是 destination-in。
+ *  刻意走 getImageData 而不是 `ctx.filter = url(#svg)`：桌面版跑在 WKWebView，
+ *  canvas 的 SVG 濾鏡引用不保證每個版本都在，逐畫素轉一次是零風險的做法
+ *  （而且只在載入時發生，不進每格的路徑）。 */
+function matteCanvas(img: HTMLImageElement, inverted?: boolean): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const cx = c.getContext("2d", { willReadFrequently: true })!;
+  cx.drawImage(img, 0, 0);
+  const d = cx.getImageData(0, 0, c.width, c.height);
+  const px = d.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const lum = (px[i] * 0.2126 + px[i + 1] * 0.7152 + px[i + 2] * 0.0722) | 0;
+    px[i] = px[i + 1] = px[i + 2] = 255;
+    px[i + 3] = inverted ? 255 - lum : lum;
+  }
+  cx.putImageData(d, 0, 0);
+  return c;
 }
 
 /** 套一顆濾鏡到原圖，回快取用的 canvas。載入時套一次就好——每格重算拖曳會卡。 */
@@ -160,10 +200,11 @@ async function loadAssets(
     img.src = src;
   })));
   const variants = new Map<string, CanvasImageSource>();
-  for (const [key, { file, filter }] of entries) {
+  for (const [key, { file, filter, matte, inverted }] of entries) {
     const img = raw.get(file);
     if (!img) continue;
-    variants.set(key, filter ? filteredCanvas(img, filter, fx) : img);
+    variants.set(key, matte ? matteCanvas(img, inverted)
+                            : filter ? filteredCanvas(img, filter, fx) : img);
   }
   return { variants, raw };
 }
@@ -338,6 +379,373 @@ function afterPageChange(focus: number): void {
 }
 
 /** 確保某個媒體 block 的「素材×濾鏡」變體已在快取（沒有就從原圖生）。 */
+/// 去背：對這個 block 的照片跑一次主體抽取，遮罩存進 assets/ 並掛上。
+/// 回一句要給狀態列的訊息，null＝乾乾淨淨完成。
+///
+/// 抽不到主體時**不彈失敗**——照樣掛一張全黑遮罩（＝全部去掉），
+/// 使用者可以自己把要的地方刷回來。工具還在手上，比一個錯誤對話框有用。
+/// 覆蓋率被判 suspect（圈到整棟樓那種）也只是提示，不擋——
+/// 大特寫的臉本來就可能佔半張畫面。
+async function runMatte(b: Block): Promise<string | null> {
+  if (b.content.type !== "image" && b.content.type !== "video") return null;
+  const m = b.content.media;
+  const dir = assetsDir();
+  if (!dir || !m.assetFileName) return null;
+
+  const src = `${dir}/${m.assetFileName}`;
+  const name = `${m.assetFileName}.matte.png`;
+  let note: string | null = null;
+
+  // BiRefNet 那條：抽不到主體（覆蓋率趨近 0）就自動退回內建再跑一次。
+  // 小高那組三個人走路帶殘影的街拍就是這種——BiRefNet 完全沒看到人、內建抓得到。
+  // 靜靜給一張空遮罩比退回去糟得多。
+  if (matteModel() === "birefnet" && await modelReady()) {
+    const file = b.content.type === "video" ? `${m.assetFileName}.poster.jpg` : m.assetFileName;
+    const img = assets.raw.get(file);
+    if (img) {
+      meta.textContent = __("BiRefNet 去背中…");
+      // 讓那行字先畫出來再開始搬像素——不讓一幀，使用者按下去到看見字之間是全黑的
+      await new Promise((r) => requestAnimationFrame(r));
+      try {
+        const cov = await birefnetMatte(img, dir, name);
+        if (cov >= 0.3) {
+          if (cov > 35) note = __f("去背圈到畫面的 {c}%——可能抓錯主體，用橡皮擦修或換一張",
+                                   { c: cov.toFixed(1) });
+          m.matteFileName = name;
+          try { await refreshMatteVariants(dir, name); }
+          catch (e) { meta.textContent = __f("遮罩讀不回來：{msg}", { msg: String((e as Error)?.message ?? e) }); }
+          editor.refresh(); scheduleThumbs(); commit("matte");
+          if (note) meta.textContent = note; else refreshMeta();
+          await openMatteRoomFor(b);
+          return note;
+        }
+        note = __("BiRefNet 沒看到主體，改用內建再跑一次");
+      } catch (e) {
+        note = __f("BiRefNet 失敗，改用內建：{msg}", { msg: String((e as Error)?.message ?? e) });
+      }
+    }
+  }
+
+  try {
+    const res = await invoke<string>("make_matte", { src, destDir: dir, name });
+    const verdict = res.split(/\s+/)[2];
+    const coverage = res.split(/\s+/)[1];
+    if (verdict === "suspect") {
+      note = __f("去背圈到畫面的 {c}%——可能抓錯主體，用橡皮擦修或換一張", { c: coverage });
+    }
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? e);
+    if (!msg.includes("NO_SUBJECT")) { meta.textContent = __f("去背失敗：{msg}", { msg }); return null; }
+    note = __("這張抽不到主體——先給你一張空遮罩，用筆把要的地方刷回來");
+    // 空遮罩由前端生成（全黑＝全部去掉），不必再跑一次工具
+    const blank = document.createElement("canvas");
+    blank.width = 8; blank.height = 8;
+    const bg = blank.getContext("2d")!;
+    bg.fillStyle = "#000"; bg.fillRect(0, 0, 8, 8);
+    await invoke("save_png", { path: `${dir}/${name}`, data: blank.toDataURL("image/png").split(",")[1] });
+  }
+
+  m.matteFileName = name;
+  // 變體重生失敗（讀不回剛存的那張）不該連編輯間都進不去——先講出來再往下走。
+  try { await refreshMatteVariants(dir, name); }
+  catch (e) { meta.textContent = __f("遮罩讀不回來：{msg}", { msg: String((e as Error)?.message ?? e) }); }
+  editor.refresh();
+  scheduleThumbs();
+  commit("matte");
+  if (note) meta.textContent = note;
+
+  // 自動去背只是起點——接著直接進編輯間讓他修（2026-08-25 小高的預期就是這樣：
+  // 「我以為他會進編輯間」）。取消就保留自動的那張，不回退。
+  await openMatteRoomFor(b);
+  return note;
+}
+
+/// 遮罩檔換了之後，把素材表裡正反兩個 alpha 變體重生。
+/// 檔名沒變所以瀏覽器可能吃快取，加一個時間戳把它繞開。
+async function refreshMatteVariants(dir: string, name: string): Promise<void> {
+  const img = await loadImg(`${await localUrl(`${dir}/${name}`)}?v=${Date.now()}`);
+  assets.raw.set(name, img);
+  assets.variants.set(matteKey(name, false), matteCanvas(img, false));
+  assets.variants.set(matteKey(name, true), matteCanvas(img, true));
+}
+
+/// 開去背編輯間。完成＝把烤好的遮罩寫回同一個檔（所以專案裡永遠只有一張遮罩），
+/// 取消＝什麼都不動。
+async function openMatteRoomFor(b: Block): Promise<void> {
+  if (b.content.type !== "image" && b.content.type !== "video") return;
+  const m = b.content.media;
+  const dir = assetsDir();
+  if (!dir || !m.assetFileName || !m.matteFileName) return;
+  const name = m.matteFileName;
+  // 編輯間底下墊哪張：材質層要墊它**底下那張原圖**。材質是均勻的，
+  // 拿它當底圖修邊等於盲修——遮罩本來就是從原圖抽出來的。
+  const under = textureBase(b);
+  const photo = under && (under.content.type === "image" || under.content.type === "video")
+    ? under.content.media.assetFileName : m.assetFileName;
+  try {
+    const r = await openMatteRoom(
+      await localUrl(`${dir}/${photo}`),
+      `${await localUrl(`${dir}/${name}`)}?v=${Date.now()}`,
+      m.matteInverted === true,
+      { textures: TEXTURES.map((t) => ({ key: t.key, label: __(t.label), url: `textures/${t.file}` })),
+        resolve: resolveTexture, initial: currentFill(b) },
+    );
+    if (!r) return;
+    await invoke("save_png", { path: `${dir}/${name}`, data: r.png });
+    m.matteInverted = r.inverted ? true : undefined;
+    await refreshMatteVariants(dir, name);
+    editor.refresh();
+    inspector.show(current, b);
+    scheduleThumbs();
+    commit("matteedit");
+    // 在編輯間裡選了材質＝完成的當下就把那層疊出來（attachTexture 自己會 commit）
+    if (r.fill) attachTexture(b, r.fill);
+  } catch (e) {
+    meta.textContent = __f("去背編輯失敗：{msg}", { msg: String((e as Error)?.message ?? e) });
+  }
+}
+
+// ── 去背模型 ────────────────────────────────────────────────────────────
+//
+// 兩顆：內建（Vision，一裝就有、零下載）與 BiRefNet（選配，109MB）。
+// **誰都不是全勝**——小高那組三個人走路帶殘影的街拍只有內建抓得到，
+// BiRefNet 完全沒看到人；但頭髮邊緣 BiRefNet 大勝。所以兩顆都留，讓他自己切。
+//
+// 📌 模型選擇**不寫進 project.json**：它只是產生遮罩的手段，兩顆吐出來的都是同一張
+// 灰階 PNG。所以這個設定不受「檔案格式改動＝三平台同版」那條準則約束，
+// Mac 先有、iPad 還沒有也不會開不了檔。存在 localStorage。
+//
+// 📌 選單寫模型名稱不寫「進階」（2026-08-25 小高定案）。
+
+const MODEL_KEY = "align.matteModel";
+const MODEL_SIZE = 1024;                   // BiRefNet lite 固定 1024 見方
+type MatteModel = "vision" | "birefnet";
+
+function matteModel(): MatteModel {
+  return localStorage.getItem(MODEL_KEY) === "birefnet" ? "birefnet" : "vision";
+}
+function setMatteModel(m: MatteModel): void { localStorage.setItem(MODEL_KEY, m); }
+
+/** BiRefNet 模型裝了沒。null＝沒裝。 */
+let modelInstalled: boolean | null = null;
+async function modelReady(): Promise<boolean> {
+  if (modelInstalled === null) {
+    modelInstalled = await invoke<string>("model_status").catch(() => "none") !== "none";
+  }
+  return modelInstalled;
+}
+
+/// 下載模型。進度走 Rust 那邊 emit 的事件，寫在狀態列。
+/// 下載中重複按沒有意義，用一個 promise 擋住。
+let downloading: Promise<boolean> | null = null;
+function downloadModel(): Promise<boolean> {
+  if (downloading) return downloading;
+  downloading = (async () => {
+    const un = await listen<number>("matte-model-progress", (e) => {
+      meta.textContent = __f("下載 BiRefNet 模型… {n}%", { n: String(e.payload) });
+    });
+    try {
+      await invoke("model_download");
+      modelInstalled = true;
+      meta.textContent = __("BiRefNet 模型已裝好");
+      return true;
+    } catch (e) {
+      meta.textContent = __f("模型下載失敗：{msg}", { msg: String((e as Error)?.message ?? e) });
+      return false;
+    } finally {
+      un(); downloading = null;
+    }
+  })();
+  return downloading;
+}
+
+async function removeModel(): Promise<void> {
+  await invoke("model_remove").catch(() => {});
+  modelInstalled = false;
+  if (matteModel() === "birefnet") setMatteModel("vision");
+  meta.textContent = __("BiRefNet 模型已移除");
+}
+
+/// 用 BiRefNet 產生遮罩，寫進 assets/。
+///
+/// 影像的解碼與縮放留在前端：這邊本來就有解好的圖，交給 Rust 的是 1024² 的原始 RGB，
+/// Rust 那邊就不必背一整套影像格式支援（webp／heic 那些）。
+/// 回傳覆蓋率（%），給健檢用。
+async function birefnetMatte(img: HTMLImageElement | HTMLVideoElement,
+                             dir: string, name: string): Promise<number> {
+  const n = MODEL_SIZE;
+  const c = document.createElement("canvas");
+  c.width = n; c.height = n;
+  const g = c.getContext("2d", { willReadFrequently: true })!;
+  g.drawImage(img, 0, 0, n, n);          // 直接拉成正方形＝BiRefNet 標準前處理
+  const px = g.getImageData(0, 0, n, n).data;
+  const rgb = new Uint8Array(n * n * 3);
+  for (let i = 0, j = 0; i < n * n; i++, j += 4) {
+    rgb[i * 3] = px[j]; rgb[i * 3 + 1] = px[j + 1]; rgb[i * 3 + 2] = px[j + 2];
+  }
+  const out = await invoke<string>("model_matte", { rgb: toBase64(rgb.buffer) });
+
+  const gray = Uint8Array.from(atob(out), (ch) => ch.charCodeAt(0));
+  const m = document.createElement("canvas");
+  m.width = n; m.height = n;
+  const mg = m.getContext("2d")!;
+  const id = mg.createImageData(n, n);
+  let sum = 0;
+  for (let i = 0, j = 0; i < n * n; i++, j += 4) {
+    const v = gray[i];
+    sum += v;
+    id.data[j] = id.data[j + 1] = id.data[j + 2] = v; id.data[j + 3] = 255;
+  }
+  mg.putImageData(id, 0, 0);
+
+  // 放回原圖尺寸再存。遮罩必須與原圖同尺寸，對位規則吃的是這個。
+  const w = (img as HTMLImageElement).naturalWidth || (img as HTMLVideoElement).videoWidth;
+  const h = (img as HTMLImageElement).naturalHeight || (img as HTMLVideoElement).videoHeight;
+  const full = document.createElement("canvas");
+  full.width = w; full.height = h;
+  const fg = full.getContext("2d")!;
+  fg.imageSmoothingQuality = "high";
+  fg.drawImage(m, 0, 0, w, h);
+  // 用 toBlob 不用 toDataURL：後者是同步的，一張三千萬畫素的 PNG 編碼會把介面凍住一秒。
+  const blob = await new Promise<Blob>((ok, bad) =>
+    full.toBlob((x) => (x ? ok(x) : bad(new Error("PNG 編不出來"))), "image/png"));
+  await invoke("save_png", { path: `${dir}/${name}`, data: toBase64(await blob.arrayBuffer()) });
+  return sum / (n * n) / 255 * 100;
+}
+
+/// 內建材質。CC0，可以直接跟著 App 出貨——授權與生成方式見 `public/textures/_來源.md`，
+/// 要換材質前先把那份讀完（內建材質會被打包進上架的二進位檔，授權出錯是下架等級的事）。
+const TEXTURES: { key: string; label: string; file: string }[] = [
+  { key: "kraft",    label: "牛皮紙", file: "kraft.jpg" },
+  { key: "notebook", label: "筆記本", file: "notebook.jpg" },
+  { key: "noise",    label: "雜訊",   file: "noise.jpg" },
+];
+
+/// ArrayBuffer → base64。一次轉整包會爆 apply 的參數上限，所以切段。
+function toBase64(buf: ArrayBuffer): string {
+  const a = new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < a.length; i += 0x8000) {
+    s += String.fromCharCode(...a.subarray(i, i + 0x8000));
+  }
+  return btoa(s);
+}
+
+/// 把一個材質 key 變成專案 assets/ 裡的一張圖。key = null ＝開檔案框自己選。
+/// 回 null ＝使用者取消。
+///
+/// 內建材質是打包在前端裡的，磁碟上沒有那個檔——所以要先抓出位元組寫進專案 assets/，
+/// 這樣專案帶去 iPad 或別台機器材質都還在（不能只留一個「內建材質」的代號）。
+async function resolveTexture(key: string | null): Promise<{ name: string; img: HTMLImageElement } | null> {
+  const dir = assetsDir();
+  if (!dir) return null;
+  let name: string;
+  if (key) {
+    const t = TEXTURES.find((x) => x.key === key);
+    if (!t) return null;
+    name = `texture-${t.key}.jpg`;
+    if (!assets.raw.has(name)) {
+      const bytes = await (await fetch(`textures/${t.file}`)).arrayBuffer();
+      await invoke("save_png", { path: `${dir}/${name}`, data: toBase64(bytes) });
+    }
+  } else {
+    const src = await openDialog({
+      multiple: false,
+      defaultPath: lastDir("media"),
+      filters: [{ name: __("影像"), extensions: [...IMG_EXT] }],
+    });
+    if (typeof src !== "string") return null;
+    rememberDir("media", src);
+    name = await invoke<string>("copy_asset", { src, destDir: dir });
+  }
+  const img = assets.raw.get(name) ?? await loadImg(await localUrl(`${dir}/${name}`));
+  assets.raw.set(name, img);
+  assets.variants.set(name, img);
+  return { name, img };
+}
+
+/// 這個 block 如果是「填材質」疊出來的那一層，回它底下那張原圖。
+/// 用結構判斷：它有遮罩，而它下面有一個同框、沒遮罩的媒體 block——那正是下面那支疊出來的形狀。
+/// 刻意不加 schema 欄位來標記：欄位一加就綁上三平台同版，為了一個內部判斷不值得。
+function textureBase(b: Block): Block | null {
+  if (!current) return null;
+  if (b.content.type !== "image" || !b.content.media.matteFileName) return null;
+  const f = b.frame;
+  return current.blocks.find((k) => {
+    if (k.id === b.id || k.zIndex >= b.zIndex) return false;
+    if (k.content.type !== "image" && k.content.type !== "video") return false;
+    if (k.content.media.matteFileName) return false;
+    return k.frame.x === f.x && k.frame.y === f.y && k.frame.w === f.w && k.frame.h === f.h;
+  }) ?? null;
+}
+
+/// 把材質填進去背出來的形狀裡——小高丟的那兩張 IG 參考圖就是這個做法。
+///
+/// 疊一層新圖層在原圖上面，用**同一張遮罩**挖出主體形狀；原圖那層的遮罩改成不掛，
+/// 它就變回完整的背景照片。手動要做四步（複製、換素材、對齊、切保留哪一邊），一次做完。
+///
+/// 已經是材質層的話就地換素材，不再疊一層——不然「修…→改填筆記本」會愈疊愈厚。
+///
+/// ⚠️ 新圖層的 cropRect 是照抄原圖的，不是歸零：遮罩的對位吃的就是這個欄位
+///（見 render.ts 的對位規則），歸零的話原圖有裁切過就會整個錯開。材質本身是均勻的，
+/// 被同一個 cropRect 拉伸看不出來。
+function attachTexture(b: Block, name: string): void {
+  if (!current || (b.content.type !== "image" && b.content.type !== "video")) return;
+  const m = b.content.media;
+  if (!m.matteFileName) return;
+
+  if (textureBase(b)) {
+    if (m.assetFileName === name) return;   // 選的還是同一張＝什麼都沒改
+    m.assetFileName = name;
+    m.filterKey = undefined;
+    void ensureVariantFor(b);
+    editor.refresh(); inspector.show(current, b); scheduleThumbs();
+    commit("filltexture");
+    return;
+  }
+
+  const top = Math.max(...current.blocks.map((k) => k.zIndex));
+  const layer: Block = {
+    ...structuredClone(b),
+    id: newId(),
+    zIndex: top + 1,
+    content: {
+      type: "image",
+      media: {
+        ...structuredClone(m),
+        assetFileName: name,
+        filterKey: undefined,        // 材質不該繼承照片的濾鏡
+        carouselAssets: undefined, carouselInterval: undefined,
+        carouselMode: undefined, carouselDir: undefined,
+      },
+    },
+  };
+  current.blocks.push(layer);
+  m.matteFileName = undefined;       // 底下那層變回完整的照片
+  m.matteInverted = undefined;
+
+  void ensureVariantFor(layer);
+  editor.refresh();
+  editor.select(layer.id);
+  inspector.show(current, layer);
+  scheduleThumbs();
+  commit("filltexture");
+}
+
+/// 這個 block 現在填著的材質（只有材質層才有）。給編輯間預選用。
+function currentFill(b: Block): { key: string; name: string; img: HTMLImageElement } | undefined {
+  if (!textureBase(b) || b.content.type !== "image") return undefined;
+  const name = b.content.media.assetFileName;
+  const img = assets.raw.get(name);
+  if (!img || !(img instanceof HTMLImageElement)) return undefined;
+  return { key: TEXTURES.find((t) => `texture-${t.key}.jpg` === name)?.key ?? "*", name, img };
+}
+
+async function fillTexture(b: Block, key: string | null): Promise<void> {
+  const t = await resolveTexture(key);
+  if (t) attachTexture(b, t.name);
+}
+
 async function ensureVariantFor(b: Block): Promise<void> {
   if (b.content.type !== "image" && b.content.type !== "video") return;
   const m = b.content.media;
@@ -412,15 +820,21 @@ async function pickMediaForBlock(b: Block): Promise<void> {
   assets.raw.set(assetKey, img);
   assets.variants.set(assetKey, img);
   const old = b.content.media;
+  const hadMatte = !!old.matteFileName;
   b.content = {
     type: isVid ? "video" : "image",
-    media: { ...old, assetFileName: name, cropRect: { x: 0, y: 0, w: 1, h: 1 }, rotationDegrees: undefined },
+    // 遮罩要跟著清掉：它是**這張照片**的主體輪廓，換了照片形狀就對不上了。
+    // 留著的話會安靜地繼續套在新圖上，比任何錯誤訊息都難查。
+    // （「填材質」共用同一張遮罩那條路走的是 fillTexture，不經過這裡。）
+    media: { ...old, assetFileName: name, cropRect: { x: 0, y: 0, w: 1, h: 1 },
+             rotationDegrees: undefined, matteFileName: undefined, matteInverted: undefined },
   };
   await ensureVariantFor(b);
   editor.refresh();
   inspector.show(current, b);
   scheduleThumbs();
   commit("fill");
+  if (hadMatte) meta.textContent = __("換了素材，原本的去背遮罩已清掉——形狀是跟著舊照片的");
 }
 
 // ── 參考線記憶欄（1–9）──────────────────────────────────────────────
@@ -470,8 +884,27 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
     commit("inspector");
   },
   ensureVariant: ensureVariantFor,
+  openBrushPrefs: () => openBrushPrefs(() => editor.refresh()),
   fillMedia: (b) => { pickMediaForBlock(b).catch((x) => { meta.textContent = __f("填圖失敗：{msg}", { msg: x.message ?? x }); }); },
   addCarousel: (b) => { addCarouselImages(b).catch((x) => { meta.textContent = __f("加輪播圖失敗：{msg}", { msg: x.message ?? x }); }); },
+  makeMatte: runMatte,
+  editMatte: (b) => openMatteRoomFor(b),
+  matteModel: {
+    get: () => matteModel(),
+    installed: () => modelInstalled === true,
+    choose: async (k) => {
+      if (k !== "birefnet") {
+        setMatteModel("vision");
+        await invoke("model_unload").catch(() => {});   // 常駐的 session 放掉，別佔那 100MB
+        return;
+      }
+      if (!(await modelReady()) && !(await downloadModel())) return;
+      setMatteModel("birefnet");
+    },
+    remove: removeModel,
+  },
+  matteTextures: () => TEXTURES.map((t) => ({ key: t.key, label: __(t.label), url: `textures/${t.file}` })),
+  fillTexture: (b, key) => fillTexture(b, key),
   // 匯入字型檔（剪映語彙的「自訂」）：存進 App 資料夾 UserFonts/，重開還在。
   // 專案照舊只存 PostScript 名——iPad 也匯同一套字型，專案就兩邊長一樣。
   importFont: async () => {
@@ -610,12 +1043,21 @@ function show(p: Project, a?: LoadedAssets, videoSrc?: (file: string) => string)
   strip.render(p, renderOpts());
   videos.attach(videoSrc ?? null);   // 換專案＝舊播放器全收掉，再照新來源接
   editor.setVideos(videoSrc ? videos.frames : undefined);
+  // 片長先問一輪（metadata-only）：播放時間軸的「隨影片播完」規則開場就要用
+  if (videoSrc) videos.probe(p.blocks.flatMap((b) =>
+    b.content.type === "video" && b.content.media.assetFileName ? [b.content.media.assetFileName] : []));
+  editor.videoDur = (file) => {
+    const d = videos.durations.get(file);
+    if (d && d > 0) return d;
+    videos.probe([file]);   // 沒探過（例：剛拖進來的影片）＝現在補問，下一次播放就有
+    return undefined;
+  };
   models.attach(videoSrc ?? null);   // 3D 池同一個素材 URL 解析器（媒體伺服器通吃）
   editor.setModels(models);
 }
 
 function renderOpts() {
-  return { images: assets.variants, filters: filterAssets, models, placeholderForMissingMedia: true };
+  return { images: assets.variants, mattes: assets.variants, filters: filterAssets, models, placeholderForMissingMedia: true };
 }
 
 // ── 匯出台的 PNG 選項（2026-08-14，優化項目 #11）──────────────────────
@@ -631,7 +1073,7 @@ function exportOpts() {
   const scale = exportPng.scale2x ? 2 : 1;
   if (!exportPng.alpha) return { ...renderOpts(), scale };
   return {
-    images: assets.variants, models, placeholderForMissingMedia: true, scale,
+    images: assets.variants, mattes: assets.variants, models, placeholderForMissingMedia: true, scale,
     transparent: true,
     onlyBlockIds: exportPng.textOnly && current
       ? new Set(current.blocks
@@ -792,15 +1234,18 @@ playBtn.classList.add("on");
 
 window.addEventListener("blur", closeMenu);
 
-/** 選單項：分隔線、或一顆（可帶子選單）。 */
-type MenuItem = "-" | { label: string; key?: string; run?: () => void; sub?: MenuItem[] };
+/** 選單項：分隔線、或一顆（可帶子選單）。
+ *  icon＝行首的線性 SVG（2026-08-26 小高定調：**選單前面要有 icon，之後新選單一律配**，
+ *  能用 icon 減少文字就減少；寧可做了被刪、不要缺）。 */
+type MenuItem = "-" | { label: string; icon?: string; key?: string; run?: () => void; sub?: MenuItem[] };
 
 function buildMenu(host: HTMLElement, items: MenuItem[]): void {
   host.replaceChildren();
   for (const it of items) {
     if (it === "-") { host.append(document.createElement("hr")); continue; }
     const row = document.createElement("button");
-    row.innerHTML = `<span>${it.label}</span><span class="k">${it.sub ? "▸" : it.key ?? ""}</span>`;
+    const ic = it.icon ? `<span class="mi">${it.icon}</span>` : "";
+    row.innerHTML = `<span>${ic}${it.label}</span><span class="k">${it.sub ? "▸" : it.key ?? ""}</span>`;
     if (it.sub) {
       const sub = document.createElement("div");
       sub.className = "sub";
@@ -1760,6 +2205,20 @@ $<HTMLSpanElement>("#addbar").addEventListener("click", (e) => {
   if (kind) addBlock(kind).catch((x) => { meta.textContent = __f("新增失敗：{msg}", { msg: x.message ?? x }); });
 });
 
+// 圖形合併成一顆（2026-08-26 小高定案）：點了出選單挑矩形／圓形／線條，
+// 選單機借齒輪那套（openMenu），跟上方工具列其他選單同一種面板。
+$<HTMLButtonElement>("#shapeBtn").addEventListener("click", (e) => {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  const add = (kind: string) => {
+    addBlock(kind).catch((x) => { meta.textContent = __f("新增失敗：{msg}", { msg: x.message ?? x }); });
+  };
+  openMenu([
+    { label: __("矩形"), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="13" height="10" rx="1.5"/></svg>', run: () => add("rectangle") },
+    { label: __("圓形"), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6.5"/></svg>', run: () => add("ellipse") },
+    { label: __("線條"), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 15.5l11-11"/></svg>', run: () => add("line") },
+  ], { x: r.left, y: r.bottom + 8 });
+});
+
 $<HTMLButtonElement>("#save").addEventListener("click", () => {
   saveProject().catch((x) => { meta.textContent = __f("存檔失敗：{msg}", { msg: x.message ?? x }); });
 });
@@ -2053,24 +2512,39 @@ function buildTour(): TourStep[] {
 $<HTMLButtonElement>("#gearBtn").addEventListener("click", (e) => {
   const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
   openMenu([
-    { label: __("操作導覽（帶著做一次）"), run: () => {
+    { label: __("操作導覽（帶著做一次）"), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M12.5 7.5l-1.6 4.2-4.2 1.6 1.6-4.2z"/></svg>', run: () => {
       openSample("/samples/intro").then(() => startTour(buildTour())).catch(() => { /* 開不到樣本就不開導覽 */ });
     } },
-    { label: __("線上說明"), run: () => { void invoke("open_url", { url: `${REPO}#readme` }); } },
+    { label: __("線上說明"), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M8 8a2 2 0 1 1 3 1.7c-.7.4-1 .8-1 1.6"/><path d="M10 14h.01"/></svg>', run: () => { void invoke("open_url", { url: `${REPO}#readme` }); } },
     "-",
-    { label: __("回報問題（Email）"), run: reportBugMail },
-    { label: __("回報問題（GitHub Issues）"), run: () => { void invoke("open_url", { url: `${REPO}/issues/new` }); } },
+    { label: __("回報問題（Email）"), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="14" height="10" rx="1.6"/><path d="M3.5 6l6.5 5 6.5-5"/></svg>', run: reportBugMail },
+    { label: __("回報問題（GitHub Issues）"), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="11" r="4.5"/><path d="M10 6.5V4M6.6 7.6L5 6M13.4 7.6L15 6M4.5 11H3M17 11h-1.5M6.6 14.4L5 16M13.4 14.4L15 16"/></svg>', run: () => { void invoke("open_url", { url: `${REPO}/issues/new` }); } },
     "-",
     // 字體商店：47 套開放授權可商用字（選集致敬壹加壹 What'Sub），下載進
     // IndexedDB、不裝進系統。裝／移除後重畫選單（字型下拉每次 rebuild 都重讀目錄）。
-    { label: __("字體商店"), run: () => {
+    { label: __("字體商店"), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15L8.2 5h.8L13 15M5.6 11.5h5.6"/><path d="M14 15c1.6 0 2.5-.9 2.5-2.3V9.4c0-.9-.7-1.4-1.7-1.4-.8 0-1.4.3-1.8.8"/></svg>', run: () => {
       openFontStore(() => { inspector.show(current, editor.getSelected()); });
+    } },
+    // 筆刷偏好設定：軟鉛筆參數（P1）；改完編輯畫布上的軟鉛筆筆畫立即重渲
+    { label: __("筆刷偏好設定") + " · New", icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12.2 3.8l4 4L8 16H4v-4z"/><path d="M10.5 5.5l4 4"/></svg>', run: () => {
+      openBrushPrefs(() => editor.refresh());
     } },
     "-",
     // 語言：手動切換（2026-08-21，之前只跟系統語言走、沒有入口）。存 localStorage 後整頁重載。
-    { label: locale() === "zh" ? "Language: English" : "語言：繁體中文", run: () => { setLocale(locale() === "zh" ? "en" : "zh"); } },
+    { label: locale() === "zh" ? "Language: English" : "語言：繁體中文", icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c-4.5 4.7-4.5 9.3 0 14M10 3c4.5 4.7 4.5 9.3 0 14"/></svg>', run: () => { setLocale(locale() === "zh" ? "en" : "zh"); } },
+    // 外觀三態循環（跟系統→淺色→深色→跟系統），跟語言同款「切了就 reload」，不做 live 重繪管線
+    { label: __("外觀：") + " · New " + __(({ system: "跟系統", light: "淺色", dark: "深色" } as const)[
+        (localStorage.getItem("alignedTheme") ?? "system") as "system" | "light" | "dark"]),
+      icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M10 3v14M10 3a7 7 0 0 1 0 14" fill="currentColor" stroke="none"/><circle cx="10" cy="10" r="7"/></svg>',
+      run: () => {
+        const cur = (localStorage.getItem("alignedTheme") ?? "system") as "system" | "light" | "dark";
+        const next = ({ system: "light", light: "dark", dark: "system" } as const)[cur];
+        if (next === "system") localStorage.removeItem("alignedTheme");
+        else localStorage.setItem("alignedTheme", next);
+        location.reload();
+      } },
     "-",
-    { label: __("檢查更新"), key: `v${appVersion}`, run: () => {
+    { label: __("檢查更新"), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 10a6 6 0 1 1-1.8-4.3"/><path d="M16 3v3.2h-3.2"/></svg>', key: `v${appVersion}`, run: () => {
       void checkUpdate(true).then((got) => {
         if (got === "latest") meta.textContent = __f("已是最新版（{version}）", { version: appVersion });
         if (got === "error") meta.textContent = __("連不上更新來源——檢查網路後再試");
@@ -2241,6 +2715,7 @@ function zoomProbe(): void {
   const sample = $<HTMLSelectElement>("#sample");
   if (inApp) {
     appVersion = await getVersion().catch(() => "");   // 齒輪選單與回報信要用
+    void modelReady();   // 先問一次模型裝了沒——面板是同步重建的，不能等
     // 真實專案樣本含個人照片，不隨 App 打包（beforeBuildCommand 會剝掉）——
     // App 開場給範本，自己的專案走首頁／⌘O
     sample.querySelector('option[value="/samples/real"]')?.remove();
@@ -2502,3 +2977,6 @@ function zoomProbe(): void {
     }, 1000);
   }
 })().catch((e) => { meta.textContent = __f(__("載入失敗：{msg}"), { msg: e.message }); });
+
+// dev：?brushprefs=1 直接開筆刷偏好設定（headless 截圖驗版面用）
+if (new URLSearchParams(location.search).has("brushprefs")) openBrushPrefs(() => editor.refresh());

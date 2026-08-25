@@ -178,13 +178,18 @@ export function timelineCycle(
 }
 
 /** 收集會影響時間軸的「非 BlockAnim」節奏：輪播與 3D 慢轉的週期（循環要進位到整數倍）、
- *  3D 快轉煞停的總長（循環至少要演完它）。編輯預覽與匯出共用——節奏只有一份。 */
+ *  3D 快轉煞停的總長（循環至少要演完它）。編輯預覽與匯出共用——節奏只有一份。
+ *
+ *  `videoDur`（2026-08-26 規則）：頁上有真影片時，影片長度也進週期——循環會進位到
+ *  片長的整數倍，影片永遠演完整支不被腰斬。長度是素材的執行期屬性（metadata），
+ *  不進檔案，由呼叫端供應（編輯端＝VideoPool、匯出端＝已載入的播放器、iOS＝AVAsset）。 */
 export function motionTempo(
   blocks: Iterable<{ content: { type: string;
-    media?: { carouselAssets?: string[]; carouselInterval?: number };
+    media?: { assetFileName?: string; carouselAssets?: string[]; carouselInterval?: number };
     model?: { mode?: "spin" | "spinStop"; secsPerTurn?: number; dur?: number };
     doodle?: { play?: "travel"; travelDur?: number; wobble?: string } } }>,
-): { periods: number[]; minEnd: number } {
+  videoDur?: (file: string) => number | undefined,
+): { periods: number[]; minEnd: number; auto: boolean } {
   const periods: number[] = [];
   let minEnd = 0;
   for (const b of blocks) {
@@ -192,6 +197,10 @@ export function motionTempo(
     if (c.type === "image" && c.media) {
       const p = carouselPeriod(c.media);
       if (p) periods.push(p);
+    }
+    if (c.type === "video" && c.media?.assetFileName && videoDur) {
+      const d = videoDur(c.media.assetFileName);
+      if (d && Number.isFinite(d) && d > 0.05) periods.push(d);
     }
     if (c.type === "model" && c.model) {
       if (c.model.mode === "spin") periods.push(Math.max(0.5, c.model.secsPerTurn ?? MODEL_SECS_PER_TURN));
@@ -202,7 +211,14 @@ export function motionTempo(
       periods.push(Math.max(0.3, c.doodle.travelDur ?? DOODLE_TRAVEL_DUR));
     }
   }
-  return { periods, minEnd };
+  return { periods, minEnd, auto: periods.length > 0 || minEnd > 0 };
+}
+
+/** 停留秒數的取值（2026-08-26 使用者定）：頁上有會播的內容（影片／輪播／3D 展示／
+ *  塗鴉巡線）＝停留自動「跟著播放長度」（hold 取 0，循環由週期進位補滿）；
+ *  只有純出場動畫的頁，手動的停留秒數才有意義。UI 的停留鈕同一條規則收放。 */
+export function effectiveHold(tempo: { auto: boolean }, animHold: number | undefined): number {
+  return tempo.auto ? 0 : (animHold ?? ANIM_HOLD);
 }
 
 /**

@@ -95,6 +95,25 @@ export function hiddenHost(): HTMLElement {
 export class VideoPool {
   /** 渲染用的即時影格表，鍵同 images（檔名＋濾鏡）。呼叫端拿的是同一個 Map 參照。 */
   readonly frames = new Map<string, CanvasImageSource>();
+  /** 檔名 → 片長（秒）。播放時間軸的「隨影片播完」規則要查（core/anim motionTempo）。
+   *  由活播放器的 metadata 與 probe() 一起餵；換專案不清——同檔片長不會變。 */
+  readonly durations = new Map<string, number>();
+  /** 探長度：只抓 metadata、不開解碼。開專案時把頁上所有影片先問一輪，
+   *  播放鍵按下去的那一刻時間軸才有片長可用（活播放器是懶建的，等不及）。 */
+  probe(files: Iterable<string>): void {
+    if (!this.url) return;
+    for (const file of files) {
+      if (!file || this.durations.has(file)) continue;
+      this.durations.set(file, 0);   // 佔位：同檔不重複探
+      const el = document.createElement("video");
+      el.preload = "metadata"; el.muted = true;
+      el.src = this.url(file);
+      el.addEventListener("loadedmetadata", () => {
+        if (Number.isFinite(el.duration) && el.duration > 0) this.durations.set(file, el.duration);
+        el.removeAttribute("src"); el.load();
+      }, { once: true });
+    }
+  }
   /** 轉檔輪替的起點——預算用完時，下一拍從沒輪到的那支開始。 */
   private rotate = 0;
   /** 診斷儀表（?diag=1 用）：上一拍的轉檔耗時／本秒轉了幾格／目前活著幾支。
@@ -274,6 +293,9 @@ export class VideoPool {
         el.src = src;
         hiddenHost().append(el);     // 必須進 DOM，理由見 hiddenHost
         el.play().catch(() => {});   // 靜音自動播放瀏覽器允許；真失敗就維持海報圖
+        el.addEventListener("loadedmetadata", () => {
+          if (Number.isFinite(el.duration) && el.duration > 0) this.durations.set(file, el.duration);
+        }, { once: true });
         const v: LiveVideo = { el, lastTime: -1, newFrame: false, rvfc: false, scratch: new Map(), display: new Map() };
         if ("requestVideoFrameCallback" in el) {
           v.rvfc = true;

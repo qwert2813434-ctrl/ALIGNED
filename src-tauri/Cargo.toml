@@ -16,3 +16,15 @@ tauri = { version = "2.11.3", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 base64 = "0.22"
 fontdb = "0.23"
+# 進階去背模型（BiRefNet）用。ort 內含 ONNX Runtime 且是**靜態連結**——
+# otool -L 只剩系統函式庫，沒有另一個 dylib 要簽名／公證。代價是 binary 多 ~32MB。
+ort = "=2.0.0-rc.13"
+ureq = "3"
+sha2 = "0.10"
+
+# 加速器各平台不同，實作同一份：Mac 走 CoreML、Windows 走 DirectML。
+[target.'cfg(target_os = "macos")'.dependencies]
+ort = { version = "=2.0.0-rc.13", features = ["coreml"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+ort = { version = "=2.0.0-rc.13", features = ["directml"] }

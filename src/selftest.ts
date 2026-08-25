@@ -2259,7 +2259,9 @@ async function run(): Promise<void> {
 // 有案例丟例外時，把它印在頁面上——沉默的測試頁比失敗的測試頁更糟
 run().catch((e) => {
   const out = document.querySelector<HTMLDivElement>("#out")!;
-  out.innerHTML = `<div class="bad">執行中斷：${(e as Error).message}</div>`
+  document.body.dataset.crashCtx = `done=${results.length} fails=${results.filter((r) => !r.ok).length}`
+    + ` lastFails=${results.filter((r) => !r.ok).slice(-4).map((r) => r.name).join("；")}`;
+  out.innerHTML += `<div class="bad">執行中斷：${(e as Error).message}</div>`
     + `<pre style="white-space:pre-wrap;font-size:12px;opacity:.7">${(e as Error).stack ?? ""}</pre>`;
   document.title = "ERROR";
 });

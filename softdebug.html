@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8"><title>softdebug</title>
+<body style="background:#ddd">
+<canvas id="c" width="1140" height="640" style="width:1140px"></canvas>
+<script type="module">
+import { drawDoodle, setSoftPrefs } from "/src/core/doodle";
+const g = document.getElementById("c").getContext("2d");
+g.fillStyle = "#FBF8F0"; g.fillRect(0, 0, 1140, 640);
+const W = 520, H = 260;
+const pts = [], press = [];
+for (let i = 0; i <= 90; i++) {
+  const u = i / 90;
+  pts.push((40 + u * 440) / W, (130 + Math.sin(u * Math.PI * 1.7) * 24) / H);
+  press.push(0.18 + 1.1 * u);
+}
+const block = { strokes: [{ pts, w: 10 / Math.min(W, H), color: "1A1A1A", brush: "soft", press }] };
+const cell = (x, y, label) => {
+  g.save(); g.translate(x, y); drawDoodle(g, block, W, H); g.restore();
+  g.fillStyle = "#333"; g.font = "14px sans-serif"; g.fillText(label, x + 8, y + 20);
+};
+setSoftPrefs({});            cell(20, 20,  "goo=0.92 紋理化（預設）");
+setSoftPrefs({ goo: 0 });    cell(580, 20, "goo=0（無黏性）");
+setSoftPrefs({ tooth: 0 });  cell(20, 340, "goo=0 tooth=0（裸 dab）");
+setSoftPrefs({ tooth: 0 });  setSoftPrefs({ tooth: 0, goo: 0.92 });
+                             cell(580, 340, "goo=0.92 tooth=0（只黏性）");
+setSoftPrefs({});
+</script>

@@ -7,6 +7,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod mediaserv;
+mod model;
 
 /// 呼叫系統的 Apple Archive 工具。
 /// Windows／Linux 沒有 `aa`，而 `.alignproj` 就是 AppleArchive/LZFSE 容器——
@@ -181,6 +182,51 @@ fn trim_video(app: tauri::AppHandle, src: String, dest: String, start: f64, end:
         PathBuf::from(&dest).parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default().as_str(),
     );
     Ok(())
+}
+
+/// 找打包進 App 的 alignmatte（去背器）。找法與 alignvideo 相同。
+/// Windows 端之後掛的是同名的 ONNX 版工具，CLI 介面一致，所以這裡不必分平台。
+fn find_alignmatte(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    let bundled = app.path().resolve("bin/alignmatte", tauri::path::BaseDirectory::Resource).ok();
+    [
+        bundled,
+        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("alignmatte"))),
+        Some(PathBuf::from("bin/alignmatte")),
+        Some(PathBuf::from("src-tauri/bin/alignmatte")),
+    ].into_iter().flatten().find(|p| p.exists())
+        .ok_or_else(|| if cfg!(target_os = "macos") {
+            "找不到 alignmatte（跑一次 mattetool/build.sh）".to_string()
+        } else {
+            "這個平台的去背工具還沒掛上（Windows 版走 ONNX 外掛模型，尚未實作）".to_string()
+        })
+}
+
+/// 去背：對 `src` 跑一次主體抽取，遮罩寫進 `dest_dir`，回
+/// `<檔名> <覆蓋率> <fine|suspect>`——覆蓋率太大是「圈到整棟樓」那種誤判的訊號，
+/// 由前端決定要不要提示換一種去背。抽不到主體回 Err("NO_SUBJECT")，
+/// 前端據此給一張空遮罩讓使用者自己刷，而不是彈一個失敗。
+// `(async)` 不是把它變成非同步函式，是叫 Tauri 拿去別的執行緒跑。
+// 不加的話同步指令是在主執行緒上跑的，去背要好幾秒＝整個介面凍住
+//（2026-08-25 小高回報「點去背有點卡」就是這個）。
+#[tauri::command(async)]
+fn make_matte(app: tauri::AppHandle, src: String, dest_dir: String, name: String) -> Result<String, String> {
+    let tool = find_alignmatte(&app)?;
+    fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    let dest = PathBuf::from(&dest_dir).join(&name);
+    let out = Command::new(&tool).arg(&src).arg(&dest).output()
+        .map_err(|e| format!("啟動 alignmatte 失敗：{e}"))?;
+    match out.status.code() {
+        Some(0) => {}
+        Some(2) => return Err("NO_SUBJECT".to_string()),
+        _ => return Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+    }
+    // stdout＝"ok <寬> <高> <來源> <覆蓋率%> <fine|suspect>"
+    let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let f: Vec<&str> = line.split_whitespace().collect();
+    let coverage = f.get(4).copied().unwrap_or("0");
+    let verdict = f.get(5).copied().unwrap_or("fine");
+    Ok(format!("{name} {coverage} {verdict}"))
 }
 
 /// 把使用者選的圖複製進專案 assets/，回新檔名。檔名用時間戳不用原名——
@@ -358,8 +404,10 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![load_project, save_png, save_text, pack_alignproj,
             pack_template, copy_asset, copy_asset_as,
-            make_temp_dir, export_video, media_base, trim_video,
-            list_system_fonts, list_user_fonts, import_font, open_url])
+            make_temp_dir, export_video, make_matte, media_base, trim_video,
+            list_system_fonts, list_user_fonts, import_font, open_url,
+            model::model_status, model::model_download, model::model_remove, model::model_matte,
+            model::model_unload])
         .run(tauri::generate_context!())
         .expect("tauri 啟動失敗");
 }

@@ -90,6 +90,11 @@ fn serve(stream: TcpStream, token: &str) -> std::io::Result<()> {
     let Some(rest) = target.strip_prefix(&format!("/{token}/")) else {
         return deny(stream, "403 Forbidden");
     };
+    // 查詢字串要先切掉。前端會在網址後面接 `?v=<時間戳>` 繞開瀏覽器快取
+    // （遮罩重跑後檔名不變，不繞就吃到舊的那張），不切的話 `?v=…` 會被
+    // 當成檔名的一部分，canonicalize 直接失敗變 404。真檔名裡的 `?`
+    // 走 encodeURIComponent 會是 %3F，所以切在原始的 `?` 上是安全的。
+    let rest = rest.split('?').next().unwrap_or(rest);
     let path = percent_decode(rest);
     let Ok(canon) = PathBuf::from(&path).canonicalize() else {
         return deny(stream, "404 Not Found");

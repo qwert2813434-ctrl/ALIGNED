@@ -8,7 +8,7 @@
 // 之後每一段只有「上一支影片與這一支影片之間」的 block，最後一段是最上面那支影片之上的全部。
 
 import type { Block, Project } from "./core/schema";
-import { ANIM_HOLD, ANIM_STAGGER, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
+import { ANIM_STAGGER, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import { pageRect } from "./core/geometry";
 import { applyFilter } from "./core/filters";
 import { maskAndStrokeCanvases, renderPageCanvas, type RenderOptions } from "./core/render";
@@ -103,9 +103,6 @@ export async function buildAnimFrames(
 
   const anims = new Map<string, BlockAnim>();
   for (const b of onPage) if (b.anim) anims.set(b.id, b.anim);
-  const tempo = motionTempo(onPage);
-  const { lead, cycle } = timelineCycle(anims.values(), tempo.periods,
-    project.animHold ?? ANIM_HOLD, project.animStagger ?? ANIM_STAGGER, tempo.minEnd);
 
   // 頁上的真影片：各開一個 seek 用的播放器（靜音、不真播，只跳格取像）。
   // ⚠️ **濾鏡代號要一起記**：drawMedia 查影格的鍵是「檔名|濾鏡」，只塞裸檔名的話
@@ -142,6 +139,15 @@ export async function buildAnimFrames(
       vids.set(file, { el, canvas, keys: new Set([fk]), scratch: new Map() });
     }
   }
+
+  // 時間軸在影片 metadata 之後才算：片長要進週期（循環進位到片長整數倍＝影片演完整支），
+  // 而且頁上有會播的內容時停留自動歸零（effectiveHold，2026-08-26 規則）。
+  const tempo = motionTempo(onPage, (file) => {
+    const d = vids.get(file)?.el.duration;
+    return Number.isFinite(d) ? d : undefined;
+  });
+  const { lead, cycle } = timelineCycle(anims.values(), tempo.periods,
+    effectiveHold(tempo, project.animHold), project.animStagger ?? ANIM_STAGGER, tempo.minEnd);
 
   const videos = new Map<string, CanvasImageSource>();
   const total = Math.round(cycle * opts.fps);

@@ -26,6 +26,9 @@ const VERTICAL_PITCH_EM = 1.22;
 export interface RenderOptions {
   /** 缺圖時畫佔位框（範本的 asset 是被剝掉的，正常）。 */
   placeholderForMissingMedia?: boolean;
+  /** 去背遮罩查表：鍵＝`matte:<檔名>` 或 `matte:<檔名>!`（反轉），值＝已轉好的 alpha 畫布。
+   *  由 main.ts 的 matteCanvas 在載入時轉一次；渲染只做一次 destination-in。 */
+  mattes?: Map<string, CanvasImageSource>;
   images?: Map<string, CanvasImageSource>;
   /**
    * 影片的**即時影格**（`<video>` 或已套濾鏡的暫存畫布），鍵同 images。
@@ -566,6 +569,16 @@ export function maskAndStrokeCanvases(
   return { mask, stroke };
 }
 
+/** 去背合成用的離屏畫布。重用一張——拖曳時每格都會進來，每格 new 一張會頓。 */
+let _stage: HTMLCanvasElement | null = null;
+function mediaStage(w: number, h: number): HTMLCanvasElement {
+  const W = Math.max(1, Math.round(w)), H = Math.max(1, Math.round(h));
+  if (!_stage) _stage = document.createElement("canvas");
+  if (_stage.width !== W || _stage.height !== H) { _stage.width = W; _stage.height = H; }
+  else _stage.getContext("2d")!.clearRect(0, 0, W, H);
+  return _stage;
+}
+
 function drawMedia(
   ctx: CanvasRenderingContext2D,
   m: MediaBlock,
@@ -586,10 +599,18 @@ function drawMedia(
        ?? opts.images?.get(`${m.assetFileName}.poster.jpg${suffix}`))
     : undefined;
 
-  ctx.save();
+  // 去背遮罩：媒體要先畫進離屏畫布再 destination-in，不能直接對頁面 ctx 做——
+  // destination-in 會把「這個 block 以外」已經畫好的東西一起擦掉。
+  const matte = m.matteFileName
+    ? opts.mattes?.get(`matte:${m.matteFileName}${m.matteInverted ? "!" : ""}`)
+    : undefined;
+  const stage = matte ? mediaStage(w, h) : null;
+  const target = stage ? stage.getContext("2d")! : ctx;
+
+  target.save();
   if (m.maskShape != null || (m.maskCornerRadius ?? 0) > 0) {
-    maskPath(ctx, m, w, h);
-    ctx.clip();
+    maskPath(target, m, w, h);
+    target.clip();
   }
 
   if (img) {
@@ -602,7 +623,7 @@ function drawMedia(
     const deg = m.rotationDegrees ?? 0;
     if (!deg) {
       // 沒拉直（絕大多數）＝原本那條路，逐位不變——不能讓沒轉過的圖有任何位移
-      ctx.drawImage(img, c.x * iw, c.y * ih, c.w * iw, c.h * ih, 0, 0, w, h);
+      target.drawImage(img, c.x * iw, c.y * ih, c.w * iw, c.h * ih, 0, 0, w, h);
     } else {
       // 拉直：把**放大後的整張圖**繞自己的中心轉，再平移讓裁切區中心落到視窗中心。
       // 平移量本身也要被同一個角度轉過（那是螢幕空間的位移）——iOS 修過的 parity bug，
@@ -610,23 +631,42 @@ function drawMedia(
       const sw = w / c.w, sh = h / c.h;
       const ax = (c.x + c.w / 2 - 0.5) * sw, ay = (c.y + c.h / 2 - 0.5) * sh;
       const r = (deg * Math.PI) / 180, cs = Math.cos(r), sn = Math.sin(r);
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, 0, w, h);
-      ctx.clip();
-      ctx.translate(w / 2 - (cs * ax - sn * ay), h / 2 - (sn * ax + cs * ay));
-      ctx.rotate(r);
-      ctx.drawImage(img, -sw / 2, -sh / 2, sw, sh);
-      ctx.restore();
+      target.save();
+      target.beginPath();
+      target.rect(0, 0, w, h);
+      target.clip();
+      target.translate(w / 2 - (cs * ax - sn * ay), h / 2 - (sn * ax + cs * ay));
+      target.rotate(r);
+      target.drawImage(img, -sw / 2, -sh / 2, sw, sh);
+      target.restore();
     }
   } else if (opts.placeholderForMissingMedia) {
-    ctx.strokeStyle = "rgba(128,128,128,.45)";
-    ctx.setLineDash([8, 8]);
-    ctx.lineWidth = 2;
-    ctx.strokeRect(1, 1, w - 2, h - 2);
-    ctx.setLineDash([]);
+    target.strokeStyle = "rgba(128,128,128,.45)";
+    target.setLineDash([8, 8]);
+    target.lineWidth = 2;
+    target.strokeRect(1, 1, w - 2, h - 2);
+    target.setLineDash([]);
   }
-  ctx.restore();
+  target.restore();
+
+  if (stage && matte) {
+    // 遮罩不能直接拉滿整格——它要跟「它描述的那張照片」用同一套裁切，
+    // 否則人形會相對背景整個偏掉。遮罩與原圖同尺寸，所以：
+    //   cropRect 是哨兵值（沒手動裁過）→ 對遮罩自己算一次 aspect-fill，
+    //     結果與照片那次完全相同，兩者天然對齊；
+    //     「人形當窗口填材質」也走這條——材質框自己 aspect-fill，
+    //     遮罩仍對齊底下那張照片。
+    //   有手動裁過 → 同一個 cropRect 直接套（遮罩與原圖同尺寸，比例一致）。
+    const sg = stage.getContext("2d")!;
+    const { w: mw, h: mh } = naturalSize(matte);
+    const mc = (m.cropRect.x === 0 && m.cropRect.y === 0 && m.cropRect.w === 1 && m.cropRect.h === 1)
+      ? aspectFillCrop(mw, mh, w, h)
+      : m.cropRect;
+    sg.globalCompositeOperation = "destination-in";
+    sg.drawImage(matte, mc.x * mw, mc.y * mh, mc.w * mw, mc.h * mh, 0, 0, w, h);
+    sg.globalCompositeOperation = "source-over";
+    ctx.drawImage(stage, 0, 0);
+  }
 
   const sw = (m.strokeWidth ?? 0) * Math.min(w, h);
   if (sw > 0 && m.strokeHex) {
