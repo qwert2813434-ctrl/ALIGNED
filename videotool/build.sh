@@ -47,12 +47,13 @@ assert "UIImage" not in s and "UIKit" not in s, "合成器那段混進了 UIKit�
 # （applyPaperCILive 內部就是 grainLayer，同一組數學），所以 box 改存 key。
 s = s.replace("""    var paper: PagePaper?
     var paperFiber: CIImage?""", """    var paperKey: String?""")
+# 2026-08-26：iOS 端紙張加了套用範圍遮罩（papered＋CIBlendWithMask），錨點跟著改；
+# 遮罩合成那段原樣保留，只把「烤好的 fiber」換成工具端現算的 Live 版。
 s = s.replace("""            if let paper = box.paper {
-                composite = FilterEngine.applyPaperCI(paper, fiber: box.paperFiber,
-                                                      to: composite, pageRect: pageRect)
-            }""", """            if let key = box.paperKey {
-                composite = FilterEngine.applyPaperCILive(key, to: composite)
-            }""")
+                let papered = FilterEngine.applyPaperCI(paper, fiber: box.paperFiber,
+                                                        to: composite, pageRect: pageRect)""",
+"""            if let key = box.paperKey {
+                let papered = FilterEngine.applyPaperCILive(key, to: composite)""")
 assert "paperKey" in s and "applyPaperCILive" in s, "紙張改寫沒生效"
 
 s = "import AVFoundation\nimport CoreImage\nimport Foundation\n\n" + s

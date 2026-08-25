@@ -27,8 +27,11 @@ notarize() {
 echo "▸ 簽名（hardened runtime）"
 ditto "$APP" "$WORK/ALIGNED.app"
 # 巢狀的可執行檔要先自己簽（hardened runtime 下沒簽的內嵌 binary 會讓公證直接退件），
-# 由內而外：alignvideo → .app。
-codesign --force --options runtime --timestamp -s "$ID" "$WORK/ALIGNED.app/Contents/Resources/bin/alignvideo"
+# 由內而外：sidecars（alignvideo＋alignmatte）→ .app。1.3.0 新增 alignmatte（去背器）——
+# 沒簽到它就是 2026-08-26 那次公證退件的原因。
+for BIN in "$WORK/ALIGNED.app/Contents/Resources/bin/"*; do
+  codesign --force --options runtime --timestamp -s "$ID" "$BIN"
+done
 codesign --force --options runtime --timestamp -s "$ID" "$WORK/ALIGNED.app"
 
 echo "▸ 公證 app（幾分鐘）"

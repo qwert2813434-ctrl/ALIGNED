@@ -16,6 +16,8 @@ final class PageOverlayBox {
     /// 整頁紙張 (Stage 3b) — both set by composePage before the session starts
     /// (fiber pre-rendered on the main actor); the compositor only reads them.
     var paperKey: String?
+    /// 紙張套用範圍的灰階遮罩（白＝鋪紙）。nil＝整頁都鋪（原本行為）。
+    var paperMask: CIImage?
     /// 濾鏡鏈在 **sRGB 工作空間**評估——九顆濾鏡的參數全是在 sRGB 下校準的
     /// （FilterEngine.ctx 同一設定）。CIContext 預設的線性空間會讓同一組
     /// CIToneCurve 參數跑出不同色調＝「輸出跟預覽對不上」（2026-08-05 Mac 端抓到）。
@@ -92,7 +94,16 @@ final class PageOverlayCompositor: NSObject, AVVideoCompositing {
             // draws the background), so the blend modes have real content to
             // bite — never blend paper against transparency.
             if let key = box.paperKey {
-                composite = FilterEngine.applyPaperCILive(key, to: composite)
+                let papered = FilterEngine.applyPaperCILive(key, to: composite)
+                // 套用範圍：白＝紙、黑＝原畫面。沒遮罩＝整頁（原本行為）。
+                if let mask = box.paperMask {
+                    composite = papered.applyingFilter("CIBlendWithMask", parameters: [
+                        kCIInputBackgroundImageKey: composite,
+                        kCIInputMaskImageKey: mask,
+                    ])
+                } else {
+                    composite = papered
+                }
             }
             // 告訴編碼器 buffer 裡是什麼（709＝H.264 的預設語意、與 sRGB 同原色）——
             // 不標的話編碼器自己猜，偏色量隨機器而異
