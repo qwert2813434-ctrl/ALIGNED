@@ -26,3 +26,6 @@ paperscopedemo.html
 vidfilterdemo.html
 src/paperscopedemo.ts
 src/vidfilterdemo.ts
+
+# Android 殼的產生物（feat/android-shell 才會有；主線不收）
+src-tauri/gen/

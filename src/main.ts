@@ -6,6 +6,7 @@ import { __, __f, keys, localizeTitles, locale, setLocale } from "./i18n";
 //   素材一律走殼層的 127.0.0.1 媒體伺服器（CORS 乾淨，canvas 不污染）。
 // - **瀏覽器（npm run dev）**：開發與自測用。開檔只吃裸 project.json（讀不到同層
 //   assets/，LZFSE 也解不了）——那是開發便利，不是產品路徑。
+import { applyPerfHud, isPerfHudOn, togglePerfHud } from "./perfhud";
 import { decodeProject, encodeProject, type Block, type Project } from "./core/schema";
 import { loadFonts, registerSystemFonts, registerUserFont, type DynamicFont } from "./core/fonts";
 import { restoreStoreFonts, unresolvedNames, repairable, downloadStoreFont } from "./core/fontstore";
@@ -403,7 +404,12 @@ async function runMatte(b: Block): Promise<string | null> {
     const file = b.content.type === "video" ? `${m.assetFileName}.poster.jpg` : m.assetFileName;
     const img = assets.raw.get(file);
     if (img) {
-      meta.textContent = __("BiRefNet 去背中…");
+      // 第一次跑要先讓 CoreML 把模型編成神經引擎版本，好幾分鐘、而且完全沒有動靜。
+      // 不講的話使用者只會看到「點了沒反應」（2026-08-30 小高實際踩到）。
+      const cached = await invoke<boolean>("model_cached").catch(() => true);
+      meta.textContent = cached
+        ? __("BiRefNet 去背中…")
+        : __("第一次使用 BiRefNet：正在編譯模型，要幾分鐘，只有這一次");
       // 讓那行字先畫出來再開始搬像素——不讓一幀，使用者按下去到看見字之間是全黑的
       await new Promise((r) => requestAnimationFrame(r));
       try {
@@ -598,9 +604,31 @@ async function birefnetMatte(img: HTMLImageElement | HTMLVideoElement,
   }
   mg.putImageData(id, 0, 0);
 
-  // 放回原圖尺寸再存。遮罩必須與原圖同尺寸，對位規則吃的是這個。
-  const w = (img as HTMLImageElement).naturalWidth || (img as HTMLVideoElement).videoWidth;
-  const h = (img as HTMLImageElement).naturalHeight || (img as HTMLVideoElement).videoHeight;
+  // 放回原圖比例再存。
+  //
+  // ⚠️ 不放回**原圖尺寸**——模型只看過 1024²，放大到 6000×4000 存出來的是一張
+  // 2400 萬畫素、卻只有 100 萬畫素內容的遮罩（2026-08-29 實測：把小高那三張遮罩
+  // 縮回 1024 再放大，誤差只有 0.03–0.04／255 ＝ 裡面一點多餘資訊都沒有）。
+  // 代價卻是實打實的：載入時 `matteCanvas` 要跑 2400 萬次的逐畫素迴圈、
+  // 一張 alpha 變體 96 MB、正反兩張就 192 MB。所以長邊壓到 2048。
+  //
+  // 對位安全：兩端算遮罩位置吃的都是**比例**（桌面 `aspectFillCrop`、iOS
+  // `renderedImage`）＋ cropRect 的分數，跟解析度無關。**整數倍縮**才不會讓比例
+  //跑掉——除不盡就退回四捨五入（誤差 <0.1%，顯示上是次畫素）。
+  const nw = (img as HTMLImageElement).naturalWidth || (img as HTMLVideoElement).videoWidth;
+  const nh = (img as HTMLImageElement).naturalHeight || (img as HTMLVideoElement).videoHeight;
+  const MATTE_MAX = 2048;
+  let w = nw, h = nh;
+  if (Math.max(nw, nh) > MATTE_MAX) {
+    const k0 = Math.ceil(Math.max(nw, nh) / MATTE_MAX);
+    let k = k0;
+    while (k <= k0 * 2 && (nw % k !== 0 || nh % k !== 0)) k++;   // 找除得盡的倍率
+    if (k <= k0 * 2) { w = nw / k; h = nh / k; }
+    else {
+      const s = MATTE_MAX / Math.max(nw, nh);
+      w = Math.max(1, Math.round(nw * s)); h = Math.max(1, Math.round(nh * s));
+    }
+  }
   const full = document.createElement("canvas");
   full.width = w; full.height = h;
   const fg = full.getContext("2d")!;
@@ -2529,6 +2557,13 @@ $<HTMLButtonElement>("#gearBtn").addEventListener("click", (e) => {
     { label: __("筆刷偏好設定") + " · New", icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12.2 3.8l4 4L8 16H4v-4z"/><path d="M10.5 5.5l4 4"/></svg>', run: () => {
       openBrushPrefs(() => editor.refresh());
     } },
+    // 效能數據：卡頓回報時直接念數字，不用兩邊猜（2026-08-30 收回主線）
+    { label: __("效能數據") + (isPerfHudOn() ? " ✓" : ""), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16h14"/><path d="M5.5 16V11M9 16V6M12.5 16v-7M16 16v-3.5"/></svg>',
+      key: "⌥⌘P",
+      run: () => {
+        const on = togglePerfHud(editor);
+        meta.textContent = on ? __("效能數據：開（⌥⌘P 關）") : __("效能數據：關");
+      } },
     "-",
     // 語言：手動切換（2026-08-21，之前只跟系統語言走、沒有入口）。存 localStorage 後整頁重載。
     { label: locale() === "zh" ? "Language: English" : "語言：繁體中文", icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c-4.5 4.7-4.5 9.3 0 14M10 3c4.5 4.7 4.5 9.3 0 14"/></svg>', run: () => { setLocale(locale() === "zh" ? "en" : "zh"); } },
@@ -2645,6 +2680,14 @@ window.addEventListener("keydown", (e) => {
     inspector.show(current, editor.getSelected());
     return;
   }
+  // ⌥⌘P＝效能數據開關（齒輪選單裡也有一份）。⌥ 一起按時 e.key 在 macOS 會變成
+  // 「π」，所以認 e.code 不認 e.key——這是 ⌥ 組合鍵的通則。
+  if (e.altKey && e.code === "KeyP") {
+    e.preventDefault();
+    const on = togglePerfHud(editor);
+    meta.textContent = on ? __("效能數據：開（⌥⌘P 關）") : __("效能數據：關");
+    return;
+  }
   // ⌥1–9＝套用參考線記憶欄、⇧⌥1–9＝存入目前參考線。
   // 看 e.code 不看 e.key——Mac 上 ⌥ 會把數字鍵變成特殊字元（⌥1＝¡）
   if (e.altKey && !e.metaKey && !e.ctrlKey && /^Digit[1-9]$/.test(e.code)) {
@@ -2711,6 +2754,7 @@ function zoomProbe(): void {
   // 字型必須先載完再畫——canvas 對還沒載入的字型會靜默回落系統字型，不報錯只是全錯。
   [, filterAssets] = await Promise.all([loadFonts(), loadFilterAssets(), restoreStoreFonts()]);
   editor.setFilters(filterAssets);   // 沒餵的話畫布不會套整頁紙張（匯出卻會），所見即所不得
+  applyPerfHud(editor);              // 效能數據面板：上次開著就繼續開著（⌥⌘P／齒輪選單）
 
   const sample = $<HTMLSelectElement>("#sample");
   if (inApp) {

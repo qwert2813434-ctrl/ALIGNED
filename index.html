@@ -33,7 +33,13 @@
            /* 視窗不夠寬時工具列可以橫捲，別把右邊的工具裁到抓不到
               （2026-08-25 小高回報；細捲軸只在溢出時出現） */
            overflow-x: auto; scrollbar-width: thin; }
-  #title { font-weight: 600; font-size: 14px; white-space: nowrap; }
+  /* 標題點一下就地改名（2026-08-29）——hover 才長出可編輯的樣子，平常還是一行字 */
+  #title { font-weight: 600; font-size: 14px; white-space: nowrap;
+           padding: 2px 6px; margin: 0 -6px; border-radius: 6px; cursor: text; }
+  #title:hover { background: var(--chrome); }
+  #titleedit { display: none; font: inherit; font-weight: 600; font-size: 14px;
+    width: 300px; max-width: 34vw; padding: 2px 6px; margin: 0 -6px; border-radius: 6px;
+    border: 1px solid #2F7CF6; background: var(--card); color: var(--ink); outline: none; }
   #meta, #info { font-size: 12px; color: var(--ink2);
                  font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* 狀態訊息先讓位（可截斷），工具島永遠優先佔位 */
@@ -230,28 +236,28 @@
   .updbar .updgo { background: #2F7CF6; border-color: #2F7CF6; color: #fff; }
 
   /* 新專案：小卡片，不用整頁沙發——選項只有三個 */
-  #newsheet { position: fixed; inset: 0; z-index: 12; display: none;
+  #newsheet, #rensheet { position: fixed; inset: 0; z-index: 12; display: none;
               align-items: center; justify-content: center;
               background: color-mix(in srgb, var(--ink) 22%, transparent); backdrop-filter: blur(3px); }
-  #newsheet.on { display: flex; }
-  #newcard { width: 340px; background: var(--card); color: var(--ink);
+  #newsheet.on, #rensheet.on { display: flex; }
+  #newcard, #rencard { width: 340px; background: var(--card); color: var(--ink);
              border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px 16px;
              box-shadow: 0 18px 60px rgba(0,0,0,.28); }
-  #newcard h2 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
-  #newcard .row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
-  #newcard .row > label { width: 56px; flex: none; color: var(--ink2); font-size: 12.5px; }
-  #newcard input, #newcard select { font: inherit; font-size: 12.5px; flex: 1; min-width: 0;
+  #newcard h2, #rencard h2 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
+  #newcard .row, #rencard .row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+  #newcard .row > label, #rencard .row > label { width: 56px; flex: none; color: var(--ink2); font-size: 12.5px; }
+  #newcard input, #rencard input, #newcard select, #rencard select { font: inherit; font-size: 12.5px; flex: 1; min-width: 0;
     border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px;
     background: var(--chrome); color: var(--ink); }
-  #newcard input[type=number] { flex: none; width: 68px; }
+  #newcard input[type=number], #rencard input[type=number] { flex: none; width: 68px; }
   #ratiobox { display: flex; align-items: center; gap: 12px; margin: 14px 0 4px;
               padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
   #ratiosw { border: 1.5px solid #2F7CF6; border-radius: 4px; flex: none; }
   #ratiotxt { font-size: 12.5px; color: var(--ink2); font-variant-numeric: tabular-nums; line-height: 1.7; }
-  #newcard .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-  #newcard button { font: inherit; font-size: 12.5px; padding: 5px 14px; border-radius: 999px;
+  #newcard .acts, #rencard .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  #newcard button, #rencard button { font: inherit; font-size: 12.5px; padding: 5px 14px; border-radius: 999px;
     border: 1px solid var(--line); background: var(--chrome); color: var(--ink); cursor: pointer; }
-  #newcard button.primary { background: #2F7CF6; border-color: #2F7CF6; color: #fff; }
+  #newcard button.primary, #rencard button.primary { background: #2F7CF6; border-color: #2F7CF6; color: #fff; }
 
   /* 修剪視窗：底片條上兩根把手夾出選取範圍，外面壓暗。照 iOS VideoTrimView 的語彙 */
   /* 去背編輯間（2026-08-25）——控制面板固定在左側，捲動畫布時滑桿一直在手邊 */
@@ -483,7 +489,7 @@
 <body>
   <header>
     <span class="island"><button id="homeBtn" title="回首頁（最近專案）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 9.7L10 3.8l6.5 5.9"/><path d="M5.4 8.6v7.4h9.2V8.6"/></svg></button></span>
-    <span id="title">載入中</span>
+    <span id="title" title="點一下改名">載入中</span><input id="titleedit" type="text" spellcheck="false" autocomplete="off">
     <span id="meta"></span>
     <span id="info"></span>
     <span class="spacer"></span>
@@ -549,6 +555,16 @@
       <div class="acts">
         <button id="newcancel">取消</button>
         <button id="newok" class="primary">建立</button>
+      </div>
+    </div>
+  </div>
+  <div id="rensheet">
+    <div id="rencard">
+      <h2>重新命名</h2>
+      <div class="row"><label>名稱</label><input id="renname" type="text" spellcheck="false" autocomplete="off"></div>
+      <div class="acts">
+        <button id="rencancel">取消</button>
+        <button id="renok" class="primary">儲存</button>
       </div>
     </div>
   </div>

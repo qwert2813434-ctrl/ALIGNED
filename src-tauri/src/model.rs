@@ -36,6 +36,14 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("birefnet_lite_fp16.onnx"))
 }
 
+/// CoreML 編好的模型放哪。與模型檔同一層，移除模型時一起清掉。
+#[cfg(target_os = "macos")]
+fn cache_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("models/coreml");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
 /// 模型狀態：`"none"` ／ `"<位元組數>"`。前端只需要知道在不在、多大。
 #[tauri::command]
 pub fn model_status(app: tauri::AppHandle) -> Result<String, String> {
@@ -46,12 +54,32 @@ pub fn model_status(app: tauri::AppHandle) -> Result<String, String> {
     })
 }
 
+/// CoreML 編好的版本在不在。前端用它決定要不要先講「第一次要編譯，會等一下」。
+/// 非 macOS 一律回 true（沒有這個編譯步驟，不必嚇人）。
+#[tauri::command]
+pub fn model_cached(#[allow(unused_variables)] app: tauri::AppHandle) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return cache_dir(&app)
+            .ok()
+            .and_then(|d| fs::read_dir(d).ok())
+            .is_some_and(|mut it| it.next().is_some());
+    }
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
 #[tauri::command]
 pub fn model_remove(app: tauri::AppHandle) -> Result<(), String> {
     model_unload()?;   // Windows 上檔案還被開著會刪不掉
     let p = model_path(&app)?;
     if p.exists() {
         fs::remove_file(&p).map_err(|e| e.to_string())?;
+    }
+    // 編好的 CoreML 快取跟著走——留著只是佔空間，模型都沒了它也對不上
+    #[cfg(target_os = "macos")]
+    if let Ok(c) = cache_dir(&app) {
+        let _ = fs::remove_dir_all(&c);
     }
     Ok(())
 }
@@ -132,8 +160,18 @@ pub fn model_matte(app: tauri::AppHandle, rgb: String) -> Result<String, String>
         let mut b = ort::session::Session::builder().map_err(|e| e.to_string())?;
         #[cfg(target_os = "macos")]
         {
+            // ⚠️ **一定要給快取目錄**。不給的話 CoreML 每次建 session 都會把整顆模型
+            // 重編一次給神經引擎——`ANECompilerService` 燒滿一整顆核心好幾分鐘，
+            // 期間畫面完全沒有動靜，看起來就是「點了去背沒反應」（2026-08-30 實測）。
+            // 給了之後只有第一次要編，之後每次開 App 直接讀編好的。
+            // 目錄放在模型旁邊：移除模型時整包一起清（見 `model_remove`）。
+            let cache = cache_dir(&app)?;
             b = b
-                .with_execution_providers([ort::ep::CoreML::default().build()])
+                .with_execution_providers([
+                    ort::ep::CoreML::default()
+                        .with_model_cache_dir(cache.to_string_lossy())
+                        .build(),
+                ])
                 .map_err(|e| e.to_string())?;
         }
         #[cfg(target_os = "windows")]

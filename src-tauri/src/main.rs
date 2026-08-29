@@ -407,7 +407,7 @@ fn main() {
             make_temp_dir, export_video, make_matte, media_base, trim_video,
             list_system_fonts, list_user_fonts, import_font, open_url,
             model::model_status, model::model_download, model::model_remove, model::model_matte,
-            model::model_unload])
+            model::model_unload, model::model_cached])
         .run(tauri::generate_context!())
         .expect("tauri 啟動失敗");
 }

@@ -93,9 +93,112 @@ const paperClassOf = (b: Block): "text" | "objects" =>
  * 單頁渲染成原尺寸的 canvas。**匯出與編輯預覽共用這條路**，兩者不可能分家。
  * iOS 的 ImageRenderer 用 scale 1——畫布尺寸本身就是目標像素，沒有 2x/3x。
  */
+/**
+ * 整頁烤好的結果快取。
+ *
+ * 紙張是**整頁的逐畫素運算**，開了之後每一頁每一幀都要：開一張整頁離屏畫布 →
+ * 畫整頁 → `getImageData` 讀回 CPU → 逐畫素套紙 → 寫回 → 貼上去。讀回 CPU 是
+ * 畫布上最貴的操作（會逼 GPU 停下來等）。而且不是全套的時候還要照 z 序分段，
+ * 每段各一張整頁畫布。2026-08-30 小高那份實測：5 頁、17 塊，**每一幀 12 次整頁
+ * 渲染＋5 次整頁讀回＝730 萬畫素的 CPU 迴圈**，平移一下就卡死。
+ *
+ * 但平移、縮放的時候頁面內容一個畫素都沒變。所以整頁存一張，內容沒變就直接貼。
+ * 鑰匙走 `blockSig` 那套（見它的檔頭）：新增欄位自動涵蓋，不必回來改這裡。
+ */
+const _pageCache = new Map<string, HTMLCanvasElement>();
+// 同一頁會有好幾種變體：畫布（S=1）、膠捲、卡片縮圖、匯出（S=2）各一張。
+// 五頁的專案就可能同時要 15–20 張——上限訂 8 的話它們會互相擠掉，
+// 每一幀全部重算，比沒有快取還糟（2026-08-30 差點踩到）。真正的煞車是總畫素。
+const PAGE_CACHE_MAX = 32;
+/** 2400 萬畫素 ≈ 96 MB。一頁 1080×1350 是 146 萬，所以編輯時八張都放得下。 */
+const PAGE_CACHE_PIXELS = 24_000_000;
+
+/**
+ * 這一塊會不會「同樣的資料、不同的時間，畫出來不一樣」。會的話整頁就不能存。
+ *
+ * 五種：正在跑出場動畫、3D（角度由 pool 現算）、塗鴉的巡線／抖動、多圖輪播、
+ * 影片的即時影格。其餘的（照片、文字、形狀、靜態塗鴉）跟時間無關，
+ * **就算畫布正在「播放中」也照樣可以存**。
+ */
+function timeDependent(b: Block, opts: RenderOptions): boolean {
+  if (opts.anims?.has(b.id)) return true;
+  if (opts.time !== undefined && b.anim) return true;
+  const c = b.content;
+  if (c.type === "model") return true;
+  if (c.type === "doodle") return !!(c.doodle.play || c.doodle.wobble);
+  if (c.type === "image" || c.type === "video") {
+    const m = c.media;
+    if (m.carouselAssets?.length) return true;
+    const suffix = m.filterKey ? `|${m.filterKey}` : "";
+    if (opts.videos?.get(m.assetFileName + suffix)) return true;
+  }
+  return false;
+}
+
+/**
+ * 這一頁「畫出來會長怎樣」由什麼決定。回 null＝這一頁不可以快取。
+ *
+ * 不可以快取的三種內容——它們的畫面會變、但 block 的 JSON 不會變，
+ * 存起來就會凍住（**這種錯不會報錯，只會看起來壞掉**，所以寧可保守）：
+ *   ① 動畫播放中（每一格的位置都不同）
+ *   ② 影片的即時影格（同一張 canvas 一直被覆寫，身分編號抓不到它變了）
+ *   ③ 3D 物件（角度由 pool 現算，也不在 JSON 裡）
+ *
+ * `pageBlocks` 已經把 `skipBlockId`／`onlyBlockIds`／`viewRect` 過濾掉了，
+ * 所以那三個選項自動反映在下面的清單裡，不必另外進鑰匙。
+ */
+function pageSig(project: Project, index: number, opts: RenderOptions, S: number): string | null {
+  const page = pageRect(project, index);
+  const blocks = pageBlocks(project, page, opts);
+  // ⚠️ 判斷「這一頁會不會隨時間變」要看**這一頁上真的有沒有會動的東西**，
+  // 不能看 `opts.time` 有沒有值。畫布開檔就是「播放中」，即使整份專案一個動畫
+  // 都沒有，time 仍然每幀都被設——照 time 判斷等於把整頁快取永久關掉，
+  // 而且面板還會顯示「命中 0・重算 0」，看起來像沒被呼叫（2026-08-30 小高錄影實測：
+  // 切圖全命中、整頁永遠 0／0、卻還是 180 ms 一幀，就是這個）。
+  for (const b of blocks) if (timeDependent(b, opts)) return null;
+  let h = fnv(`${index}|${S}|${project.paperKey ?? ""}|${project.pageHeight}|${project.canvasWidth}`);
+  h = fnv(`${project.paperOnObjects}|${project.paperOnBackground}|${project.paperOnText}`, h);
+  h = fnv(`${!!opts.transparent}|${!!opts.filters}|${!!opts.placeholderForMissingMedia}`, h);
+  h = fnv(`${JSON.stringify(project.pageBackgroundHex ?? null)}`, h);
+  for (const b of blocks) h = fnv(`|${blockSig(b, opts)}`, h);
+  return String(h);
+}
+
+/**
+ * 對外版：**永遠回一張自己的畫布**。
+ *
+ * ⚠️ 不可以把快取那張本尊交出去。膠捲會把拿到的 canvas 直接塞進 DOM、掛點擊與
+ * 拖曳事件；卡片縮圖會拿去縮。一個 DOM 節點只能待在一個地方，本尊被搬走之後
+ * 畫布那邊還在拿它畫，事件也會一輪一輪疊上去。複製一張只是一次 drawImage，
+ * 比重畫整頁＋逐畫素套紙便宜好幾個數量級（2026-08-30，這是加快取當天埋的雷）。
+ */
 export function renderPageCanvas(project: Project, index: number, opts: RenderOptions = {}): HTMLCanvasElement {
+  const c = pageCanvas(project, index, opts);
+  if (!c.shared) return c.canvas;
+  const copy = document.createElement("canvas");
+  copy.width = c.canvas.width; copy.height = c.canvas.height;
+  copy.getContext("2d")!.drawImage(c.canvas, 0, 0);
+  return copy;
+}
+
+/** 內部版：畫布每一幀都在呼叫，直接用快取那張不複製（只拿去 drawImage，不進 DOM）。 */
+function pageCanvas(
+  project: Project, index: number, opts: RenderOptions,
+): { canvas: HTMLCanvasElement; shared: boolean } {
   const page = pageRect(project, index);
   const S = opts.scale ?? 1;
+  const sig = pageSig(project, index, opts, S);
+  if (sig) {
+    const hit = _pageCache.get(sig);
+    if (hit) {
+      _pageCache.delete(sig); _pageCache.set(sig, hit);   // LRU
+      renderCounters.pageHit++;
+      return { canvas: hit, shared: true };
+    }
+    renderCounters.pageMiss++;
+  } else {
+    renderCounters.pageSkip++;
+  }
   const c = document.createElement("canvas");
   c.width = Math.round(page.w * S);
   c.height = Math.round(page.h * S);
@@ -103,8 +206,23 @@ export function renderPageCanvas(project: Project, index: number, opts: RenderOp
   if (S !== 1) ctx.scale(S, S);   // renderPage 照樣畫頁座標，transform 負責放大
   const hasPaper = !!project.paperKey && !!opts.filters;
   const scope = paperScope(project);
+  const keep = (): { canvas: HTMLCanvasElement; shared: boolean } => {
+    if (sig) {
+      _pageCache.set(sig, c);
+      // 張數與總畫素兩道上限：匯出 2× 的整頁是 23 MB 一張，只看張數會吃掉快 200 MB
+      let px = 0;
+      for (const v of _pageCache.values()) px += v.width * v.height;
+      while (_pageCache.size > PAGE_CACHE_MAX
+             || (px > PAGE_CACHE_PIXELS && _pageCache.size > 1)) {
+        const oldest = _pageCache.keys().next().value as string;
+        px -= (_pageCache.get(oldest)?.width ?? 0) * (_pageCache.get(oldest)?.height ?? 0);
+        _pageCache.delete(oldest);
+      }
+    }
+    return { canvas: c, shared: !!sig };
+  };
 
-  // 有紙張、而且**不是全套**：分層畫（背景一層＋依 z 序把同類的連續段各一層），
+  // 有紙張、而且**不是全套**：分層畫（背景一層＋依 z 序把連續同設定的段各一層），
   // 只在該套的那幾層套紙。分段而不是「先畫全部再補畫例外」——後者會把 z 序弄亂。
   if (hasPaper && !(scope.objects && scope.background && scope.text)) {
     const blocks = pageBlocks(project, page, opts);
@@ -128,14 +246,18 @@ export function renderPageCanvas(project: Project, index: number, opts: RenderOp
       ctx.restore();
     };
     layer(undefined, true, scope.background);
+    // ⚠️ 分段要照**「這一段要不要套紙」**分，不是照「文字／物件」分。
+    // 文字與物件的設定相同時（很常見，例如只有背景套紙），照類別分會把
+    // 「圖／字／圖」切成三段＝三次整頁重畫，但那三段的畫法一模一樣，
+    // 合成一段結果逐位相同。2026-08-30 小高那份光這一項就少一次整頁重畫。
     for (let i = 0; i < blocks.length;) {
-      const kind = paperClassOf(blocks[i]);
+      const paper = scope[paperClassOf(blocks[i])];
       let j = i;
-      while (j < blocks.length && paperClassOf(blocks[j]) === kind) j++;
-      layer(new Set(blocks.slice(i, j).map((b) => b.id)), false, scope[kind]);
+      while (j < blocks.length && scope[paperClassOf(blocks[j])] === paper) j++;
+      layer(new Set(blocks.slice(i, j).map((b) => b.id)), false, paper);
       i = j;
     }
-    return c;
+    return keep();
   }
 
   renderPage(ctx, project, index, opts);
@@ -144,7 +266,7 @@ export function renderPageCanvas(project: Project, index: number, opts: RenderOp
     applyPaper(project.paperKey, d, opts.filters!);
     ctx.putImageData(d, 0, 0);
   }
-  return c;
+  return keep();
 }
 
 export function renderPage(
@@ -265,7 +387,7 @@ export function renderStage(
     ctx.rect(page.x, page.y, page.w, page.h);
     ctx.clip();                      // 逐頁裁切＝跨頁 bleed 的全部實作
     if (viaCanvas) {
-      ctx.drawImage(renderPageCanvas(project, i, opts), page.x, page.y, page.w, page.h);
+      ctx.drawImage(pageCanvas(project, i, opts).canvas, page.x, page.y, page.w, page.h);
     } else {
       ctx.translate(page.x, page.y); // renderPage 內部用頁內座標
       renderPage(ctx, project, i, opts);
@@ -413,7 +535,7 @@ function drawBlock(
     }
     case "image":
     case "video":
-      drawMedia(ctx, b.content.media, f.w, f.h, opts, pageLight);
+      drawMedia(ctx, b, b.content.media, f.w, f.h, opts, pageLight);
       break;
     case "doodle":
       // 塗鴉：時間給巡線／筆刷感動態，reveal 給生長；都沒有＝靜態全畫
@@ -575,12 +697,127 @@ function mediaStage(w: number, h: number): HTMLCanvasElement {
   const W = Math.max(1, Math.round(w)), H = Math.max(1, Math.round(h));
   if (!_stage) _stage = document.createElement("canvas");
   if (_stage.width !== W || _stage.height !== H) { _stage.width = W; _stage.height = H; }
-  else _stage.getContext("2d")!.clearRect(0, 0, W, H);
+  else {
+    // ⚠️ 先歸零 transform 再清——這張畫布上一輪被設過縮放，帶著它清會清錯區域
+    const g = _stage.getContext("2d")!;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, W, H);
+  }
   return _stage;
 }
 
+/**
+ * 給每張來源圖一個穩定編號。**快取鍵不能用檔名**——去背編輯間「完成」是把烤好的
+ * 遮罩**寫回同一個檔**，檔名一個字都沒變但畫素變了（`refreshMatteVariants` 會換掉
+ * 那張 canvas）。認物件身分就不會拿到修邊前的舊圖。
+ */
+const _srcIds = new WeakMap<CanvasImageSource, number>();
+let _srcSeq = 0;
+function srcId(s: CanvasImageSource | undefined): number {
+  if (!s) return 0;
+  let id = _srcIds.get(s);
+  if (id === undefined) { id = ++_srcSeq; _srcIds.set(s, id); }
+  return id;
+}
+
+/**
+ * 一塊 block 的「內容指紋」。
+ *
+ * **快取鑰匙一律用它，不要手寫欄位清單。**手寫的清單有一個很難查的失效模式：
+ * 以後誰加了一個新的外觀欄位、忘了加進鑰匙，畫面就會靜靜地沿用舊的那張，
+ * 不報錯、不當掉，只是畫錯（2026-08-30 定案，第一版鑰匙就是手寫清單）。
+ * 走 JSON 的話，新欄位自動被涵蓋——**正確是預設值，不是要記得的事**。
+ *
+ * 代價量過：17 塊的專案 stringify＋雜湊 0.37 ms／次，而且只在真的要重畫時算一次。
+ * 對照它省下來的東西（一次整頁重畫就是幾十毫秒），這個價錢很便宜。
+ *
+ * 解析出來的來源圖要另外算：圖片是**載入後才換上去的**，換圖、重跑去背都不會
+ * 改到 block 的 JSON，只會換掉素材表裡的那個物件，所以身分編號也要進指紋。
+ */
+function fnv(s: string, h = 0x811c9dc5): number {
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+export function blockSig(b: Block, opts: RenderOptions): number {
+  let h = fnv(JSON.stringify(b));
+  const c = b.content;
+  if (c.type === "image" || c.type === "video") {
+    const m = c.media;
+    const suffix = m.filterKey ? `|${m.filterKey}` : "";
+    const src = opts.videos?.get(m.assetFileName + suffix)
+      ?? opts.images?.get(m.assetFileName + suffix)
+      ?? opts.images?.get(`${m.assetFileName}.poster.jpg${suffix}`);
+    const matte = m.matteFileName
+      ? opts.mattes?.get(`matte:${m.matteFileName}${m.matteInverted ? "!" : ""}`)
+      : undefined;
+    h = fnv(`|${srcId(src)}|${srcId(matte)}`, h);
+  }
+  return h;
+}
+
+/**
+ * 「切好的圖」快取：一塊圖在**目前這個顯示尺寸**下畫出來的樣子，存一張。
+ *
+ * 沒這一層的話，每一幀每一塊圖都要從原始點陣圖重新取樣。畫布只有 1080 寬、匯出
+ * 上限 2×，但相機照片進來就是 6000——一塊 756 寬的框每幀在縮 2400 萬畫素。
+ * 去背再乘四道（配畫布→縮原圖→destination-in→貼回）。2026-08-29 實測小高的
+ * 「去背宣傳2」：4 頁 8 塊圖，每幀取樣 **1.9 億畫素**，其中 7200 萬還是沒去背的圖。
+ *
+ * 快取鍵吃的是**這塊圖自己的顯示尺寸**，不是頁面寬——所以跨頁圖天生保住畫質
+ * （跨四頁的框就是 4320 寬，它的 stage 就有 4320 寬），縮放、匯出 2× 也各自是
+ * 不同的鍵、各自從原圖重畫一次，**任何路徑都沒有畫質損失**。
+ *
+ * 內容會動的不能進來：影片的即時影格是同一張 canvas 一直被覆寫，認物件身分抓不到
+ * 它變了。所以 `live` 那條一律走共用畫布、每幀重算（本來就是每幀不同的東西）。
+ */
+const _cutCache = new Map<string, HTMLCanvasElement>();
+/** 兩道上限：張數，以及總畫素（一張 stage 是顯示尺寸，跨頁圖那張會很寬）。
+ *  3200 萬畫素 ≈ 128 MB，比原本一張 6000×4000 遮罩的 alpha 版還省。 */
+const CUT_CACHE_MAX = 24;
+const CUT_CACHE_PIXELS = 32_000_000;
+function cutCacheGet(key: string): HTMLCanvasElement | undefined {
+  const hit = _cutCache.get(key);
+  if (hit) { _cutCache.delete(key); _cutCache.set(key, hit); }   // 命中就移到尾端＝LRU
+  return hit;
+}
+function cutCacheSet(key: string, c: HTMLCanvasElement): void {
+  _cutCache.set(key, c);
+  let px = 0;
+  for (const v of _cutCache.values()) px += v.width * v.height;
+  while (_cutCache.size > CUT_CACHE_MAX || (px > CUT_CACHE_PIXELS && _cutCache.size > 1)) {
+    const oldest = _cutCache.keys().next().value as string;   // 最久沒用到的在最前面
+    const v = _cutCache.get(oldest)!;
+    px -= v.width * v.height;
+    _cutCache.delete(oldest);
+  }
+}
+
+/** 效能計數器。每幀由讀的人歸零——渲染核心只管加。全是整數 ++，可以永遠開著。 */
+export const renderCounters = {
+  media: 0,        // 這一幀畫了幾塊圖／影片
+  matte: 0,        // 其中幾塊有去背遮罩
+  video: 0,        // 其中幾塊是影片的即時影格（不進快取）
+  cutHit: 0,       // 切好的圖：快取命中
+  cutMiss: 0,      // 切好的圖：重算（＝那一幀真的去縮了原圖）
+  pageHit: 0,      // 整頁：快取命中（紙張那條才會用到）
+  pageMiss: 0,     // 整頁：重烤（＝整頁重畫＋逐畫素套紙）
+  pageSkip: 0,     // 整頁：這一頁**不能**快取（有動畫／影片／3D／會動的塗鴉）
+  reset(): void {
+    this.media = this.matte = this.video = 0;
+    this.cutHit = this.cutMiss = 0;
+    this.pageHit = this.pageMiss = this.pageSkip = 0;
+  },
+  get cutCached(): number { return _cutCache.size; },
+  get pageCached(): number { return _pageCache.size; },
+};
+
 function drawMedia(
   ctx: CanvasRenderingContext2D,
+  b: Block,
   m: MediaBlock,
   w: number,
   h: number,
@@ -592,20 +829,64 @@ function drawMedia(
   // 影片畫的是海報圖（檔名＝影片名 + ".poster.jpg"），與 iOS 的預覽一致。
   // 濾鏡是預先套好的，所以查圖的鍵要帶上濾鏡代號——同一張圖套不同濾鏡是不同的快取項。
   const suffix = m.filterKey ? `|${m.filterKey}` : "";
-  // 編輯中的影片優先畫即時影格（iOS 畫布上是靜音自動循環的真播放）；沒有就退回海報
-  const img = m.assetFileName
-    ? (opts.videos?.get(m.assetFileName + suffix)
-       ?? opts.images?.get(m.assetFileName + suffix)
-       ?? opts.images?.get(`${m.assetFileName}.poster.jpg${suffix}`))
-    : undefined;
+  // 編輯中的影片優先畫即時影格（iOS 畫布上是靜音自動循環的真播放）；沒有就退回海報。
+  // live＝影片的即時影格。它是**同一張 canvas 一直被覆寫**，認物件身分抓不到它變了，
+  // 所以下面的快取一律跳過它——它本來就是每幀都不一樣的東西。
+  renderCounters.media++;
+  const live = opts.videos?.get(m.assetFileName + suffix);
+  if (live) renderCounters.video++;
+  const img = live
+    ?? opts.images?.get(m.assetFileName + suffix)
+    ?? opts.images?.get(`${m.assetFileName}.poster.jpg${suffix}`);
 
   // 去背遮罩：媒體要先畫進離屏畫布再 destination-in，不能直接對頁面 ctx 做——
   // destination-in 會把「這個 block 以外」已經畫好的東西一起擦掉。
   const matte = m.matteFileName
     ? opts.mattes?.get(`matte:${m.matteFileName}${m.matteInverted ? "!" : ""}`)
     : undefined;
-  const stage = matte ? mediaStage(w, h) : null;
+  if (matte) renderCounters.matte++;
+
+  // stage 要照**裝置畫素**烤，不是照頁座標。w／h 是頁座標，ctx 身上帶著縮放與
+  // Retina 倍率——照 w／h 烤再讓 ctx 放大，去背圖在 Retina 上就只剩一半解析度
+  // （這是快取加進來之前就有的毛病，一併修掉）。
+  const tf = ctx.getTransform();
+  const kx = Math.hypot(tf.a, tf.b) || 1, ky = Math.hypot(tf.c, tf.d) || 1;
+  // ⚠️ 夾限**絕不能夾到比頁座標還小**——那會比改這段之前還糊（原本就是照 w／h 烤的）。
+  // 8192 是留在 WebKit 畫布上限之內；跨二十頁那種極端寬的圖才碰得到。
+  const CAP = 8192;
+  const SW = Math.max(Math.round(w), Math.min(Math.max(1, Math.round(w * kx)), CAP));
+  const SH = Math.max(Math.round(h), Math.min(Math.max(1, Math.round(h * ky)), CAP));
+  // 太大就不進快取：一張就把別人全擠出去，反而每塊都在重算
+  const tooBig = SW * SH > 12_000_000;
+
+  // 這一塊「畫出來的樣子」由什麼決定：來源圖的身分＋幾何＋裝置尺寸。都沒變就整張
+  // 重用，每幀只剩一次 drawImage。圖還沒載進來（畫佔位框）不能快取——載好了就換不掉了。
+  // 鑰匙＝內容指紋＋裝置尺寸。指紋涵蓋整塊 block 的 JSON，所以新增外觀欄位
+  // 不必回來改這裡（見 blockSig 的檔頭）。
+  const key = img && !live && !tooBig ? `${blockSig(b, opts)}|${SW}|${SH}` : null;
+  const hit = key ? cutCacheGet(key) : undefined;
+  if (hit) {
+    renderCounters.cutHit++;
+    ctx.drawImage(hit, 0, 0, w, h);
+    drawFrameStroke(ctx, m, w, h);
+    return;
+  }
+  if (key) renderCounters.cutMiss++;
+
+  // 沒遮罩又不進快取（影片即時影格、極端縮放、圖還沒載到）＝走原本那條直接畫的路，
+  // 逐位不變。其餘都畫進離屏 stage：進快取的自己一張，不進的用共用那張。
+  let stage: HTMLCanvasElement | null = null;
+  if (matte || key) {
+    if (key) {
+      stage = document.createElement("canvas");
+      stage.width = SW; stage.height = SH;
+    } else {
+      stage = mediaStage(SW, SH);
+    }
+  }
   const target = stage ? stage.getContext("2d")! : ctx;
+  // stage 內部用頁座標作畫（下面整段程式碼一個字都不用改），由 transform 換算到裝置畫素
+  if (stage) target.setTransform(stage.width / w, 0, 0, stage.height / h, 0, 0);
 
   target.save();
   if (m.maskShape != null || (m.maskCornerRadius ?? 0) > 0) {
@@ -649,7 +930,7 @@ function drawMedia(
   }
   target.restore();
 
-  if (stage && matte) {
+  if (stage) {
     // 遮罩不能直接拉滿整格——它要跟「它描述的那張照片」用同一套裁切，
     // 否則人形會相對背景整個偏掉。遮罩與原圖同尺寸，所以：
     //   cropRect 是哨兵值（沒手動裁過）→ 對遮罩自己算一次 aspect-fill，
@@ -657,17 +938,27 @@ function drawMedia(
     //     「人形當窗口填材質」也走這條——材質框自己 aspect-fill，
     //     遮罩仍對齊底下那張照片。
     //   有手動裁過 → 同一個 cropRect 直接套（遮罩與原圖同尺寸，比例一致）。
-    const sg = stage.getContext("2d")!;
-    const { w: mw, h: mh } = naturalSize(matte);
-    const mc = (m.cropRect.x === 0 && m.cropRect.y === 0 && m.cropRect.w === 1 && m.cropRect.h === 1)
-      ? aspectFillCrop(mw, mh, w, h)
-      : m.cropRect;
-    sg.globalCompositeOperation = "destination-in";
-    sg.drawImage(matte, mc.x * mw, mc.y * mh, mc.w * mw, mc.h * mh, 0, 0, w, h);
-    sg.globalCompositeOperation = "source-over";
-    ctx.drawImage(stage, 0, 0);
+    if (matte) {
+      const sg = stage.getContext("2d")!;
+      const { w: mw, h: mh } = naturalSize(matte);
+      const mc = (m.cropRect.x === 0 && m.cropRect.y === 0 && m.cropRect.w === 1 && m.cropRect.h === 1)
+        ? aspectFillCrop(mw, mh, w, h)
+        : m.cropRect;
+      sg.globalCompositeOperation = "destination-in";
+      sg.drawImage(matte, mc.x * mw, mc.y * mh, mc.w * mw, mc.h * mh, 0, 0, w, h);
+      sg.globalCompositeOperation = "source-over";
+    }
+    if (key) cutCacheSet(key, stage);
+    ctx.drawImage(stage, 0, 0, w, h);
   }
 
+  drawFrameStroke(ctx, m, w, h);
+}
+
+/** 外框：描的是**框**（矩形／橢圓），不是去背的輪廓。 */
+function drawFrameStroke(
+  ctx: CanvasRenderingContext2D, m: MediaBlock, w: number, h: number,
+): void {
   const sw = (m.strokeWidth ?? 0) * Math.min(w, h);
   if (sw > 0 && m.strokeHex) {
     ctx.save();

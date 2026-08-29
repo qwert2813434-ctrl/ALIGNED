@@ -1470,7 +1470,9 @@ export class Editor {
   private backdrop?: { key: string; canvas: HTMLCanvasElement };
 
   /** 診斷儀表（?diag=1）：重畫耗時 EMA 與次數；raf＝心跳數（沒 dirty 也算）。 */
-  readonly frameStats = { ms: 0, paints: 0, raf: 0 };
+  /** maxMs＝上次被讀走之後最慢的那一幀（效能面板讀完自己歸零）。
+   *  平均值會把偶發的頓藏起來，掉幀要看的是最差值。 */
+  readonly frameStats = { ms: 0, paints: 0, raf: 0, maxMs: 0 };
 
   /** 出場動畫試播。null＝沒在播（畫布走靜態路徑，與加動畫前完全一致）。
    *  rAF 迴圈本來就一直在跑，這裡只是在播放期間餵 time 進渲染選項。 */
@@ -1704,6 +1706,7 @@ export class Editor {
     this.paintLiveStroke(ctx);
     const ms = performance.now() - ft0;
     this.frameStats.ms = this.frameStats.ms * 0.8 + ms * 0.2;
+    if (ms > this.frameStats.maxMs) this.frameStats.maxMs = ms;
     this.frameStats.paints++;
   };
 }
