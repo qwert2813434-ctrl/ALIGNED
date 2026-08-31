@@ -15,7 +15,9 @@ import { aspectFillCrop, intersects, pageRect } from "./geometry";
 import { cssFont } from "./fonts";
 import type { GuideLine, SpacingBadge } from "./align";
 import type { FilterAssets } from "./filters";
-import { applyPaper } from "./paper";
+import { filterSig } from "./filters";
+import { tornOf, tornCanvases } from "./tornedge";
+import { applyPaper, applyPaperGPU } from "./paper";
 import { animStateAt, carouselAt, maskWipeState, revealText, type BlockAnim } from "./anim";
 import { drawDoodle } from "./doodle";
 import { freeIntervals, wrapHoles } from "./textwrap";
@@ -55,6 +57,10 @@ export interface RenderOptions {
   /** 編輯畫布的視野（專案座標）。給了就跳過視野外的頁與 block——
    *  clip 語意不變，只是不畫看不見的。匯出／縮圖不給＝全畫。 */
   viewRect?: Rect;
+  /** 紙張走 GPU 原生混合（**只有編輯畫布開**）。匯出／縮圖一律不開＝CPU 版逐位不動；
+   *  兩路數學同式（見 paper.ts applyPaperGPU 檔頭），差別只在反鋸齒邊緣 ≤1/255 級。
+   *  紙張＋影片頁的 8→60fps 就是這一顆（2026-09-01，卡頓根因＝每幀整頁 CPU 逐畫素）。 */
+  paperGPU?: boolean;
 }
 
 /** 視野裁切用的外接框：轉過的 block 用旋轉 AABB，沒轉的直接用 frame。 */
@@ -129,7 +135,8 @@ function timeDependent(b: Block, opts: RenderOptions): boolean {
   if (c.type === "image" || c.type === "video") {
     const m = c.media;
     if (m.carouselAssets?.length) return true;
-    const suffix = m.filterKey ? `|${m.filterKey}` : "";
+    const sig = filterSig(m);
+    const suffix = sig ? `|${sig}` : "";
     if (opts.videos?.get(m.assetFileName + suffix)) return true;
   }
   return false;
@@ -158,7 +165,9 @@ function pageSig(project: Project, index: number, opts: RenderOptions, S: number
   for (const b of blocks) if (timeDependent(b, opts)) return null;
   let h = fnv(`${index}|${S}|${project.paperKey ?? ""}|${project.pageHeight}|${project.canvasWidth}`);
   h = fnv(`${project.paperOnObjects}|${project.paperOnBackground}|${project.paperOnText}`, h);
-  h = fnv(`${!!opts.transparent}|${!!opts.filters}|${!!opts.placeholderForMissingMedia}`, h);
+  // paperGPU 進 sig：編輯畫布（GPU 紙）與匯出（CPU 紙）像素有反鋸齒邊緣級的差，
+  // 共用同一格快取會讓匯出拿到 GPU 版——兩路必須各自一格
+  h = fnv(`${!!opts.transparent}|${!!opts.filters}|${!!opts.placeholderForMissingMedia}|${!!opts.paperGPU}`, h);
   h = fnv(`${JSON.stringify(project.pageBackgroundHex ?? null)}`, h);
   for (const b of blocks) h = fnv(`|${blockSig(b, opts)}`, h);
   return String(h);
@@ -172,9 +181,32 @@ function pageSig(project: Project, index: number, opts: RenderOptions, S: number
  * 畫布那邊還在拿它畫，事件也會一輪一輪疊上去。複製一張只是一次 drawImage，
  * 比重畫整頁＋逐畫素套紙便宜好幾個數量級（2026-08-30，這是加快取當天埋的雷）。
  */
+/** WKWebView 鐵則（2026-08-31 小高「匯出掉字型/掉標點、套紙後窄體消失」三症狀的統一根因）：
+ *  **沒掛進 DOM 的 canvas 走另一條殘缺的字型解析路**——使用者自裝字型整個解析不到
+ *  （整段回落襯線備援）、缺字備援在 normal 字重下直接畫豆腐（・①→□）。
+ *  Chrome 沒這病所以 dev 測不到，正式版（WKWebView）才發作。
+ *  對策：**所有會畫文字的離屏畫布一律掛進這個隱形 host**（display:none 不進排版、
+ *  實測掛著畫與可見畫逐位相同；畫完移除也安全——位圖還在，只是之後再畫字會退化）。 */
+let _canvasHost: HTMLDivElement | null = null;
+export function attachedCanvas(): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  if (typeof document !== "undefined" && document.body) {
+    if (!_canvasHost || !_canvasHost.isConnected) {
+      _canvasHost = document.createElement("div");
+      _canvasHost.style.display = "none";
+      _canvasHost.dataset.role = "offscreen-canvas-host";
+      document.body.append(_canvasHost);
+    }
+    _canvasHost.append(c);
+  }
+  return c;
+}
+
 export function renderPageCanvas(project: Project, index: number, opts: RenderOptions = {}): HTMLCanvasElement {
   const c = pageCanvas(project, index, opts);
-  if (!c.shared) return c.canvas;
+  // ⚠️ 不可快取那張也要複製：內部畫布掛在隱形 host（字型鐵則）且排了微任務回收，
+  // 直接交出去會在下一輪微任務被 remove()——膠捲/匯出台把它塞進 DOM 後畫面瞬間消失
+  // （2026-09-01 實病：去背宣傳2 的動畫塗鴉頁縮圖全空白）。「對外永遠回複製品」無例外。
   const copy = document.createElement("canvas");
   copy.width = c.canvas.width; copy.height = c.canvas.height;
   copy.getContext("2d")!.drawImage(c.canvas, 0, 0);
@@ -199,10 +231,11 @@ function pageCanvas(
   } else {
     renderCounters.pageSkip++;
   }
-  const c = document.createElement("canvas");
+  const c = attachedCanvas();   // 畫文字：必掛 DOM（見 attachedCanvas 的 WKWebView 鐵則）
   c.width = Math.round(page.w * S);
   c.height = Math.round(page.h * S);
-  const ctx = c.getContext("2d", { willReadFrequently: !!project.paperKey })!;
+  if (!sig) queueMicrotask(() => c.remove());   // 不進快取＝用完即棄；同步呼叫端畫完才輪到微任務
+  const ctx = c.getContext("2d", { willReadFrequently: !!project.paperKey && !opts.paperGPU })!;
   if (S !== 1) ctx.scale(S, S);   // renderPage 照樣畫頁座標，transform 負責放大
   const hasPaper = !!project.paperKey && !!opts.filters;
   const scope = paperScope(project);
@@ -215,7 +248,9 @@ function pageCanvas(
       while (_pageCache.size > PAGE_CACHE_MAX
              || (px > PAGE_CACHE_PIXELS && _pageCache.size > 1)) {
         const oldest = _pageCache.keys().next().value as string;
-        px -= (_pageCache.get(oldest)?.width ?? 0) * (_pageCache.get(oldest)?.height ?? 0);
+        const oc = _pageCache.get(oldest);
+        px -= (oc?.width ?? 0) * (oc?.height ?? 0);
+        oc?.remove();   // 逐出＝也從隱形 host 卸下
         _pageCache.delete(oldest);
       }
     }
@@ -227,23 +262,28 @@ function pageCanvas(
   if (hasPaper && !(scope.objects && scope.background && scope.text)) {
     const blocks = pageBlocks(project, page, opts);
     const layer = (ids: Set<string> | undefined, bg: boolean, paper: boolean): void => {
-      const lc = document.createElement("canvas");
+      const lc = attachedCanvas();   // 這層也畫文字，同一條鐵則
       lc.width = c.width; lc.height = c.height;
-      const lx = lc.getContext("2d", { willReadFrequently: true })!;
+      const lx = lc.getContext("2d", { willReadFrequently: !opts.paperGPU })!;
       if (S !== 1) lx.scale(S, S);
       // 只有背景層畫底色，其餘層一律透明；呼叫端要求透明匯出時連背景層也不填
       renderPage(lx, project, index, {
         ...opts, onlyBlockIds: ids ?? new Set(), transparent: bg ? !!opts.transparent : true,
       });
       if (paper) {
-        const d = lx.getImageData(0, 0, lc.width, lc.height);
-        applyPaper(project.paperKey, d, opts.filters!);
-        lx.putImageData(d, 0, 0);
+        // 背景層不透明（除非透明匯出）＝GPU 路免快照；文字段透明層走快照＋還原 alpha
+        if (!(opts.paperGPU && applyPaperGPU(lx, project.paperKey, opts.filters!,
+                                             bg && !opts.transparent))) {
+          const d = lx.getImageData(0, 0, lc.width, lc.height);
+          applyPaper(project.paperKey, d, opts.filters!);
+          lx.putImageData(d, 0, 0);
+        }
       }
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.drawImage(lc, 0, 0);
       ctx.restore();
+      lc.remove();
     };
     layer(undefined, true, scope.background);
     // ⚠️ 分段要照**「這一段要不要套紙」**分，不是照「文字／物件」分。
@@ -262,9 +302,11 @@ function pageCanvas(
 
   renderPage(ctx, project, index, opts);
   if (hasPaper) {
-    const d = ctx.getImageData(0, 0, c.width, c.height);
-    applyPaper(project.paperKey, d, opts.filters!);
-    ctx.putImageData(d, 0, 0);
+    if (!(opts.paperGPU && applyPaperGPU(ctx, project.paperKey, opts.filters!, !opts.transparent))) {
+      const d = ctx.getImageData(0, 0, c.width, c.height);
+      applyPaper(project.paperKey, d, opts.filters!);
+      ctx.putImageData(d, 0, 0);
+    }
   }
   return keep();
 }
@@ -666,7 +708,10 @@ export function maskAndStrokeCanvases(
   m: MediaBlock, w: number, h: number,
 ): { mask: HTMLCanvasElement | null; stroke: HTMLCanvasElement | null } {
   const has = m.maskShape != null || (m.maskCornerRadius ?? 0) > 0;
-  const sw = (m.strokeWidth ?? 0) * Math.min(w, h);
+  // 與 drawFrameStroke 同一條 1px 下限——同一道描邊，畫布上看得見、匯出的影片裡
+  // 就不能變成半畫素淡線（兩處要一致，改一邊必改另一邊）
+  const rawSw = (m.strokeWidth ?? 0) * Math.min(w, h);
+  const sw = rawSw > 0 ? Math.max(rawSw, 1) : 0;
   let mask: HTMLCanvasElement | null = null;
   let stroke: HTMLCanvasElement | null = null;
   if (has) {
@@ -687,6 +732,34 @@ export function maskAndStrokeCanvases(
     c.strokeStyle = hex(m.strokeHex);
     c.lineWidth = sw * 2;      // 形狀會把線寬對半切，加倍再裁回去＝往內描
     c.stroke();
+  }
+  // 撕紙邊：烤進這兩張圖，合成器（alignvideo）就零改動——
+  // 撕痕 alpha 併進 mask（destination-in＝交集）、紙芯白帶＋細影搭 stroke 的疊圖位。
+  // 撕紙邊開著＝邊取代框（同 drawFrameStroke 的抑制），矩形描邊不出。
+  const torn = tornOf(m);
+  if (torn) {
+    const W = Math.round(w), H = Math.round(h);
+    const tc = tornCanvases(torn, W, H);
+    if (!mask) {
+      mask = document.createElement("canvas");
+      mask.width = W; mask.height = H;
+      mask.getContext("2d")!.drawImage(tc.mask, 0, 0, W, H);   // 快取項不外流，畫一份（烤圖有帽）
+    } else {
+      const c = mask.getContext("2d")!;
+      c.globalCompositeOperation = "destination-in";
+      c.drawImage(tc.mask, 0, 0, W, H);
+      c.globalCompositeOperation = "source-over";
+    }
+    stroke = document.createElement("canvas");
+    stroke.width = W; stroke.height = H;
+    const sc = stroke.getContext("2d")!;
+    sc.drawImage(tc.overlay, 0, 0, W, H);
+    if (mask) {
+      // 同 drawMedia：紙芯白帶要被最終遮罩夾住，否則去背照片旁邊會浮一圈白
+      sc.globalCompositeOperation = "destination-in";
+      sc.drawImage(mask, 0, 0);
+      sc.globalCompositeOperation = "source-over";
+    }
   }
   return { mask, stroke };
 }
@@ -747,7 +820,8 @@ export function blockSig(b: Block, opts: RenderOptions): number {
   const c = b.content;
   if (c.type === "image" || c.type === "video") {
     const m = c.media;
-    const suffix = m.filterKey ? `|${m.filterKey}` : "";
+    const sig = filterSig(m);
+    const suffix = sig ? `|${sig}` : "";
     const src = opts.videos?.get(m.assetFileName + suffix)
       ?? opts.images?.get(m.assetFileName + suffix)
       ?? opts.images?.get(`${m.assetFileName}.poster.jpg${suffix}`);
@@ -828,7 +902,8 @@ function drawMedia(
   if (!m.assetFileName) { drawEmptySlot(ctx, m, w, h, pageLight); return; }
   // 影片畫的是海報圖（檔名＝影片名 + ".poster.jpg"），與 iOS 的預覽一致。
   // 濾鏡是預先套好的，所以查圖的鍵要帶上濾鏡代號——同一張圖套不同濾鏡是不同的快取項。
-  const suffix = m.filterKey ? `|${m.filterKey}` : "";
+  const sig = filterSig(m);
+  const suffix = sig ? `|${sig}` : "";
   // 編輯中的影片優先畫即時影格（iOS 畫布上是靜音自動循環的真播放）；沒有就退回海報。
   // live＝影片的即時影格。它是**同一張 canvas 一直被覆寫**，認物件身分抓不到它變了，
   // 所以下面的快取一律跳過它——它本來就是每幀都不一樣的東西。
@@ -868,15 +943,16 @@ function drawMedia(
   if (hit) {
     renderCounters.cutHit++;
     ctx.drawImage(hit, 0, 0, w, h);
-    drawFrameStroke(ctx, m, w, h);
+    if (!tornOf(m)) drawFrameStroke(ctx, m, w, h);   // 撕紙邊＝邊取代框（同下方主路）
     return;
   }
   if (key) renderCounters.cutMiss++;
 
   // 沒遮罩又不進快取（影片即時影格、極端縮放、圖還沒載到）＝走原本那條直接畫的路，
   // 逐位不變。其餘都畫進離屏 stage：進快取的自己一張，不進的用共用那張。
+  const torn = tornOf(m);
   let stage: HTMLCanvasElement | null = null;
-  if (matte || key) {
+  if (matte || key || torn) {
     if (key) {
       stage = document.createElement("canvas");
       stage.width = SW; stage.height = SH;
@@ -948,18 +1024,39 @@ function drawMedia(
       sg.drawImage(matte, mc.x * mw, mc.y * mh, mc.w * mw, mc.h * mh, 0, 0, w, h);
       sg.globalCompositeOperation = "source-over";
     }
+    if (torn) {
+      // 撕紙邊：烤好的遮罩把照片沿撕痕裁掉，覆蓋層補紙芯白帶＋細影。
+      // 靜態圖整組跟著進切圖快取（blockSig 吃整塊 JSON），影片每幀只多兩次 drawImage。
+      const tc = tornCanvases(torn, stage.width, stage.height);
+      const sg = stage.getContext("2d")!;
+      sg.save();
+      sg.setTransform(1, 0, 0, 1, 0, 0);
+      sg.globalCompositeOperation = "destination-in";
+      sg.drawImage(tc.mask, 0, 0, stage.width, stage.height);   // 烤圖有帽，明確拉到目標尺寸
+      // 🔴 覆蓋層要用 source-atop 不是 source-over：stage 這時可能已經被去背遮罩／
+      // 橢圓／大圓角挖過，source-over 會讓紙芯白帶浮在輪廓外面一整圈（2026-09-01 審查）。
+      sg.globalCompositeOperation = "source-atop";
+      sg.drawImage(tc.overlay, 0, 0, stage.width, stage.height);
+      sg.restore();
+    }
     if (key) cutCacheSet(key, stage);
     ctx.drawImage(stage, 0, 0, w, h);
   }
 
-  drawFrameStroke(ctx, m, w, h);
+  // 撕紙邊開著＝邊取代框，矩形描邊不畫（畫了會浮在被撕掉的缺口上）
+  if (!torn) drawFrameStroke(ctx, m, w, h);
 }
 
 /** 外框：描的是**框**（矩形／橢圓），不是去背的輪廓。 */
 function drawFrameStroke(
   ctx: CanvasRenderingContext2D, m: MediaBlock, w: number, h: number,
 ): void {
-  const sw = (m.strokeWidth ?? 0) * Math.min(w, h);
+  // 至少一個頁面畫素：描邊寬度存的是「短邊的比例」，面板最小刻度 1 ＝ 短邊的 0.12%，
+  // 短邊 400 的框上就是 0.48 畫素——畫得出來，但只有 36% 不透明度，匯出的圖上等於沒有
+  //（2026-08-30 小高在 iPad 回報「線寬 1 以下沒辦法被輸出」，CoreGraphics 實測
+  // 0.49px → alpha 93；桌面版的 canvas 同一條算式，同病）。iOS 端＝MediaMaskModifier.minStroke。
+  const rawSw = (m.strokeWidth ?? 0) * Math.min(w, h);
+  const sw = rawSw > 0 ? Math.max(rawSw, 1) : 0;
   if (sw > 0 && m.strokeHex) {
     ctx.save();
     // 描邊畫在遮罩輪廓上，線寬會被形狀對半切，所以加倍再裁回去才是「往內描」
@@ -1006,7 +1103,13 @@ function drawBodyFrame(
   const ascent = m.fontBoundingBoxAscent + (rowH - natural) / 2;   // 行高撐開時字垂直置中
   const paraGap = (t.paragraphSpacingEm ?? 0) * size;
   const minSeg = size * 1.05;      // 窄過一個字的段塞不了字
-  const chars = [...t.text];
+  // 段落 → 斷行單位序列（"\n" 自成一個單位當段落界）。逐字元會剖開英文單字與
+  // 版本號，跟 iOS 對不上（見 breakUnits 的說明）
+  const units: BreakUnit[] = [];
+  t.text.split("\n").forEach((para, pi) => {
+    if (pi) units.push({ text: "\n", trail: "" });
+    units.push(...breakUnits(para));
+  });
 
   let y0 = 0;
   if (!holes.length && t.verticalAlignment && t.verticalAlignment !== "top") {
@@ -1018,28 +1121,50 @@ function drawBodyFrame(
 
   let i = 0;
   let yTop = y0;
-  while (i < chars.length && yTop + rowH <= h + 0.5) {
+  while (i < units.length && yTop + rowH <= h + 0.5) {
     const segs = freeIntervals(yTop, yTop + rowH, w, holes, minSeg);
+    const widest = segs.length ? Math.max(...segs.map((s) => s.width)) : 0;
     let endedParagraph = false;
     for (const seg of segs) {
-      if (i >= chars.length) break;
-      if (chars[i] === "\n") { i++; endedParagraph = true; break; }
-      // 先量再收：一個字都塞不下＝這段留空，**不消耗字**（否則字會滲進洞）
-      let acc = "", count = 0;
-      while (i + count < chars.length && chars[i + count] !== "\n") {
-        const next = acc + chars[i + count];
+      if (i >= units.length) break;
+      if (units[i].text === "\n") { i++; endedParagraph = true; break; }
+      // 先量再收：一個單位都塞不下＝這段留空，**不消耗字**（否則字會滲進洞）
+      let acc = "", pending = "", count = 0;
+      while (i + count < units.length && units[i + count].text !== "\n") {
+        const u = units[i + count];
+        const next = acc + pending + u.text;
         if (count > 0 && lineWidth(ctx, next, kern) > seg.width) break;
-        acc = next; count++;
+        acc = next; pending = u.trail; count++;
       }
       if (!count) continue;
-      const lw = lineWidth(ctx, acc, kern);
-      if (count === 1 && lw > seg.width + 1) continue;
-      i += count;
+      let lw = lineWidth(ctx, acc, kern);     // 行尾空白不計寬
+      let consume = count;
+      if (count === 1 && lw > seg.width + 1) {
+        // 這一段塞不下這個單位。它若還窄過本行最寬的那一段，就留白讓更寬的段／下一行去接。
+        // 🔴 但**連本行最寬的段都放不下**（超長網址、長英數字串）就會永遠卡在同一個
+        // 單位上：i 不前進、yTop 一路加到框底，**這個單位以後的字整段消失**
+        // （2026-09-01 發版審查抓到的回歸——逐字元那版天生不會卡）。
+        // CoreText 這時是在字內硬斷，照做。
+        if (seg.width < widest - 0.5) continue;
+        const chars = [...units[i].text];
+        let take = 1;
+        while (take < chars.length
+               && lineWidth(ctx, chars.slice(0, take + 1).join(""), kern) <= seg.width) take++;
+        if (take < chars.length) {
+          acc = chars.slice(0, take).join("");
+          lw = lineWidth(ctx, acc, kern);
+          units[i] = { text: chars.slice(take).join(""), trail: units[i].trail };
+          consume = 0;                        // 這個單位還剩一截，下一段／下一行接著畫
+        }
+        // take 已經是整串＝連一個字元都比這段寬（字級大到爆框）：照畫讓它溢出，
+        // 但 consume 維持 1 一定要前進，否則又是同一個「後面全部不見」的死結。
+      }
+      i += consume;
       let x = seg.x;
       if (t.alignment === "center") x = seg.x + (seg.width - lw) / 2;
       else if (t.alignment === "trailing") x = seg.x + seg.width - lw;
       ctx.fillText(acc, x, yTop + ascent);
-      if (i < chars.length && chars[i] === "\n") { i++; endedParagraph = true; break; }
+      if (i < units.length && units[i].text === "\n") { i++; endedParagraph = true; break; }
     }
     yTop += rowH + (endedParagraph ? paraGap : 0);
   }
@@ -1143,15 +1268,88 @@ function lineWidth(ctx: CanvasRenderingContext2D, line: string, kern: number): n
   return ctx.measureText(line).width - kern;
 }
 
+/**
+ * 斷行單位（2026-09-01）。
+ *
+ * ⚠️ **不可以逐字元斷。** 原本的寫法一個字元一個字元塞，塞不下就地斷——
+ * 英文單字會被從中間剖開（`outside` → `out`／`side`）、版本號也是
+ * （`1.2.1~1.2.2` → `1.2.1~`／`1.2.2`）。iOS 走 CoreText 的 Unicode 斷行不會這樣，
+ * 於是同一份專案兩邊的換行位置全不同——小高 2026-09-01 用 iPad 截圖對照抓到的。
+ *
+ * 這裡做 CoreText 那套的近似：
+ *   - 中日韓字元：一字一單位（字與字之間都可以斷）
+ *   - 拉丁字母／數字／半形標點：連著算一個單位（**中間不准斷**）
+ *   - 空白：併進前一個單位的 `trail`。行尾的 trail 不計寬——CoreText 也是這樣，
+ *     不然「詞 + 一排空白」會因為空白撐爆而提早換行。
+ *   - 避頭尾：收尾標點（。、，）」…）不能站行首＝併進前一單位；
+ *     起頭標點（（「『…）不能站行尾＝併進後一單位。
+ */
+interface BreakUnit { text: string; trail: string }
+
+const CJK_RE = /[\u1100-\u11FF\u2E80-\u303F\u3040-\u30FF\u3130-\u318F\u3400-\u4DBF\u4E00-\u9FFF\uA960-\uA97F\uAC00-\uD7FF\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/;
+const CLOSE_RE = /[。、，．：；！？》）］｝」』】〉〕〙〗,.:;!?)\]}]/;
+const OPEN_RE = /[《（［｛「『【〈〔〘〖([{]/;
+
+function breakUnits(para: string): BreakUnit[] {
+  const us: BreakUnit[] = [];
+  for (const ch of para) {
+    const last = us[us.length - 1];
+    if (ch === " " || ch === "\t" || ch === "\u3000") {
+      if (last) last.trail += ch; else us.push({ text: "", trail: ch });
+      continue;
+    }
+    const cjk = CJK_RE.test(ch);
+    // 接得上前一個單位的條件：前面沒有空白隔開，而且兩邊都是非中日韓（＝同一個詞）
+    if (last && !last.trail && !cjk && last.text && !CJK_RE.test(last.text[last.text.length - 1])) {
+      last.text += ch;
+    } else {
+      us.push({ text: ch, trail: "" });
+    }
+  }
+  // 避頭尾：收尾標點往前併、起頭標點往後併
+  const out: BreakUnit[] = [];
+  for (const u of us) {
+    const prev = out[out.length - 1];
+    if (prev && !prev.trail && u.text.length === 1 && CLOSE_RE.test(u.text)) {
+      prev.text += u.text; prev.trail = u.trail; continue;
+    }
+    out.push({ ...u });
+  }
+  for (let i = out.length - 2; i >= 0; i--) {
+    const u = out[i];
+    if (!u.trail && u.text.length === 1 && OPEN_RE.test(u.text)) {
+      out[i + 1] = { text: u.text + out[i + 1].text, trail: out[i + 1].trail };
+      out.splice(i, 1);
+    }
+  }
+  return out;
+}
+
 function wrap(ctx: CanvasRenderingContext2D, text: string, maxW: number, kern: number): string[] {
   const out: string[] = [];
   for (const para of text.split("\n")) {
     if (!para) { out.push(""); continue; }
-    let line = "";
-    for (const ch of para) {
-      const next = line + ch;
-      if (line && lineWidth(ctx, next, kern) > maxW) { out.push(line); line = ch; }
-      else line = next;
+    let line = "";        // 已確定要畫的（含詞間空白）
+    let pending = "";     // 上一個單位的尾隨空白：只有後面真的還有字才算進去
+    for (const u of breakUnits(para)) {
+      let word = u.text;
+      if (line && lineWidth(ctx, line + pending + word, kern) > maxW) {
+        out.push(line);            // 行尾的空白不帶走（CoreText 同樣捨棄）
+        line = ""; pending = "";
+      }
+      // 一個「不可斷單位」自己就比行寬還寬（超長網址、長英數字串）——CoreText 這時
+      // 是在字內硬斷。逐字元那版天生會斷，改成單位化之後不補這段的話它會整條溢出框外。
+      while (lineWidth(ctx, word, kern) > maxW) {
+        const chars = [...word];
+        let take = 1;
+        while (take < chars.length
+               && lineWidth(ctx, chars.slice(0, take + 1).join(""), kern) <= maxW) take++;
+        if (take >= chars.length) break;   // 連一個字元都超寬＝沒得再斷，讓它溢出
+        out.push(chars.slice(0, take).join(""));
+        word = chars.slice(take).join("");
+      }
+      line += pending + word;
+      pending = u.trail;
     }
     out.push(line);
   }

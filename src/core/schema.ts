@@ -70,7 +70,24 @@ export interface MediaBlock {
   strokeWidth?: number;       // 短邊分數
   excludesText?: boolean;
   textWrapMode?: string;      // side | around | push
-  filterKey?: string;         // a1…c4
+  filterKey?: string;         // a1…c5（c5＝孔版印刷，唯一帶參數的濾鏡）
+  /** c5 孔版參數（2026-08-31，filterKey === "c5" 才讀；absent＝定案「藍＋暖棕」預設，
+   *  見 filters.ts RISO_DEFAULTS）。⚠️ 動這組欄位＝動 project.json：三平台同發。 */
+  risoInks?: string[];        // 1–3 支油墨 hex（不帶 #，同 strokeHex 慣例）
+  risoPaper?: string;         // 紙色 hex
+  risoPitch?: number;         // 網點間距（長邊 900px 基準的 px，工具間同刻度）
+  risoHard?: number;          // 網點硬度 0–1
+  risoReg?: number;           // 套印偏移（900 基準 px）
+  risoDens?: number;          // 油墨濃度倍率
+  risoGrain?: number;         // 紙張顆粒 0–24
+  /** 撕紙邊（2026-08-31，見 tornedge.ts）。absent＝無邊、舊專案零變動。
+   *  tornStyle 有值＝開；此時矩形外框描邊（strokeHex）不畫——邊取代框。 */
+  tornStyle?: string;         // riso 孔版粗邊 | torn 撕毛邊 | tear 真撕紙 | feather 羽化
+  tornSides?: number;         // bitmask 1上 2右 4下 8左；absent＝15 全部
+  tornAmt?: number;           // 咬深，短邊分數（預設 0.055）
+  tornDeform?: number;        // 0–1 輪廓波幅，0.5＝基準
+  tornRough?: number;         // 0–1 波長與對比，0.5＝基準
+  tornSeed?: number;          // 換一個邊
 }
 
 export interface ShapeBlock {
@@ -219,7 +236,69 @@ export function decodeProject(json: unknown): Project {
     frame: rect(b.frame),
     content: content(b.content as Record<string, unknown>),
   })) as unknown as Block[];
-  return { ...o, blocks } as unknown as Project;
+  const p = { ...o, blocks } as unknown as Project;
+  reconcileOrder(p);
+  return p;
+}
+
+// ── 圖層順序：陣列排列＝畫的順序 ──────────────────────────────────────
+//
+// 🔴 這裡是 2026-09-01 那個「iPad 帶過來的專案，被鎖住的底圖跑到最前面」的根：
+// **兩個平台的圖層順序原本用的是不同欄位**——
+//   iOS：`project.blocks` 的**陣列排列**就是疊法（EditorViewModel+Layer 直接搬陣列
+//        元素；`Block.zIndex` 在那邊是化石欄位，新 block 一律拿預設值 0）。
+//   Mac：陣列不動，只改 `zIndex`，畫的時候再 sort。
+// 同一份專案於是兩邊長得不一樣，而且是**雙向**的：Mac 排的順序到 iPad 會亂，
+// iPad 排的順序到 Mac 也會亂。
+//
+// 統一成 iOS 那套（陣列排列為準），兩邊都維持「zIndex 沿陣列遞增」這條不變式，
+// 之後就沒有第二種真相了。舊檔在開檔時和解一次。
+const orderAgrees = (z: number[]): boolean => z.every((v, i) => i === 0 || z[i - 1] < v);
+
+/** 讓 zIndex 重新沿陣列遞增。順序本身不動。 */
+export function renumberZ(p: Project): void {
+  p.blocks.forEach((b, i) => { b.zIndex = i; });
+}
+
+/**
+ * 開舊檔時的一次性和解。**不能一律相信同一邊**，要先判斷這份檔案的順序是誰排的：
+ * - **z 有重複** → 這份檔案有 iOS 參與過（iOS 新增的 block 一律 z=0），z 是化石，
+ *   **陣列排列才是他排的**。照陣列走。
+ * - **z 全相異** → 這份檔案的順序是 Mac 排的（Mac 的移到最前/最後寫 max+1／min−1，
+ *   不會撞號），**z 才是他排的**。把陣列照 z 重排，否則舊專案的版面會被我們改掉。
+ * 兩種情況最後都 renumber，這份檔案從此沒有歧義。
+ *
+ * 回傳這次判成哪一種，給呼叫端做提示用（"none" ＝本來就一致）。
+ */
+export function reconcileOrder(p: Project): "none" | "array" | "zindex" {
+  const z = p.blocks.map((b) => b.zIndex ?? 0);
+  if (orderAgrees(z)) { renumberZ(p); return "none"; }
+  if (new Set(z).size === z.length) {
+    // 穩定排序：同號（不會發生，保險）維持原相對位置
+    p.blocks = p.blocks
+      .map((b, i) => ({ b, i }))
+      .sort((x, y) => x.b.zIndex - y.b.zIndex || x.i - y.i)
+      .map((x) => x.b);
+    renumberZ(p);
+    return "zindex";
+  }
+  renumberZ(p);
+  return "array";
+}
+
+/**
+ * 把幾個 block 搬到最前／最後——**搬陣列元素**，不是改 zIndex（那是舊做法，
+ * iOS 讀不到）。多選時保持它們彼此的相對順序。
+ */
+export function moveBlocks(p: Project, ids: Set<string>, dir: "front" | "back"): boolean {
+  const moving = p.blocks.filter((b) => ids.has(b.id));
+  if (!moving.length || moving.length === p.blocks.length) return false;
+  const rest = p.blocks.filter((b) => !ids.has(b.id));
+  const next = dir === "front" ? [...rest, ...moving] : [...moving, ...rest];
+  if (next.every((b, i) => b === p.blocks[i])) return false;   // 已經在最前／最後＝沒動到
+  p.blocks = next;
+  renumberZ(p);
+  return true;
 }
 
 // ── 衍生值（iOS 端同名函式的移植）────────────────────────────────────

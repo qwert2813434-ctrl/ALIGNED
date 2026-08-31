@@ -5,7 +5,7 @@
 // - **分布是等距（邊到邊的間隙相等），兩端不動**，所以至少要三個才有意義。
 // 旋轉在 v1 忽略（用各自的 frame，不用旋轉外接框），與 iOS 現況相同。
 
-import type { Block, Project, Rect } from "./schema";
+import { renumberZ, type Block, type Project, type Rect } from "./schema";
 
 export type GroupAlign = "left" | "hCenter" | "right" | "top" | "vCenter" | "bottom";
 export type GroupAxis = "horizontal" | "vertical";
@@ -88,13 +88,20 @@ export function alignToPage(blocks: Block[], edge: GroupAlign, canvasWidth: numb
 }
 
 /**
- * 依「由前而後」的 id 順序重排 zIndex——圖層清單第一筆＝最上層。
- * 沒列到的 block（不在這一頁）不動。
+ * 依「由前而後」的 id 順序重排圖層——圖層清單第一筆＝最上層。
+ * 沒列到的 block（不在這一頁）留在原位：只把**列到的那些**在自己原本佔的
+ * 那幾格位置上重新填一次，其餘元素一格都不動。
+ *
+ * ⚠️ 這裡搬的是 blocks 陣列本身（順序的單一真相），不是改 zIndex——
+ * 舊做法只改 z，iOS 讀陣列排列，於是圖層面板拖過的順序帶去 iPad 全無效。
  */
 export function applyLayerOrder(p: Project, idsTopFirst: string[]): void {
-  const n = idsTopFirst.length;
-  idsTopFirst.forEach((id, i) => {
-    const b = p.blocks.find((k) => k.id === id);
-    if (b) b.zIndex = n - i;
-  });
+  const ids = new Set(idsTopFirst);
+  const slots: number[] = [];
+  p.blocks.forEach((b, i) => { if (ids.has(b.id)) slots.push(i); });
+  if (slots.length !== idsTopFirst.length) return;   // 有 id 找不到＝清單過期，不動
+  const byId = new Map(p.blocks.map((b) => [b.id, b]));
+  // 清單是「由前而後」，陣列是「由後而前」，所以反過來填
+  [...idsTopFirst].reverse().forEach((id, k) => { p.blocks[slots[k]] = byId.get(id)!; });
+  renumberZ(p);
 }

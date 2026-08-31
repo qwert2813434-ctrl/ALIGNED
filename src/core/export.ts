@@ -19,9 +19,12 @@ export function renderAllPages(project: Project, opts: ExportOptions = {}): Expo
   const list = opts.pages ?? Array.from({ length: project.pageCount }, (_, i) => i);
   // 檔名補零，檔案總管才會照頁序排（10 不會插在 1 和 2 中間）
   const pad = String(project.pageCount).length;
+  // 專案名會被直接串成路徑（`${dir}/${s.name}`），`/` 會指到一個不存在的子目錄、
+  // 整批存檔當場失敗；`:` 在 Finder 也會被翻成 `/`。換成全形同形字，看起來一樣。
+  const safe = (project.name || "未命名").replace(/\//g, "／").replace(/:/g, "：");
   return list.map((i) => ({
     index: i,
-    name: `${project.name}_${String(i + 1).padStart(pad, "0")}.png`,
+    name: `${safe}_${String(i + 1).padStart(pad, "0")}.png`,
     canvas: renderPageCanvas(project, i, opts),
   }));
 }

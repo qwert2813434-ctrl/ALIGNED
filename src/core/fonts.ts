@@ -37,16 +37,53 @@ const FILES: Record<string, string> = {
   "ArchivoBlack-Regular": "ArchivoBlack-Regular.ttf",
 };
 
-/** 系統字型的 PostScript 名 → CSS family（macOS 上存在，Android 上不存在）。 */
-const SYSTEM_CSS: Record<string, string> = {
+/**
+ * 系統多語家族的字重表——與 iOS `AppFontCatalog` 的 PHASE1 多語言區塊**逐項同表**。
+ *
+ * 🔴 少了這張表就是「粗細滑桿對這四套字完全沒作用」的根：
+ * `resolvedFace` 在 FAMILIES 找不到 key 就把家族鍵原樣回傳，於是五個字階解出同一張臉。
+ * 打包版更慘——那條路會落到 `DYNAMIC_CSS`（殼層開機登記系統字型），而那個分支組出來的
+ * font 串整串沒有 font-weight，所以永遠是 Regular。dev（localhost:5173）沒有殼層、
+ * 不走那條路，所以這個 bug 只在正式版發作，開發時測不到。
+ * （2026-09-01 42-agent 審計抓到；iOS 早就有表，是 Mac 這邊沒移植。）
+ *
+ * 臉名兩邊都驗過：iOS 是 FontDiagnostics 在 26.5 實機印出來的，Mac 這邊用 WKWebView
+ * 逐張量墨量確認**每個 PostScript 名都吃得到**（量寬度沒用——中日韓等寬，粗細不改進距）。
+ */
+const SYSTEM_FAMILIES: Record<string, string[]> = {
+  "PingFangSC-Regular": ["PingFangSC-Ultralight", "PingFangSC-Light", "PingFangSC-Regular", "PingFangSC-Medium", "PingFangSC-Semibold"],
+  "HiraginoSans-W4": ["HiraginoSans-W3", "HiraginoSans-W3", "HiraginoSans-W4", "HiraginoSans-W6", "HiraginoSans-W8"],
+  "AppleSDGothicNeo-Regular": ["AppleSDGothicNeo-UltraLight", "AppleSDGothicNeo-Light", "AppleSDGothicNeo-Regular", "AppleSDGothicNeo-Bold", "AppleSDGothicNeo-Bold"],
+  "HiraMinProN-W3": ["HiraMinProN-W3", "HiraMinProN-W3", "HiraMinProN-W3", "HiraMinProN-W6", "HiraMinProN-W6"],
+};
+
+/** 家族鍵 → macOS 上的家族顯示名（PostScript 名萬一取不到時的保險）。 */
+const SYSTEM_LABEL: Record<string, string> = {
   "PingFangSC-Regular": "PingFang SC",
   "HiraginoSans-W4": "Hiragino Sans",
   "AppleSDGothicNeo-Regular": "Apple SD Gothic Neo",
   "HiraMinProN-W3": "Hiragino Mincho ProN",
 };
 
-/** fontName 未設時的系統預設（iOS＝PingFang TC）。 */
-const SYSTEM_DEFAULT = "PingFang TC";
+/** 系統字面 → CSS family 串（**已含引號**）。表由上面兩張自動展開，不手抄。 */
+const SYSTEM_CSS: Record<string, string> = {};
+for (const [key, faces] of Object.entries(SYSTEM_FAMILIES)) {
+  Object.assign(FAMILIES, { [key]: faces });
+  for (const f of faces) SYSTEM_CSS[f] = `"${f}", "${SYSTEM_LABEL[key]}"`;
+}
+
+/**
+ * fontName 未設時的系統預設。
+ *
+ * ⚠️ **必須是 system-ui，不能寫死 PingFang TC。** iOS 那邊是
+ * `UIFont.systemFont(ofSize:weight:)`＝SF Pro，中日韓字才由系統回落到 PingFang；
+ * Mac 寫死 PingFang 的話**拉丁字母用的是 PingFang 的西文字面**，比 SF Pro 寬約 4.7%，
+ * 累積成「每行少一個字、整段多一行、超出框底」——同一份專案兩邊排版對不上。
+ * （2026-09-01 小高用 iPad 截圖對照抓到：他那塊內文框寬 591.6，
+ *   PingFang 量到 614.5 放不下、system-ui 量到 586.9 放得下，跟 iPad 畫面一致。）
+ * 後面接 PingFang TC＝中日韓的實際字面，跟 iOS 的回落結果同一套。
+ */
+const SYSTEM_DEFAULT = 'system-ui, "PingFang TC"';
 
 /** CSS font-weight，只有系統字型用得到（內嵌字面本身已帶字重）。 */
 const CSS_WEIGHTS = [200, 300, 400, 700, 900];
@@ -64,13 +101,21 @@ export function resolvedFace(fontName?: string, weightValue?: number): string | 
 }
 
 /** 組出 canvas 的 ctx.font 字串。 */
+/** 缺字備援鏈：WKWebView 在特定情況（normal 字重＋離屏畫布）不走系統缺字備援，
+ *  字型沒有的字（・①…）會直接畫豆腐——明列備援家族才救得回來（2026-08-31 實測：
+ *  掛 sans-serif 沒用，要指名 Hiragino）。只影響主字型**沒有**的字，版面逐位不變。 */
+const FALLBACK_CHAIN = '"PingFang TC", "Hiragino Sans", sans-serif';
+
 export function cssFont(t: { fontName?: string; fontWeightValue?: number }, sizePx: number): string {
   const face = resolvedFace(t.fontName, t.fontWeightValue);
-  if (face && FILES[face]) return `${sizePx}px "${face}"`;
+  if (face && FILES[face]) return `${sizePx}px "${face}", ${FALLBACK_CHAIN}`;
+  // 系統多語家族排在動態登記之前：那張表已經解出**確切的臉**，就不要再掛 font-weight
+  // 疊合成粗體（也讓 dev 與打包版走同一條路——差別只在殼層有沒有登記系統字型）。
+  const sys = face && SYSTEM_CSS[face];
+  if (sys) return `${sizePx}px ${sys}, ${FALLBACK_CHAIN}`;
   const dyn = face && DYNAMIC_CSS.get(face);
-  if (dyn) return `${sizePx}px ${dyn}`;
-  const cssFamily = (face && SYSTEM_CSS[face]) ?? SYSTEM_DEFAULT;
-  return `${CSS_WEIGHTS[step(t.fontWeightValue)]} ${sizePx}px "${cssFamily}"`;
+  if (dyn) return `${sizePx}px ${dyn}, ${FALLBACK_CHAIN}`;
+  return `${CSS_WEIGHTS[step(t.fontWeightValue)]} ${sizePx}px ${SYSTEM_DEFAULT}, ${FALLBACK_CHAIN}`;
 }
 
 // ── 動態字型（剪映語彙：介面字體之外，還有這台電腦的系統字體＋匯入檔） ──
@@ -178,6 +223,11 @@ export const FONT_CHOICES: { label: string; value: string }[] = [
   { label: "Fira Code", value: "FiraCode-Regular" },
   { label: "Inter", value: "Inter-Regular" },
   { label: "Archivo Black", value: "ArchivoBlack-Regular" },
+  // 系統多語家族（macOS 自帶，零體積）——與 iOS 選單同名同序、粗細滑桿五檔同表
+  { label: "黑体", value: "PingFangSC-Regular" },
+  { label: "ゴシック", value: "HiraginoSans-W4" },
+  { label: "고딕", value: "AppleSDGothicNeo-Regular" },
+  { label: "明朝", value: "HiraMinProN-W3" },
 ];
 
 /** 字重五檔的顯示名（0…4，iOS TextWeightStep 同序）。 */
