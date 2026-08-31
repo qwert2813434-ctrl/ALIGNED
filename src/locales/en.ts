@@ -417,8 +417,8 @@ export const en: Record<string, string> = {
   // ── 1.1.0～1.1.2：出場動畫／輪播／3D 物件／紙紋新選項 ──
   "出場動畫": "Entrance animation",
   "出場方式": "Entrance style",
-  "移除動畫": "Remove animations",
-  "陸續出現": "Appear one by one",
+  "移除動畫": "Clear",
+  "陸續出現": "One by one",
   "間隔": "Stagger",
   "停留": "Hold",
   "隨影片播完": "Follows video length",

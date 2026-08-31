@@ -28,6 +28,7 @@ let MEASURE: CanvasRenderingContext2D | null = null;
 const measureCtx = (): CanvasRenderingContext2D =>
   (MEASURE ??= attachedCanvas().getContext("2d")!);
 import { CANVAS_PRESETS, canvasSize, simplifiedRatio } from "./core/canvas";
+import { CHIP, chipIcon } from "./icons";
 
 /** 圖層列的類型圖示（單色線性 SVG，絕不用 emoji 當 icon）。 */
 const svg = (d: string): string =>
@@ -984,14 +985,21 @@ export class Inspector {
       this.emit();
     }));
     this.animRow(s, b);
+    // 三顆都做成純 icon：帶文字的版本中文剛好塞不下、英文更長，換行之後排成三行很醜
+    //（小高 2026-09-01 回報）。圖示與選取浮動晶片**共用同一組**（src/icons.ts），
+    // 同一個動作在畫布上跟面板裡長一樣；人話留在 title／aria-label。
     const layer = this.row(s, __("圖層"));
+    const danger = this.iconBtn(chipIcon(CHIP.del, 15), __("刪除元件"), () => this.hooks.remove(b));
+    danger.classList.add("danger", "wide");
+    const wide = (btn: HTMLButtonElement): HTMLButtonElement => {
+      btn.classList.add("wide");
+      return btn;
+    };
     layer.append(
-      this.actBtn(ACT.front, __("移到最前"), () => this.hooks.reorder(b, "front")),
-      this.actBtn(ACT.back, __("移到最後"), () => this.hooks.reorder(b, "back")),
+      wide(this.iconBtn(chipIcon(CHIP.front, 15), __("移到最前"), () => this.hooks.reorder(b, "front"))),
+      wide(this.iconBtn(chipIcon(CHIP.back, 15), __("移到最後"), () => this.hooks.reorder(b, "back"))),
+      danger,
     );
-    const danger = this.actBtn(ACT.trash, __("刪除元件"), () => this.hooks.remove(b));
-    danger.classList.add("danger");
-    this.row(s, "").append(danger);
   }
 
   /**
