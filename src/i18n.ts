@@ -31,9 +31,13 @@ function detect(): Locale {
   return (navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en";
 }
 
-const cur: Locale = detect();
+// ⚠️ worker 也會 import 到這裡（filterworker → filters → i18n）：worker 沒有
+// localStorage／document，頂層一碰整個 worker 當場死，症狀＝影片濾鏡靜靜失效
+// （2026-09-01 實踩，從 i18n 落地那版就壞了）。worker 一律當 zh——__() 對 zh
+// 是恆等函式，worker 路徑也用不到介面字串。
+const cur: Locale = typeof document === "undefined" ? "zh" : detect();
 // <html lang> 帶動字型堆疊（style.css 依 lang 選中西文字體）
-document.documentElement.lang = LANG_ATTR[cur];
+if (typeof document !== "undefined") document.documentElement.lang = LANG_ATTR[cur];
 
 export function locale(): Locale { return cur; }
 
