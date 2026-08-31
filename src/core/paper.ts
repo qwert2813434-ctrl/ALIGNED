@@ -48,8 +48,9 @@ const HANDMADE: Record<string, Handmade> = {
   h2: { fine: 3200, coarse: 380, specks: 11000, alpha: 1.0 },
 };
 
-/** 整頁纖維層快取，key＝「紙|寬x高」。同一頁尺寸只生成一次。 */
-const handmadeCache = new Map<string, { rgb: Float32Array; a: Float32Array }>();
+/** 整頁纖維層快取，key＝「紙|寬x高」。同一頁尺寸只生成一次。
+ *  canvas 是 GPU 路徑用的同一張畫（見 applyPaperGPU），跟陣列同源所以兩路必然同紋。 */
+const handmadeCache = new Map<string, { rgb: Float32Array; a: Float32Array; canvas: HTMLCanvasElement }>();
 
 /** 固定種子 LCG——同一張紙每次生成都一模一樣（換頁、重開檔都不會變）。 */
 function makeRnd(seed: number): () => number {
@@ -64,7 +65,7 @@ function makeRnd(seed: number): () => number {
  * 幾乎歸零，纖維會完全看不見。C 系紙張看得見是因為它的噪點對比極高。
  * 手抄紙改**直接 alpha 合成**（＝HTML 那條路），所見即所得。
  */
-function handmadeFiber(key: string, w: number, h: number): { rgb: Float32Array; a: Float32Array } | undefined {
+function handmadeFiber(key: string, w: number, h: number): { rgb: Float32Array; a: Float32Array; canvas: HTMLCanvasElement } | undefined {
   const r = HANDMADE[key];
   if (!r) return undefined;
   const ck = `${key}|${w}x${h}`;
@@ -111,7 +112,7 @@ function handmadeFiber(key: string, w: number, h: number): { rgb: Float32Array; 
     rgb[p * 3] = d[i]; rgb[p * 3 + 1] = d[i + 1]; rgb[p * 3 + 2] = d[i + 2];
     a[p] = d[i + 3] / 255;
   }
-  const out = { rgb, a };
+  const out = { rgb, a, canvas: c };
   handmadeCache.set(ck, out);
   return out;
 }
@@ -153,4 +154,218 @@ export function applyPaper(key: string | null | undefined, img: ImageData, a: Fi
       }
     }
   }
+}
+
+// ── GPU 紙張（2026-09-01，只給編輯畫布；匯出仍走上面的 CPU 版逐位不動）─────
+// C 系（tint→lift→softLight 纖維）走 **WebGL 片元著色器**：公式跟 CPU 版逐字同源。
+// ⚠️ 不能用 canvas 原生 soft-light——實測 WKWebView 的 soft-light 不是 W3C 公式
+// （b=32,s=200,α=1 它給 48、規格是 64），而且 Chrome 又是另一套＝跨引擎不一致。
+// 手抄紙（h1/h2）三層全是原生可精確表達的操作（multiply／screen／source-over），
+// 走 2D 原生合成就好，實測 |Δ|≤2/255 只在捨入。
+// 實測（WKWebView 1080×1350）：CPU 30–210ms／頁 → GPU ≤3ms／頁。
+
+// WebGL 單例（lazy）：一張玻璃畫布重複用，換頁只換紋理與 uniform
+interface PaperGL {
+  canvas: HTMLCanvasElement; gl: WebGLRenderingContext;
+  uTint: WebGLUniformLocation; uLift: WebGLUniformLocation; uSize: WebGLUniformLocation;
+  uFiberSize: WebGLUniformLocation; uMode: WebGLUniformLocation; uFiberAlpha: WebGLUniformLocation;
+  pageTex: WebGLTexture; fiberTex: Map<string, WebGLTexture | null>;
+}
+let paperGL: PaperGL | null | undefined;   // undefined＝還沒試過；null＝環境不支援
+let paperGLLost = 0;                       // context lost 次數；連丟三次就永久退 CPU 不再重建
+
+function initPaperGL(): PaperGL | null {
+  if (paperGL !== undefined) return paperGL;
+  try {
+    const canvas = document.createElement("canvas");
+    // premultipliedAlpha:false＝drawImage 拿到的就是著色器寫的直通 alpha 值
+    const gl = canvas.getContext("webgl", { premultipliedAlpha: false, alpha: true,
+                                            antialias: false, depth: false, stencil: false })!;
+    // 🔴 context lost 一定要處理：丟了之後每個 GL 呼叫都靜靜 no-op，畫布變全透明，
+    // 而下面是用 `copy` 把它整張蓋回頁面——結果是**整頁被擦成空白，還存進快取**。
+    // 睡醒、切換顯示卡、開太多 WebGL context 都會發生。丟了就把單例清掉，下一幀重建；
+    // 重建失敗就回 CPU 路（applyPaperGPU 回 false）。
+    canvas.addEventListener("webglcontextlost", (e) => {
+      e.preventDefault();
+      paperGL = ++paperGLLost >= 3 ? null : undefined;   // 一直丟＝這台機器不適合，別每幀重建
+    });
+    const vs = gl.createShader(gl.VERTEX_SHADER)!;
+    gl.shaderSource(vs, "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}");
+    gl.compileShader(vs);
+    const fs = gl.createShader(gl.FRAGMENT_SHADER)!;
+    // 公式照 applyPaper／softLightBlend 逐字翻譯，0–1 域。highp：mediump 的 sqrt 會壞比對
+    gl.shaderSource(fs, `precision highp float;
+uniform sampler2D uPage, uFiber;
+uniform vec3 uTint; uniform float uLift; uniform vec2 uSize;
+uniform vec2 uFiberSize;    // 貼片 256×256（C 系）或整頁（手抄紙）
+uniform float uMode;        // 0＝softLight 貼片；1＝手抄紙直接 alpha 合成
+uniform float uFiberAlpha;  // 手抄紙整層強度
+float slb(float b, float s){
+  float d = b <= 0.25 ? ((16.*b-12.)*b+4.)*b : sqrt(b);
+  return s <= 0.5 ? b-(1.-2.*s)*b*(1.-b) : b+(2.*s-1.)*(d-b);
+}
+void main(){
+  // 統一用「頂端起算」的像素座標：跟 CPU 的 (x,y) 與 (x&255,y&255) 一一對齊。
+  // gl_FragCoord 原點在左下，翻 y 一次；紋理不翻著上傳（v=0＝影像第一列）。
+  vec2 px = vec2(gl_FragCoord.x, uSize.y - gl_FragCoord.y);
+  vec4 page = texture2D(uPage, px / uSize);
+  vec3 v = page.rgb * uTint;                       // multiply 紙色（無 tint＝(1,1,1)）
+  v = 1. - (1. - v) * (1. - uLift);                // screen 抬黑
+  vec4 f = texture2D(uFiber, px / uFiberSize);     // 貼片 REPEAT＝CPU 的 x&255
+  vec3 outc;
+  if (uMode < 0.5) {
+    vec3 b = vec3(slb(v.r, f.r), slb(v.g, f.r), slb(v.b, f.r));
+    outc = mix(v, b, f.a);
+  } else {
+    outc = mix(v, f.rgb, f.a * uFiberAlpha);       // 手抄紙：CPU 的直接 alpha 合成同式
+  }
+  gl_FragColor = vec4(outc, page.a);
+}`);
+    gl.compileShader(fs);
+    const pr = gl.createProgram()!;
+    gl.attachShader(pr, vs); gl.attachShader(pr, fs); gl.linkProgram(pr);
+    if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) { paperGL = null; return null; }
+    gl.useProgram(pr);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(pr, "p");
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    const pageTex = gl.createTexture()!;
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, pageTex);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST],
+                          [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]] as const) {
+      gl.texParameteri(gl.TEXTURE_2D, k, v);
+    }
+    gl.uniform1i(gl.getUniformLocation(pr, "uPage"), 0);
+    gl.uniform1i(gl.getUniformLocation(pr, "uFiber"), 1);
+    paperGL = {
+      canvas, gl,
+      uTint: gl.getUniformLocation(pr, "uTint")!,
+      uLift: gl.getUniformLocation(pr, "uLift")!,
+      uSize: gl.getUniformLocation(pr, "uSize")!,
+      uFiberSize: gl.getUniformLocation(pr, "uFiberSize")!,
+      uMode: gl.getUniformLocation(pr, "uMode")!,
+      uFiberAlpha: gl.getUniformLocation(pr, "uFiberAlpha")!,
+      pageTex, fiberTex: new Map(),
+    };
+  } catch { paperGL = null; }
+  return paperGL;
+}
+
+/** 纖維貼片上傳成 REPEAT 紋理（256 恰是 POT，WebGL1 可 REPEAT）。r＝灰階、a＝強度。 */
+function fiberTexture(g: PaperGL, key: string, a: FilterAssets): WebGLTexture | null {
+  const hit = g.fiberTex.get(key);
+  if (hit !== undefined) return hit;
+  const t = a.grain.get(key);
+  if (!t) { g.fiberTex.set(key, null); return null; }
+  const px = new Uint8Array(256 * 256 * 4);
+  for (let i = 0; i < 65536; i++) {
+    const v = Math.round(t.rgb[i]);
+    px[i * 4] = v; px[i * 4 + 1] = v; px[i * 4 + 2] = v;
+    px[i * 4 + 3] = Math.round(t.alpha[i]);
+  }
+  const { gl } = g;
+  const tex = gl.createTexture()!;
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST],
+                        [gl.TEXTURE_WRAP_S, gl.REPEAT], [gl.TEXTURE_WRAP_T, gl.REPEAT]] as const) {
+    gl.texParameteri(gl.TEXTURE_2D, k, v);
+  }
+  g.fiberTex.set(key, tex);
+  return tex;
+}
+
+/** 手抄紙整頁纖維上傳成紋理（非 POT → CLAMP_TO_EDGE；取樣都在 [0,1] 內）。 */
+function handmadeTexture(g: PaperGL, key: string, w: number, h: number): WebGLTexture | null {
+  const ck = `hm:${key}|${w}x${h}`;
+  const hit = g.fiberTex.get(ck);
+  if (hit !== undefined) return hit;
+  const hf = handmadeFiber(key, w, h);
+  if (!hf) { g.fiberTex.set(ck, null); return null; }
+  const { gl } = g;
+  const tex = gl.createTexture()!;
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);   // CPU 版也是拿非預乘值算，同源
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, hf.canvas);
+  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST],
+                        [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]] as const) {
+    gl.texParameteri(gl.TEXTURE_2D, k, v);
+  }
+  g.fiberTex.set(ck, tex);
+  return tex;
+}
+
+/** 回 true＝已在 GPU 上套完；false＝走不了（環境／key），呼叫端 fallback CPU 版。 */
+export function applyPaperGPU(ctx: CanvasRenderingContext2D, key: string | null | undefined,
+                              a: FilterAssets, opaque: boolean): boolean {
+  const p = key ? PAPERS[key] : undefined;
+  if (!p || !key) return false;
+  const W = ctx.canvas.width, H = ctx.canvas.height;
+  const hm = HANDMADE[key];
+
+  if (hm && opaque) {
+    // 不透明的手抄紙：multiply＋screen＋source-over 全是引擎規格內的精確操作（0ms 級）。
+    // ⚠️ 透明層不能走這裡——multiply fillRect 在反鋸齒邊緣會把顏色漂向未混合的紙色
+    // （實測 |Δ| 到 50/255），透明層一律進下面的 WebGL 路（實測 ≤3/255）。
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (p.tint) {
+      ctx.globalCompositeOperation = "multiply";
+      ctx.fillStyle = `rgb(${Math.round(p.tint[0] * 255)},${Math.round(p.tint[1] * 255)},${Math.round(p.tint[2] * 255)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    if (p.lift > 0) {
+      const l = Math.round(p.lift * 255);
+      ctx.globalCompositeOperation = "screen";
+      ctx.fillStyle = `rgb(${l},${l},${l})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    const hf = handmadeFiber(key, W, H);
+    if (hf) {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = hm.alpha;
+      ctx.drawImage(hf.canvas, 0, 0);
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+    return true;
+  }
+
+  // C 系（任何情況）＋手抄紙透明層：WebGL 一趟（tint＋lift＋softLight 纖維同一個著色器）
+  const g = initPaperGL();
+  if (!g) return false;
+  const { gl } = g;
+  // 事件是非同步送達的，這一幀就可能已經丟了——畫之前再問一次，丟了就當場退 CPU
+  if (gl.isContextLost()) { paperGL = ++paperGLLost >= 3 ? null : undefined; return false; }
+  if (g.canvas.width !== W || g.canvas.height !== H) {
+    g.canvas.width = W; g.canvas.height = H;
+    gl.viewport(0, 0, W, H);
+  }
+  const ft = hm ? handmadeTexture(g, key, W, H) : fiberTexture(g, p.fiber, a);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, ft);   // null 也只是黑纖維不炸
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, g.pageTex);
+  gl.uniform1f(g.uMode, hm ? 1 : 0);
+  gl.uniform1f(g.uFiberAlpha, hm ? hm.alpha : 1);
+  gl.uniform2f(g.uFiberSize, hm ? W : 256, hm ? H : 256);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);   // 不翻：著色器自己以頂端起算 y
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ctx.canvas);
+  gl.uniform3f(g.uTint, p.tint?.[0] ?? 1, p.tint?.[1] ?? 1, p.tint?.[2] ?? 1);
+  gl.uniform1f(g.uLift, p.lift);
+  gl.uniform2f(g.uSize, W, H);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  // 這一趟中途丟掉的話 g.canvas 是全透明的，蓋上去＝整頁被擦白，寧可退 CPU 重畫
+  if (gl.isContextLost()) { paperGL = ++paperGLLost >= 3 ? null : undefined; return false; }
+  // 畫回 2D：copy＝整張置換（連 alpha），著色器已保留原 alpha 通道
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = "copy";
+  // 著色器已把「FB 底列＝影像底列」對齊好，GL 畫布經 drawImage 拿到的就是正的
+  ctx.drawImage(g.canvas, 0, 0);
+  ctx.restore();
+  return true;
 }

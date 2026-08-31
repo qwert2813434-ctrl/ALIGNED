@@ -22,6 +22,9 @@ for pat, what in [
     # Mac 版在 main.swift 有純 CG 的 handmadeFiberCG（同配方同種子）
     (r"\n    /// 手抄紙纖維層.*?\n    static func handmadeFiber.*?\n        \}\n    \}\n", "handmadeFiber"),
     (r"\n    /// 套一顆濾鏡到 UIImage.*?\n    static func apply\(_ key: String\?, to image: UIImage\).*?\n    \}\n", "apply"),
+    # 2026-08-31：appliedToColor（描邊吃紙色，2026-08-30 iOS 加的）用 UIColor——
+    # 工具端用不到（compositor 不畫 SwiftUI 描邊色），整段剝掉
+    (r"\n    /// 給「不能疊 blend view」的地方用.*?\n    func appliedToColor\(_ c: Color\) -> Color \{.*?\n    \}\n", "appliedToColor"),
 ]:
     before = s
     s = re.sub(pat, "\n", s, flags=re.S)

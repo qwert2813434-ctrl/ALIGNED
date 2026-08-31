@@ -36,6 +36,9 @@ export function buildClipboard(
       }
       // 輪播的後續張數（漏了的話貼到新專案只剩第一張）
       for (const f of m.carouselAssets ?? []) assetSrc[f] = `${assetsRoot}/${f}`;
+      // 去背遮罩：漏了的話貼過去的去背圖／填顏色層變成一整塊實心方形，
+      // 而且不報錯（渲染端查不到遮罩就整段跳過 destination-in）。2026-09-01 審查。
+      if (m.matteFileName) assetSrc[m.matteFileName] = `${assetsRoot}/${m.matteFileName}`;
     } else if (b.content.type === "model" && b.content.model.assetFileName) {
       // 3D 的 .glb 同理——不搬檔的話貼過去是個懸空檔名，只畫得出佔位
       assetSrc[b.content.model.assetFileName] = `${assetsRoot}/${b.content.model.assetFileName}`;
@@ -75,6 +78,9 @@ export function pasteBlocks(
       if (nn) m.assetFileName = nn;
       // 輪播清單逐張改名（搬失敗的留舊名＝那一張畫佔位，其餘照常輪播）
       if (m.carouselAssets?.length) m.carouselAssets = m.carouselAssets.map((f) => renamed.get(f) ?? f);
+      // 遮罩：搬到了就改新名，**搬不到就清掉**——留死引用只會靜靜換掉外觀（變實心方塊），
+      // 清掉至少讓人看得出「這張沒去背」，也不會被下一次存檔寫成永久的壞參照。
+      if (m.matteFileName) m.matteFileName = renamed.get(m.matteFileName);
     } else if (nb.content.type === "model" && nb.content.model.assetFileName) {
       const nn = renamed.get(nb.content.model.assetFileName);
       if (nn) nb.content.model.assetFileName = nn;

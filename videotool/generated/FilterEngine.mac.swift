@@ -1,4 +1,5 @@
 import CoreImage
+import SwiftUI
 import CoreGraphics
 import Foundation
 
@@ -20,6 +21,7 @@ enum MediaFilter: String, CaseIterable, Identifiable {
     case newsprint = "c1"   // 報紙
     case grain = "c3"       // 底片顆粒
     case finePaper = "c4"   // 高級紙
+    case riso = "c5"        // 孔版印刷（唯一帶參數的濾鏡，見 RisoParams）
 
     var id: String { rawValue }
 
@@ -35,6 +37,7 @@ enum MediaFilter: String, CaseIterable, Identifiable {
         case .newsprint: return "報紙"
         case .grain: return "顆粒"
         case .finePaper: return "高級紙"
+        case .riso: return "孔版"
         }
     }
 }
@@ -89,6 +92,9 @@ enum PagePaper: String, CaseIterable, Identifiable {
     /// screen 白抬黑量（高級紙霧面曲線「黑位抬到 0.07」的覆蓋層等價）。
     var lift: CGFloat { self == .finePaper ? 0.07 : (isHandmade ? 0.05 : 0) }
 
+    /// 把「紙色 multiply ＋ 抬黑 screen」直接算進一個顏色裡（**不含纖維噪點**）。
+    ///
+
     /// softLight 纖維噪點層的（強度, 模糊）— 與樣本間 C 系同參數。
     var fiber: (strength: CGFloat, blur: CGFloat) {
         switch self {
@@ -117,6 +123,9 @@ enum FilterEngine {
     /// 一律裁回輸入 extent（Bloom 會把 extent 撐大，不裁回去合成座標就歪）。
     /// 純函式、無共享狀態 — 兩個呼叫端都在背景執行緒，執行緒安全。
     static func applyCI(_ key: String?, to input: CIImage) -> CIImage {
+        if let key, key.hasPrefix("c5") {
+            return risoCI(RisoParams.parse(key), input: input).cropped(to: input.extent)
+        }
         guard let key, let filter = MediaFilter(rawValue: key) else { return input }
         return render(filter, input: input, ext: input.extent).cropped(to: input.extent)
     }
@@ -198,6 +207,10 @@ enum FilterEngine {
             f = blend("CIMultiplyBlendMode",
                       top: constColor(CIColor(red: 0.96, green: 0.93, blue: 0.87), ext), back: f)
             return blend("CISoftLightBlendMode", top: grainLayer(0.42, blur: 1.4, ext: ext), back: f)
+        case .riso:
+            // 正常不會走到（apply/applyCI 在 enum 之前就攔了 c5 好帶參數）；
+            // 走到＝有人拿裸 enum 呼叫，用定案預設渲染。
+            return risoCI(RisoParams.defaults, input: input)
         }
     }
 
@@ -246,5 +259,234 @@ enum FilterEngine {
                                         z: 0.5 - strength / 2, w: 0)])
         if blur > 0 { n = n.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": blur]) }
         return n.cropped(to: ext)
+    }
+}
+
+// MARK: - c5 孔版印刷（Risograph，2026-08-31）
+//
+// 正本＝工具間 filter-lab.html（小高的濾鏡研究基地），Mac 端＝align-core filters.ts
+// applyRiso——三處同一套數學。與其他濾鏡不同：帶參數、CPU 逐像素（不是 CI 鏈），
+// 顆粒用**確定性雜湊**（JS 位元同構，見 hash1u——兩平台同相位，不是 CIRandomGenerator）。
+//
+// 空間正規化：pitch／reg 單位＝「長邊 900px 時的 px」（工具間預覽基準）。
+// 實際間距＝pitch×長邊/900——不同解析度、預覽與匯出，網點相對大小都一樣。
+// ⚠️ 這一段必須 UIKit-free：videotool/build.sh 會把本檔剝去 UIKit 後編進 alignvideo。
+
+extension FilterEngine {
+    struct RisoParams {
+        var inks: [String]
+        var paper: String
+        var pitch: Double
+        var hard: Double
+        var reg: Double
+        var dens: Double
+        var grain: Double
+
+        /// 定案「藍＋暖棕」（2026-08-31 小高在工具間定案）。
+        static let defaults = RisoParams(inks: ["236996", "966946"], paper: "DDD7C9",
+                                         pitch: 4, hard: 0.45, reg: 2.25, dens: 0.9, grain: 7)
+        /// 三組定案油墨（工具間一鍵配方同款）。
+        static let presets: [(name: String, inks: [String])] = [
+            ("藍＋暖棕", ["236996", "966946"]),
+            ("綠＋暖棕", ["3c7846", "a06e46"]),
+            ("單墨・黑", ["282622"]),
+        ]
+
+        /// canonical 序列化＝快取鍵成分（Mac filterSig 同格式）。
+        var sig: String {
+            let n = { (v: Double) -> String in
+                v == v.rounded() ? String(Int(v)) : String(v)
+            }
+            return "c5:\(inks.joined(separator: ","));\(paper);\(n(pitch));\(n(hard));\(n(reg));\(n(dens));\(n(grain))"
+        }
+
+        /// 從身份字串解回（"c5"＝預設；壞段落逐項回預設，不炸）。
+        static func parse(_ key: String) -> RisoParams {
+            guard let i = key.firstIndex(of: ":") else { return defaults }
+            let seg = key[key.index(after: i)...].split(separator: ";", omittingEmptySubsequences: false)
+            guard seg.count >= 7 else { return defaults }
+            let num = { (v: Substring, fb: Double) -> Double in Double(v) ?? fb }
+            let inks = seg[0].split(separator: ",").map(String.init).filter { !$0.isEmpty }
+            return RisoParams(
+                inks: inks.isEmpty ? defaults.inks : Array(inks.prefix(3)),
+                paper: seg[1].isEmpty ? defaults.paper : String(seg[1]),
+                pitch: num(seg[2], defaults.pitch), hard: num(seg[3], defaults.hard),
+                reg: num(seg[4], defaults.reg), dens: num(seg[5], defaults.dens),
+                grain: num(seg[6], defaults.grain))
+        }
+    }
+
+    // 確定性雜湊——**與 JS 位元同構**（Mac/工具間同一把）：乘法走 float64、ToUint32
+    // 截斷語意照抄，兩平台的顆粒與網點相位完全一致。⚠️ 移位一律無號（帶號位移的
+    // 符號延伸會讓 bit31 自我抵消、輸出永遠 < 0.5——工具間審查實踩）。
+    @inline(__always) static func jsUint32(_ v: Double) -> UInt32 {
+        let t = v < 0 ? -(-v).rounded(.down) : v.rounded(.down)
+        let m = t.truncatingRemainder(dividingBy: 4294967296)
+        return UInt32(m < 0 ? m + 4294967296 : m)
+    }
+    @inline(__always) static func hash1u(_ i: Int32, _ seed: Int32) -> Double {
+        var s = jsUint32(Double(i) * 374761393 + Double(seed) * 668265263)
+        s ^= s >> 13
+        s = s &* 1274126177          // Math.imul＝真 32 位乘法
+        s ^= s >> 16
+        return Double(s) / 4294967295
+    }
+    @inline(__always) static func hash2u(_ x: Int32, _ y: Int32, _ seed: Int32) -> Double {
+        let xi = Int32(truncatingIfNeeded: Int64(x) * 73856093)
+        let yi = Int32(truncatingIfNeeded: Int64(y) * 19349663)
+        return hash1u(xi ^ yi, seed)
+    }
+
+    static func hexRGB(_ hx: String) -> (Double, Double, Double) {
+        var v: UInt64 = 0
+        Scanner(string: String(hx.replacingOccurrences(of: "#", with: "").prefix(6)))
+            .scanHexInt64(&v)
+        return (Double((v >> 16) & 255), Double((v >> 8) & 255), Double(v & 255))
+    }
+
+    /// 孔版本體（CIImage 進出；中間走 CPU RGBA8 緩衝）。分色（log 空間最小平方）→
+    /// 各墨 45°/15°/75° AM 過網＋套印偏移 → multiply 疊印回紙色 → 確定性顆粒。
+    /// 單趟逐像素、不配置整張浮點平面（與 Mac applyRiso 同構）。
+    static func risoCI(_ p: RisoParams, input: CIImage) -> CIImage {
+        // 過網解析度帽 2560 長邊（Mac 端變體同帽）：網點是 900 基準的相對尺度，
+        // 2560 上解析度綽綽有餘；48MP 原圖直烤＝秒級（debug 十秒級）＝小高 iPad 匯出卡死的主因之一。
+        // 縮小算完再放大回原 extent，下游拿到的尺寸不變。
+        let long0 = max(input.extent.width, input.extent.height)
+        if long0 > 2560 {
+            let s0 = 2560 / long0
+            // clampedToExtent＝邊緣像素往外複製：縮小取樣到邊界不會混進透明，
+            // integral 縮框保證放大後蓋滿原 extent——**不能用 composited(over:) 補縫**，
+            // 那會把半透明來源的 alpha 變 a(2−a)、原圖色滲進濾鏡結果（查核實抓）。
+            let smallRect = CGRect(x: input.extent.origin.x * s0, y: input.extent.origin.y * s0,
+                                   width: input.extent.width * s0,
+                                   height: input.extent.height * s0).integral
+            let shrunk = input.clampedToExtent()
+                .transformed(by: CGAffineTransform(scaleX: s0, y: s0))
+                .cropped(to: smallRect)
+            let small = risoCI(p, input: shrunk)
+            return small.transformed(by: CGAffineTransform(scaleX: 1 / s0, y: 1 / s0))
+                .cropped(to: input.extent)
+        }
+        let ext = input.extent.integral
+        let w = Int(ext.width), h = Int(ext.height)
+        guard w > 0, h > 0, let cg = ctx.createCGImage(input, from: ext) else { return input }
+        let bytesPerRow = w * 4
+        var buf = [UInt8](repeating: 0, count: bytesPerRow * h)
+        let ok: Bool = buf.withUnsafeMutableBytes { raw in
+            guard let g = CGContext(data: raw.baseAddress, width: w, height: h,
+                                    bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+                                    space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            g.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard ok else { return input }
+
+        risoKernel(&buf, w: w, h: h, p: p)
+
+        let data = Data(buf)
+        guard let provider = CGDataProvider(data: data as CFData),
+              let outCG = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32,
+                                  bytesPerRow: bytesPerRow,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                                  provider: provider, decode: nil, shouldInterpolate: true,
+                                  intent: .defaultIntent) else { return input }
+        // 位置擺回原 extent（CI 的 y 軸朝上，這裡整張重建、座標原樣）
+        return CIImage(cgImage: outCG).transformed(by: CGAffineTransform(
+            translationX: ext.origin.x, y: ext.origin.y))
+    }
+
+    /// CPU 核心（與 Mac filters.ts applyRiso 逐行同構——改一邊必改另一邊）。
+    private static func risoKernel(_ buf: inout [UInt8], w: Int, h: Int, p: RisoParams) {
+        // 🔴 紙色任何一個通道是 0（純黑、純紅、檸檬黃…色盤上點得到）會讓 log(x/0)＝∞
+        // 灌進分色矩陣，整張照片變成一塊噪點。油墨那邊本來就有 max(c,1)，紙色漏了。
+        // 夾到 1 在畫面上與 0 無異，預設紙色逐位不受影響。（Mac filters.ts 同修）
+        let paper0 = hexRGB(p.paper)
+        let paper = (Swift.max(paper0.0, 1), Swift.max(paper0.1, 1), Swift.max(paper0.2, 1))
+        let inkHexes = p.inks.isEmpty ? RisoParams.defaults.inks : p.inks
+        let inks = inkHexes.prefix(3).map(hexRGB)
+        let N = inks.count
+        let k5 = Double(max(w, h)) / 900
+        let pitch = Swift.max(p.pitch * k5, 0.8)
+        let soft = Swift.max((0.55 - p.hard * 0.5) * 0.5, 0.02)
+
+        // 分色矩陣 M＝(AᵀA)⁻¹Aᵀ
+        let A = inks.map { c in [log(Swift.max(c.0, 1) / paper.0),
+                                 log(Swift.max(c.1, 1) / paper.1),
+                                 log(Swift.max(c.2, 1) / paper.2)] }
+        var AtA = [[Double]](repeating: [Double](repeating: 0, count: N), count: N)
+        for i in 0..<N { for j in 0..<N {
+            AtA[i][j] = A[i][0] * A[j][0] + A[i][1] * A[j][1] + A[i][2] * A[j][2]
+        } }
+        var aug = (0..<N).map { i in AtA[i] + (0..<N).map { j in i == j ? 1.0 : 0.0 } }
+        for i in 0..<N {
+            var piv = i
+            for r in (i + 1)..<N where abs(aug[r][i]) > abs(aug[piv][i]) { piv = r }
+            aug.swapAt(i, piv)
+            let pv = aug[i][i] == 0 ? 1e-9 : aug[i][i]
+            for c in 0..<(2 * N) { aug[i][c] /= pv }
+            for r in 0..<N where r != i {
+                let f = aug[r][i]
+                for c in 0..<(2 * N) { aug[r][c] -= f * aug[i][c] }
+            }
+        }
+        var M = [[Double]](repeating: [0, 0, 0], count: N)
+        for n in 0..<N { for q in 0..<3 {
+            var acc = 0.0
+            for j in 0..<N { acc += aug[n][N + j] * A[j][q] }
+            M[n][q] = acc
+        } }
+
+        struct Base { let ca, sa, ox, oy: Double }
+        let angles: [Double] = [45, 15, 75]
+        let bases = (0..<N).map { n -> Base in
+            let rad = angles[n % 3] * .pi / 180
+            return Base(ca: cos(rad), sa: sin(rad),
+                        ox: p.reg * k5 * cos(Double(n) * 2.1), oy: p.reg * k5 * sin(Double(n) * 2.1))
+        }
+        let inkF = inks.map { (1 - $0.0 / 255, 1 - $0.1 / 255, 1 - $0.2 / 255) }
+        let clamp = { (v: Double) -> UInt8 in UInt8(Swift.max(0, Swift.min(255, v.rounded()))) }
+
+        for y in 0..<h {
+            for x in 0..<w {
+                let i = (y * w + x) * 4
+                // premultipliedLast 緩衝：半透明像素要先除回 straight 再算、寫回再乘回去
+                //（貼圖 PNG／軟邊來源不處理的話會與 Mac 分歧、還寫出 RGB>alpha 的非法 premult）
+                let a = buf[i + 3]
+                if a == 0 { continue }                    // 全透明：原樣（RGB 已是 0）
+                let unp = a == 255 ? 1.0 : 255.0 / Double(a)
+                let b0 = log(Swift.max(Swift.min(Double(buf[i]) * unp, 255), 1) / paper.0)
+                let b1 = log(Swift.max(Swift.min(Double(buf[i + 1]) * unp, 255), 1) / paper.1)
+                let b2 = log(Swift.max(Swift.min(Double(buf[i + 2]) * unp, 255), 1) / paper.2)
+                var r = paper.0, g = paper.1, bl = paper.2
+                for n in 0..<N {
+                    var dn = M[n][0] * b0 + M[n][1] * b1 + M[n][2] * b2
+                    dn = dn < 0 ? 0 : dn > 1 ? 1 : dn
+                    if p.dens != 1 { dn = Swift.min(1, dn * p.dens) }
+                    let bb = bases[n]
+                    let px = Double(x) + bb.ox, py = Double(y) + bb.oy
+                    let u = (px * bb.ca + py * bb.sa) / pitch
+                    let v = (-px * bb.sa + py * bb.ca) / pitch
+                    let fu = u - u.rounded(.down) - 0.5, fv = v - v.rounded(.down) - 0.5
+                    let rr = (fu * fu + fv * fv).squareRoot()
+                    let R = dn.squareRoot() * 0.72
+                    let t = (R - rr) / soft
+                    let cov = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t)
+                    if cov > 0 {
+                        r *= 1 - cov * inkF[n].0
+                        g *= 1 - cov * inkF[n].1
+                        bl *= 1 - cov * inkF[n].2
+                    }
+                }
+                var gr = 0.0
+                if p.grain != 0 {
+                    gr = (hash2u(Int32(Double(x) / k5), Int32(Double(y) / k5), 55) - 0.5) * p.grain
+                }
+                let rep = a == 255 ? 1.0 : Double(a) / 255.0   // 寫回 premult
+                buf[i] = clamp((r + gr) * rep); buf[i + 1] = clamp((g + gr) * rep)
+                buf[i + 2] = clamp((bl + gr) * rep)
+            }
+        }
     }
 }

@@ -74,6 +74,31 @@
              font-variant-numeric: tabular-nums; color: var(--ink2); }
 
   #body { flex: 1; display: flex; min-height: 0; position: relative; }
+  /* 選取浮動晶片（2026-09-01，參考小高給的 uiinspo）：選到元件時在它**右側直立排開**，
+     每顆是各自獨立的圓形晶片——不是一條工具列。容器不擋畫布點擊，只有晶片收事件。
+     按下去圖示原地變成 ✓ 當回饋（不跳提示，滑鼠不用離開現場）。 */
+  #selbar {
+    position: absolute; z-index: 6; display: none; flex-direction: column; gap: 7px;
+    pointer-events: none;
+  }
+  #selbar.on { display: flex; }
+  #selbar button {
+    pointer-events: auto; width: 32px; height: 32px; display: grid; place-items: center;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--card);
+    color: var(--ink); cursor: pointer; padding: 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,.14), 0 0 0 .5px rgba(0,0,0,.03);
+    transition: transform .13s ease, color .13s ease, border-color .13s ease;
+    /* 進場：由右側輕輕滑入，一顆比一顆晚 40ms（順序在 JS 設 --i） */
+    animation: selchip .19s cubic-bezier(.2,.9,.3,1) both;
+    animation-delay: calc(var(--i, 0) * 40ms);
+  }
+  @keyframes selchip { from { opacity: 0; transform: translateX(6px) scale(.9); } }
+  #selbar button:hover { transform: scale(1.08); color: #2F7CF6; border-color: #2F7CF6; }
+  #selbar button:active { transform: scale(.94); }
+  #selbar button.warn:hover { color: #E5484D; border-color: #E5484D; }
+  #selbar button.on { color: #2F7CF6; border-color: #2F7CF6; }
+  #selbar button.done { color: #2F7CF6; border-color: #2F7CF6; }
+  @media (prefers-reduced-motion: reduce) { #selbar button { animation: none; } }
   .textedit {
     position: absolute; z-index: 5; margin: 0; padding: 0;
     background: transparent; outline: 1.5px dashed rgba(47,124,246,.75);
@@ -506,7 +531,7 @@
       <button id="undoBtn" title="復原（⌘Z）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 4.5L4 8l3.5 3.5"/><path d="M4 8h7.5a4.5 4.5 0 014.5 4.5V15"/></svg></button><button id="redoBtn" title="重做（⇧⌘Z）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 4.5L16 8l-3.5 3.5"/><path d="M16 8H8.5A4.5 4.5 0 004 12.5V15"/></svg></button>
     </span>
     <span class="island">
-      <button id="newproj" title="新專案（⌘N）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 3.5H5.8A1.3 1.3 0 004.5 4.8v10.4a1.3 1.3 0 001.3 1.3h8.4a1.3 1.3 0 001.3-1.3V7.5z"/><path d="M11.5 3.5v4h4"/></svg></button><button id="open" title="開啟（⌘O）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14.5V5.5A1.5 1.5 0 014.5 4h3.2L9.4 6h6.1A1.5 1.5 0 0117 7.5v1"/><path d="M3 14.5L4.6 9.2A1.5 1.5 0 016 8.1h10.9a1 1 0 01.96 1.28l-1.36 4.55a1.5 1.5 0 01-1.44 1.07H3z"/></svg></button><button id="save" title="存檔（⌘S）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 5.8A1.3 1.3 0 015.8 4.5h7.4l2.3 2.3v7.4a1.3 1.3 0 01-1.3 1.3H5.8a1.3 1.3 0 01-1.3-1.3z"/><path d="M7.2 4.5v3.1h4.6V4.5"/><path d="M7 15.5v-3.8a.6.6 0 01.6-.6h4.8a.6.6 0 01.6.6v3.8"/></svg></button><button id="exporttpl" title="匯出範本（不含素材）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="13" height="12" rx="1.6"/><path d="M3.5 8h13"/><path d="M8 16V8"/></svg></button><button id="export" title="匯出 PNG（⌘E）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="6.5" width="9.5" height="9.5" rx="1.6"/><circle cx="6.6" cy="9.6" r="1"/><path d="M3.8 14.6l3-2.5 2.4 1.9 2.3-1.9"/><path d="M13.4 2.8h3.3v3.3"/><path d="M16.7 2.8l-4.4 4.4"/></svg></button>
+      <button id="newproj" title="新專案（⌘N）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 3.5H5.8A1.3 1.3 0 004.5 4.8v10.4a1.3 1.3 0 001.3 1.3h8.4a1.3 1.3 0 001.3-1.3V7.5z"/><path d="M11.5 3.5v4h4"/></svg></button><button id="open" title="開啟（⌘O）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14.5V5.5A1.5 1.5 0 014.5 4h3.2L9.4 6h6.1A1.5 1.5 0 0117 7.5v1"/><path d="M3 14.5L4.6 9.2A1.5 1.5 0 016 8.1h10.9a1 1 0 01.96 1.28l-1.36 4.55a1.5 1.5 0 01-1.44 1.07H3z"/></svg></button><button id="save" title="存檔（⌘S）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 5.8A1.3 1.3 0 015.8 4.5h7.4l2.3 2.3v7.4a1.3 1.3 0 01-1.3 1.3H5.8a1.3 1.3 0 01-1.3-1.3z"/><path d="M7.2 4.5v3.1h4.6V4.5"/><path d="M7 15.5v-3.8a.6.6 0 01.6-.6h4.8a.6.6 0 01.6.6v3.8"/></svg></button><button id="exporttpl" title="匯出範本（不含素材）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="13" height="12" rx="1.6"/><path d="M3.5 8h13"/><path d="M8 16V8"/></svg></button><button id="exportpack" title="打包 .alignproj（含素材，iPad 可開）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5l6.5-3 6.5 3v7l-6.5 3-6.5-3z"/><path d="M3.5 7.5l6.5 3 6.5-3"/><path d="M10 10.5v6"/></svg></button><button id="export" title="匯出 PNG（⌘E）"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="6.5" width="9.5" height="9.5" rx="1.6"/><circle cx="6.6" cy="9.6" r="1"/><path d="M3.8 14.6l3-2.5 2.4 1.9 2.3-1.9"/><path d="M13.4 2.8h3.3v3.3"/><path d="M16.7 2.8l-4.4 4.4"/></svg></button>
     </span>
     <span class="island">
       <span class="glyph" id="sampleGlyph"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="5.6" height="13" rx="1"/><rect x="11" y="3.5" width="5.5" height="6" rx="1"/><rect x="11" y="11" width="5.5" height="5.5" rx="1"/></svg></span><select id="sample">
@@ -526,6 +551,7 @@
   </header>
   <div id="body">
     <canvas id="canvas"></canvas>
+    <div id="selbar"></div>
     <aside id="inspector"></aside>
   </div>
   <div id="strip"></div>

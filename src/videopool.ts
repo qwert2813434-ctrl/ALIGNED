@@ -25,7 +25,7 @@ import { __ } from "./i18n";
 import type { Project, Rect } from "./core/schema";
 import { aspectFillCrop, intersects } from "./core/geometry";
 import { rotatedBounds } from "./core/align";
-import { applyFilter, type FilterAssets } from "./core/filters";
+import { applyFilter, type FilterAssets, filterSig } from "./core/filters";
 
 const LIVE_FPS = 20;
 const FILTER_CAP = 512;    // 逐像素濾鏡的成本上限
@@ -255,8 +255,9 @@ export class VideoPool {
         n.visible = true;
         n.area = Math.max(n.area, b.frame.w * b.frame.h);
       }
-      if (m.filterKey && !n.filters.has(m.filterKey)) {
-        n.filters.set(m.filterKey, {
+      const vsig = filterSig(m);   // c5 帶參數：參數變了＝新的濾鏡身份（工人重烤）
+      if (vsig && !n.filters.has(vsig)) {
+        n.filters.set(vsig, {
           cropW: m.cropRect.w, frameW: b.frame.w, frameH: b.frame.h,
         });
       }
@@ -277,6 +278,21 @@ export class VideoPool {
       const file = files[(this.rotate + step) % files.length];
       const n = need.get(file)!;
       let live = this.pool.get(file);
+      // c5 參數拖曳：每個中間參數都是新的濾鏡身份——把不再使用的顯示/快照畫布
+      // 連工人那份一起收掉，不然滑桿掃一輪就多幾十張 512 級畫布（審查抓的洩漏）
+      if (live) {
+        for (const fk of [...live.display.keys()]) {
+          if (n.filters.has(fk)) continue;
+          live.display.delete(fk);
+          live.scratch.delete(fk);
+          this.frames.delete(`${file}|${fk}`);
+          this.inFlight.delete(`${file}|${fk}`);
+          this.worker?.postMessage({ type: "drop", token: `${file}|${fk}` });
+        }
+        for (const fk of [...live.scratch.keys()]) {
+          if (!n.filters.has(fk)) { live.scratch.delete(fk); this.frames.delete(`${file}|${fk}`); }
+        }
+      }
       if (!n.visible) {
         // 看不見＝停解碼。畫面停在最後一格（frames 留著），回到視野再繼續播
         if (live && !live.el.paused) live.el.pause();

@@ -31,14 +31,14 @@ export interface FilterAssets {
   dots: Uint8Array;                 // 半調網屏表 32×32×17
 }
 
-export const FILTER_KEYS = ["a1", "a2", "a3", "b1", "b2", "b5", "c1", "c3", "c4"] as const;
+export const FILTER_KEYS = ["a1", "a2", "a3", "b1", "b2", "b5", "c1", "c3", "c4", "c5"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 
 /** 顯示名與 iOS 的濾鏡面板一致。 */
 export const FILTER_LABELS: Record<FilterKey, string> = {
   a1: __("銀鹽硬調"), a2: __("經典中性"), a3: __("褪色霧面"),
   b1: __("紅色濾鏡"), b2: __("正片負沖"), b5: __("仿紅外線"),
-  c1: __("報紙"), c3: __("底片顆粒"), c4: __("高級紙"),
+  c1: __("報紙"), c3: __("底片顆粒"), c4: __("高級紙"), c5: __("孔版印刷"),
 };
 
 /** 3D 查找表，三線性內插。輸入輸出都是 0…255。 */
@@ -236,6 +236,9 @@ export function applyFilter(key: string | null | undefined, img: ImageData, a: F
                             scale = 1): void {
   if (!key) return;
   const d = img.data, w = img.width, h = img.height;
+  // c5 孔版：唯一帶參數的濾鏡。身份字串＝"c5" 或 "c5:序列化參數"（見 filterSig），
+  // 參數就藏在 key 裡，所以 worker／匯出這些只傳字串的管線一個都不用改。
+  if (key === "c5" || key.startsWith("c5:")) { applyRiso(d, w, h, parseRisoSig(key)); return; }
   const lut = (n: string) => a.cube.get(n)!;
   const cv = (n: string) => a.curve.get(n)!;
 
@@ -307,4 +310,183 @@ export async function loadFilterAssets(base = "/luts/"): Promise<FilterAssets> {
     grain: new Map(grainNames.map((n, i) => [n, grains[i]])),
     dots,
   };
+}
+
+// ════════════════════ c5 孔版印刷（Risograph）════════════════════
+// 正本＝工具間 filter-lab.html（小高在那邊調參數研究）。演算法：把顏色減成 1–3 支
+// 油墨（log 空間最小平方分色）→ 各墨 45°/15°/75° AM 過網 → 套印偏移 → multiply
+// 疊印回紙色 → 確定性顆粒。與其他濾鏡不同：**帶參數**、且顆粒用確定性雜湊
+// （不是 CIRandomGenerator），iOS/Mac 可以逐位一致。
+//
+// 空間正規化：pitch／reg 的單位＝「長邊 900px 時的 px」（工具間預覽基準，
+// 這樣小高在工具間定案的數字搬過來就是同一個長相）。實際間距＝pitch×長邊/900，
+// 顆粒取樣座標同除——不同解析度的照片、預覽與匯出，網點相對大小都一樣。
+
+export interface RisoParams {
+  inks: string[];   // 1–3 支油墨 hex（不帶 #，schema 慣例同 strokeHex）
+  paper: string;    // 紙色 hex
+  pitch: number;    // 網點間距（900 基準 px）
+  hard: number;     // 網點硬度 0–1
+  reg: number;      // 套印偏移（900 基準 px）
+  dens: number;     // 油墨濃度倍率
+  grain: number;    // 紙張顆粒 0–24
+}
+
+/** 定案預設＝工具間「藍＋暖棕」配方（2026-08-31 小高定案）。 */
+export const RISO_DEFAULTS: RisoParams = {
+  inks: ["236996", "966946"], paper: "DDD7C9",
+  pitch: 4, hard: 0.45, reg: 2.25, dens: 0.9, grain: 7,
+};
+
+/** 三組定案油墨（工具間同款一鍵配方）。 */
+export const RISO_PRESETS: { name: string; inks: string[] }[] = [
+  { name: __("藍＋暖棕"), inks: ["236996", "966946"] },
+  { name: __("綠＋暖棕"), inks: ["3c7846", "a06e46"] },
+  { name: __("單墨・黑"), inks: ["282622"] },
+];
+
+/** media 欄位 → 完整參數（absent 補預設；欄位形狀見 schema.ts riso*）。 */
+export function risoOf(m: { risoInks?: string[]; risoPaper?: string; risoPitch?: number;
+  risoHard?: number; risoReg?: number; risoDens?: number; risoGrain?: number }): RisoParams {
+  return {
+    inks: (m.risoInks?.length ? m.risoInks : RISO_DEFAULTS.inks).slice(0, 3),
+    paper: m.risoPaper ?? RISO_DEFAULTS.paper,
+    pitch: m.risoPitch ?? RISO_DEFAULTS.pitch,
+    hard: m.risoHard ?? RISO_DEFAULTS.hard,
+    reg: m.risoReg ?? RISO_DEFAULTS.reg,
+    dens: m.risoDens ?? RISO_DEFAULTS.dens,
+    grain: m.risoGrain ?? RISO_DEFAULTS.grain,
+  };
+}
+
+/**
+ * 濾鏡身份字串＝整條管線（變體鍵、切圖鍵、videopool、影片匯出 spec）的濾鏡成分。
+ * 普通濾鏡＝代號本身（既有鍵逐位不變）；c5＝代號＋canonical 參數序列化——
+ * **參數變了鍵就變**，不同參數不會共用同一份快取（審查點名的靜靜畫錯）。
+ */
+export function filterSig(m: { filterKey?: string } & Parameters<typeof risoOf>[0]): string | undefined {
+  if (m.filterKey !== "c5") return m.filterKey || undefined;
+  const p = risoOf(m);
+  return `c5:${p.inks.join(",")};${p.paper};${p.pitch};${p.hard};${p.reg};${p.dens};${p.grain}`;
+}
+
+export function parseRisoSig(key: string): RisoParams {
+  if (!key.includes(":")) return RISO_DEFAULTS;
+  const seg = key.slice(key.indexOf(":") + 1).split(";");
+  if (seg.length < 7) return RISO_DEFAULTS;
+  const num = (v: string, fb: number) => { const n = parseFloat(v); return Number.isFinite(n) ? n : fb; };
+  return {
+    inks: seg[0].split(",").filter(Boolean).slice(0, 3),
+    paper: seg[1] || RISO_DEFAULTS.paper,
+    pitch: num(seg[2], RISO_DEFAULTS.pitch), hard: num(seg[3], RISO_DEFAULTS.hard),
+    reg: num(seg[4], RISO_DEFAULTS.reg), dens: num(seg[5], RISO_DEFAULTS.dens),
+    grain: num(seg[6], RISO_DEFAULTS.grain),
+  };
+}
+
+// 確定性雜湊（工具間同款）。⚠️ 一定要無號位移 >>>：帶號 >> 的符號延伸會讓
+// bit31 自我抵消，輸出永遠 < 0.5（顆粒只變暗、幅度砍半——工具間審查實踩）。
+export const hash1u = (i: number, seed: number): number => {
+  let s = (i * 374761393 + seed * 668265263) >>> 0;
+  s = (s ^ (s >>> 13)) >>> 0; s = Math.imul(s, 1274126177) >>> 0;
+  return ((s ^ (s >>> 16)) >>> 0) / 4294967295;
+};
+export const hash2u = (x: number, y: number, seed: number): number =>
+  hash1u((x * 73856093) ^ (y * 19349663), seed);
+
+const hex3 = (hx: string): [number, number, number] => {
+  const v = parseInt(hx.replace("#", "").padEnd(6, "0"), 16) || 0;
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+};
+
+const RISO_ANGLES = [45, 15, 75];
+
+/**
+ * 孔版本體。單趟逐像素、不配置整張浮點平面（24MP 相片 × 3 墨的濃度平面要 288MB，
+ * 這裡每像素現解現用）。輸出＝紙色 × Π(1 − cov·(1 − 墨/255))。
+ */
+export function applyRiso(d: Uint8ClampedArray, w: number, h: number, p: RisoParams): void {
+  // 🔴 紙色任何一個通道是 0（純黑、純紅、檸檬黃…色盤上點得到）就會讓 log(x/0)＝∞
+  // 灌進分色矩陣，整張照片變成一塊噪點。油墨那邊本來就有 max(c,1)，紙色漏了。
+  // 夾到 1 在畫面上與 0 無異（1/255），預設紙色 DDD7C9 逐位不受影響。
+  const paper = hex3(p.paper).map((v) => Math.max(v, 1)) as [number, number, number];
+  const inks = (p.inks.length ? p.inks : RISO_DEFAULTS.inks).map(hex3);
+  const N = inks.length;
+  const k5 = Math.max(w, h) / 900;                    // 工具間 900px 預覽基準
+  const pitch = Math.max(p.pitch * k5, 0.8);
+  const soft = Math.max((0.55 - p.hard * 0.5) * 0.5, 0.02);
+
+  // 分色矩陣 M＝(AᵀA)⁻¹Aᵀ：log 空間最小平方的閉式解，N ≤ 3 直接高斯消去
+  const A = inks.map((c) => [0, 1, 2].map((q) => Math.log(Math.max(c[q], 1) / paper[q])));
+  const AtA: number[][] = [];
+  for (let i = 0; i < N; i++) {
+    AtA.push([]);
+    for (let j = 0; j < N; j++) AtA[i].push(A[i][0] * A[j][0] + A[i][1] * A[j][1] + A[i][2] * A[j][2]);
+  }
+  // 高斯–約旦求逆（帶單位陣），N ≤ 3
+  const aug = AtA.map((r, i) => r.concat(Array.from({ length: N }, (_, j) => (i === j ? 1 : 0))));
+  for (let i = 0; i < N; i++) {
+    let piv = i;
+    for (let r = i + 1; r < N; r++) if (Math.abs(aug[r][i]) > Math.abs(aug[piv][i])) piv = r;
+    [aug[i], aug[piv]] = [aug[piv], aug[i]];
+    const pv = aug[i][i] || 1e-9;
+    for (let c = 0; c < 2 * N; c++) aug[i][c] /= pv;
+    for (let r = 0; r < N; r++) {
+      if (r === i) continue;
+      const f = aug[r][i];
+      for (let c = 0; c < 2 * N; c++) aug[r][c] -= f * aug[i][c];
+    }
+  }
+  // M[n][q]＝第 n 支墨對 log 通道 q 的權重
+  const M: number[][] = [];
+  for (let n = 0; n < N; n++) {
+    M.push([0, 0, 0]);
+    for (let q = 0; q < 3; q++) {
+      let acc = 0;
+      for (let j = 0; j < N; j++) acc += aug[n][N + j] * A[j][q];
+      M[n][q] = acc;
+    }
+  }
+
+  // 每支墨的旋轉基底與套印偏移
+  const bases = inks.map((_, n) => {
+    const rad = (RISO_ANGLES[n % 3] * Math.PI) / 180;
+    return { ca: Math.cos(rad), sa: Math.sin(rad),
+             ox: p.reg * k5 * Math.cos(n * 2.1), oy: p.reg * k5 * Math.sin(n * 2.1) };
+  });
+  const inkF = inks.map((c) => [1 - c[0] / 255, 1 - c[1] / 255, 1 - c[2] / 255]);
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      // log 空間目標向量（相對紙色）
+      const b0 = Math.log(Math.max(d[i], 1) / paper[0]);
+      const b1 = Math.log(Math.max(d[i + 1], 1) / paper[1]);
+      const b2 = Math.log(Math.max(d[i + 2], 1) / paper[2]);
+      let r = paper[0], g = paper[1], bl = paper[2];
+      for (let n = 0; n < N; n++) {
+        let dn = M[n][0] * b0 + M[n][1] * b1 + M[n][2] * b2;
+        dn = dn < 0 ? 0 : dn > 1 ? 1 : dn;
+        if (p.dens !== 1) dn = Math.min(1, dn * p.dens);
+        // AM 過網：週期內相對位置 vs 濃度半徑
+        const bb = bases[n];
+        const px = x + bb.ox, py = y + bb.oy;
+        const u = (px * bb.ca + py * bb.sa) / pitch;
+        const v = (-px * bb.sa + py * bb.ca) / pitch;
+        const fu = u - Math.floor(u) - 0.5, fv = v - Math.floor(v) - 0.5;
+        const rr = Math.hypot(fu, fv);
+        const R = Math.sqrt(dn) * 0.72;
+        const t = (R - rr) / soft;
+        const cov = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+        if (cov > 0) {
+          r *= 1 - cov * inkF[n][0];
+          g *= 1 - cov * inkF[n][1];
+          bl *= 1 - cov * inkF[n][2];
+        }
+      }
+      // 顆粒：確定性雜湊、種子 55、座標除 k5（匯出與預覽同顆粒頻率——工具間同款修法）
+      const gr = p.grain ? (hash2u(((x / k5) | 0), ((y / k5) | 0), 55) - 0.5) * p.grain : 0;
+      d[i] = clamp(r + gr); d[i + 1] = clamp(g + gr); d[i + 2] = clamp(bl + gr);
+    }
+  }
 }

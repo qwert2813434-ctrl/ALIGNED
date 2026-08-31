@@ -109,6 +109,10 @@ export function stripToTemplate(p: Project): Project {
       m.assetFileName = "";
       m.cropRect = { x: 0, y: 0, w: 1, h: 1 };
       m.rotationDegrees = undefined;
+      // 範本包裡沒有 assets/，這些指到別人家檔案的欄位留著就是懸空參照：
+      // 輪播會畫成一串佔位框、去背遮罩查不到就整段跳過（看起來像壞掉）。（2026-09-01 審查）
+      m.carouselAssets = undefined;
+      m.matteFileName = undefined;
       return { ...structuredClone(b), content: { type: "image" as const, media: m } };
     }),
   };

@@ -22,13 +22,53 @@ type Msg =
   | { type: "assets"; assets: FilterAssets }
   | { type: "canvas"; token: string; off: OffscreenCanvas }
   | { type: "reset" }
-  | { type: "frame"; token: string; key: string; scale: number; sw: number; sh: number; vf: VideoFrame };
+  /** c5 參數拖曳每個中間值都是新 token——不逐一丟，displays/snaps 只增不減（審查抓的洩漏）。 */
+  | { type: "drop"; token: string }
+  | { type: "frame"; token: string; key: string; scale: number; sw: number; sh: number; vf: VideoFrame }
+  /** 靜態圖 c5 烤圖（2026-09-01 滑桿卡頓修正）：來源像素先寄一次快取在這，
+   *  之後每次參數變只寄 sig 字串，烤完 transfer 回主執行緒貼進變體。 */
+  | { type: "bakesrc"; skey: string; w: number; h: number; buf: ArrayBuffer }
+  | { type: "bake"; skey: string; sig: string; seq: number; tier: "quick" | "full" };
+
+/** skey（檔名|尺寸）→ 來源像素。位元組預算制：張數上限會讓「兩檔以上輪流調參」
+ *  必觸發 needsrc 往返（720＋2560 每檔佔兩格），改成 96MB 上限自然容納多檔的 720，
+ *  只有多張 2560 才互擠（審查 fyi）。 */
+const bakeSrcs = new Map<string, ImageData>();
+let bakeSrcBytes = 0;
 
 self.onmessage = (e: MessageEvent<Msg>): void => {
   const m = e.data;
   if (m.type === "assets") { assets = m.assets; return; }
+  if (m.type === "bakesrc") {
+    const prev = bakeSrcs.get(m.skey);
+    if (prev) bakeSrcBytes -= prev.data.byteLength;
+    bakeSrcs.set(m.skey, new ImageData(new Uint8ClampedArray(m.buf), m.w, m.h));
+    bakeSrcBytes += m.buf.byteLength;
+    while (bakeSrcBytes > 96 * 1024 * 1024 && bakeSrcs.size > 1) {
+      const k = bakeSrcs.keys().next().value as string;
+      bakeSrcBytes -= bakeSrcs.get(k)!.data.byteLength;
+      bakeSrcs.delete(k);
+    }
+    return;
+  }
+  if (m.type === "bake") {
+    const src = bakeSrcs.get(m.skey);
+    if (!src) {   // 來源被擠掉＝叫主執行緒補寄（自癒，不用兩邊對帳）
+      (self as unknown as Worker).postMessage({ needsrc: m.skey, sig: m.sig, seq: m.seq, tier: m.tier });
+      return;
+    }
+    bakeSrcs.delete(m.skey); bakeSrcs.set(m.skey, src);   // LRU touch
+    const d = new ImageData(new Uint8ClampedArray(src.data), src.width, src.height);
+    applyFilter(m.sig, d, assets ?? ({} as FilterAssets));   // c5 不吃材質，assets 沒寄過也安全
+    (self as unknown as Worker).postMessage(
+      { bake: m.skey, sig: m.sig, seq: m.seq, tier: m.tier, w: d.width, h: d.height, buf: d.data.buffer },
+      [d.data.buffer],
+    );
+    return;
+  }
   if (m.type === "canvas") { displays.set(m.token, m.off); return; }
-  if (m.type === "reset") { displays.clear(); snaps.clear(); return; }
+  if (m.type === "reset") { displays.clear(); snaps.clear(); bakeSrcs.clear(); bakeSrcBytes = 0; return; }
+  if (m.type === "drop") { displays.delete(m.token); snaps.delete(m.token); return; }
   if (m.type !== "frame") return;
 
   const t0 = performance.now();

@@ -4,6 +4,7 @@
 // （localStorage；紙張與紋路搬進專案檔是 P3 檔案欄位定稿的事）。
 // 鐵則：試畫畫布不跟主題（匯出成品不受外殼配色影響）——紙色固定 #FBF8F0。
 import { __ } from "./i18n";
+import { getUIPrefs, setUIPref } from "./uiprefs";
 import {
   BRUSHES, BRUSH_ORDER, SOFT_DEFAULTS, drawDoodle, getSoftPrefs, setSoftPrefs,
   speedPress, type DoodleBlock, type SoftPrefs,
@@ -97,18 +98,21 @@ const GMODES = ["紋路行為：移動（跟著筆跑）", "紋路行為：紋�
 
 let overlay: HTMLDivElement | null = null;
 
-export function openBrushPrefs(onChanged?: () => void): void {
+export function openBrushPrefs(onChanged?: () => void, initial: "general" | "brush" = "brush"): void {
   if (overlay) return;
   injectStyle();
   overlay = document.createElement("div");
   overlay.id = "brushprefs";
   overlay.innerHTML = `<div class="bp-panel">
     <div class="bp-head">
-      <span class="bp-title">${__("筆刷偏好設定")}</span>
+      <span class="bp-title">${__("偏好設定")}</span>
       <button class="bp-close" aria-label="${__("關閉")}">✕</button>
     </div>
     <div class="bp-app">
-      <aside class="bp-side"><div class="bp-sect">${__("筆刷")}</div><div class="bp-list"></div></aside>
+      <aside class="bp-side">
+        <div class="bp-sect">${__("一般")}</div><div class="bp-gen"></div>
+        <div class="bp-sect">${__("筆刷")}</div><div class="bp-list"></div>
+      </aside>
       <main class="bp-cfg"></main>
       <section class="bp-cv">
         <canvas class="bp-canvas"></canvas>
@@ -122,6 +126,7 @@ export function openBrushPrefs(onChanged?: () => void): void {
   overlay.querySelector(".bp-close")!.addEventListener("click", close);
 
   // ── 狀態 ──
+  let pane: "general" | "brush" = initial;
   let cur = "soft";
   let color = SWATCHES[0];
   let penW = 10;
@@ -194,6 +199,23 @@ export function openBrushPrefs(onChanged?: () => void): void {
   }
   tbtn(__("清空"), () => { strokes = []; bake(); }, "bp-clr");
 
+  // ── 左上：一般（介面偏好；不是筆刷，所以右邊那塊試畫畫布會收起來）──
+  const genEl = overlay.querySelector<HTMLDivElement>(".bp-gen")!;
+  const app = overlay.querySelector<HTMLElement>(".bp-app")!;
+  const genRow = document.createElement("button");
+  genRow.className = "bp-row"; genRow.type = "button";
+  genRow.innerHTML = `<span class="bp-bn">${__("介面")}</span>`;
+  genRow.addEventListener("click", () => { pane = "general"; syncRows(); buildCfg(); });
+  genEl.append(genRow);
+
+  const syncRows = (): void => {
+    genRow.classList.toggle("on", pane === "general");
+    app.classList.toggle("nocv", pane === "general");
+    for (const r of Array.from(listEl.querySelectorAll(".bp-row"))) {
+      r.classList.toggle("on", pane === "brush" && (r as HTMLElement).dataset.id === cur);
+    }
+  };
+
   // ── 左：筆刷清單（軟鉛筆＋現有五支；縮圖走正式渲染器）──
   const listEl = overlay.querySelector<HTMLDivElement>(".bp-list")!;
   const order = ["soft", ...BRUSH_ORDER.filter((k) => k !== "soft")];
@@ -222,10 +244,10 @@ export function openBrushPrefs(onChanged?: () => void): void {
     };
     thumbs.push(drawThumb);
     drawThumb();
+    row.dataset.id = id;
     row.addEventListener("click", () => {
-      cur = id;
-      for (const r of Array.from(listEl.querySelectorAll(".bp-row"))) r.classList.toggle("on", r === row);
-      buildCfg(); bake();
+      pane = "brush"; cur = id;
+      syncRows(); buildCfg(); bake();
     });
     if (id === cur) row.classList.add("on");
     listEl.append(row);
@@ -235,6 +257,7 @@ export function openBrushPrefs(onChanged?: () => void): void {
   const cfg = overlay.querySelector<HTMLElement>(".bp-cfg")!;
   const buildCfg = (): void => {
     cfg.innerHTML = "";
+    if (pane === "general") { buildGeneral(cfg); return; }
     const h = document.createElement("div");
     h.className = "bp-bt";
     h.textContent = __(BRUSHES[cur]?.name ?? cur);
@@ -298,8 +321,40 @@ export function openBrushPrefs(onChanged?: () => void): void {
     foot.append(info, reset);
     cfg.append(foot);
   };
+  syncRows();
   buildCfg();
   bake();
+}
+
+/** 一般（介面）偏好。跟使用者走、立刻生效，不需要「套用」。 */
+function buildGeneral(cfg: HTMLElement): void {
+  const h = document.createElement("div");
+  h.className = "bp-bt"; h.textContent = __("介面");
+  cfg.append(h);
+  const p = getUIPrefs();
+  cfg.append(toggle(
+    __("選取浮動按鈕"),
+    __("選到元件時，旁邊浮出複製／前後／鎖定／刪除的小圓鈕。關掉之後這些動作仍在右鍵選單與檢視器裡。"),
+    p.selbar,
+    (v) => setUIPref("selbar", v),
+  ));
+}
+
+/** 開關列（左標題右開關；說明字掛在下面）。 */
+function toggle(label: string, note: string, value: boolean, set: (v: boolean) => void): HTMLDivElement {
+  const wrap = document.createElement("div");
+  wrap.className = "bp-ctl bp-tgw";
+  const lab = document.createElement("label");
+  lab.className = "bp-tglab";
+  const name = document.createElement("span"); name.textContent = label;
+  const sw = document.createElement("input");
+  sw.type = "checkbox"; sw.className = "bp-tg"; sw.checked = value;
+  sw.addEventListener("change", () => set(sw.checked));
+  lab.append(name, sw);
+  const n = document.createElement("p");
+  n.className = "bp-note"; n.textContent = note;
+  wrap.append(lab, n);
+  return wrap;
 }
 
 function inkHex(): string {
@@ -405,6 +460,19 @@ function injectStyle(): void {
   #brushprefs .bp-act { white-space: nowrap; font: inherit; font-size: 12px; padding: 5px 13px;
     border-radius: 999px; border: 1px solid var(--line); background: var(--card);
     color: var(--ink); cursor: pointer; }
-  #brushprefs .bp-act:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }`;
+  #brushprefs .bp-act:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+  /* 一般偏好：沒有筆刷可試畫，右欄整個收起來 */
+  #brushprefs .bp-app.nocv { grid-template-columns: 208px minmax(320px, 1fr); }
+  #brushprefs .bp-app.nocv .bp-cv { display: none; }
+  #brushprefs .bp-tglab { display: flex; align-items: center; justify-content: space-between;
+    font-size: 13px; font-weight: 600; color: var(--ink); margin-bottom: 8px; }
+  #brushprefs .bp-tg { appearance: none; width: 40px; height: 23px; border-radius: 999px;
+    background: color-mix(in srgb, var(--ink) 18%, transparent); position: relative;
+    cursor: pointer; margin: 0; transition: background .15s; }
+  #brushprefs .bp-tg::after { content: ""; position: absolute; top: 2.5px; left: 2.5px;
+    width: 18px; height: 18px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .15s; }
+  #brushprefs .bp-tg:checked { background: #2F7CF6; }
+  #brushprefs .bp-tg:checked::after { transform: translateX(17px); }`;
   document.head.append(s);
 }

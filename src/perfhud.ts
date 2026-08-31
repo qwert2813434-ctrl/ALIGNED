@@ -14,6 +14,7 @@
 //
 // 面板自己不能是負擔：一秒才更新一次文字，計數器全是整數 ++。
 import { renderCounters } from "./core/render";
+import { doodleCounters } from "./core/doodle";
 
 interface FrameSource {
   frameStats: { ms: number; paints: number; raf: number; maxMs: number };
@@ -70,7 +71,8 @@ export function applyPerfHud(src: FrameSource): void {
   let lastAt = performance.now();
   // 這一秒內的累計——計數器每幀被歸零，所以要在 rAF 上收集，不能等一秒才讀
   const sum = { media: 0, matte: 0, video: 0, cutHit: 0, cutMiss: 0,
-                pageHit: 0, pageMiss: 0, pageSkip: 0, frames: 0 };
+                pageHit: 0, pageMiss: 0, pageSkip: 0,
+                doodleHit: 0, doodleMiss: 0, frames: 0 };
   const collect = (): void => {
     if (!isPerfHudOn()) return;
     sum.media += renderCounters.media; sum.matte += renderCounters.matte;
@@ -78,11 +80,13 @@ export function applyPerfHud(src: FrameSource): void {
     sum.cutHit += renderCounters.cutHit; sum.cutMiss += renderCounters.cutMiss;
     sum.pageHit += renderCounters.pageHit; sum.pageMiss += renderCounters.pageMiss;
     sum.pageSkip += renderCounters.pageSkip;
+    sum.doodleHit += doodleCounters.hit; sum.doodleMiss += doodleCounters.miss;
     // 只有真的畫了東西的那一幀才算一幀——靜止時 rAF 照跑，算進去會把平均稀釋掉
     if (renderCounters.media > 0
         || renderCounters.pageHit + renderCounters.pageMiss + renderCounters.pageSkip > 0) sum.frames++;
     // 讀完就歸零：計數器只被消費一次，畫布沒重畫的那幾幀就不會被重複加
     renderCounters.reset();
+    doodleCounters.reset();
     requestAnimationFrame(collect);
   };
   requestAnimationFrame(collect);
@@ -107,14 +111,16 @@ export function applyPerfHud(src: FrameSource): void {
     t += line("這幀", `圖 ${per(sum.media)}・去背 ${per(sum.matte)}`);
     if (sum.video) t += line("影片", `${per(sum.video)} 塊即時影格`);
     t += line("切圖", `命中 ${sum.cutHit}・重算 ${sum.cutMiss}`, sum.cutMiss > sum.frames);
+    t += line("塗鴉", `命中 ${sum.doodleHit}・重算 ${sum.doodleMiss}`, sum.doodleMiss > sum.frames);
     t += line("整頁", `命中 ${sum.pageHit}・重算 ${sum.pageMiss}・不可存 ${sum.pageSkip}`,
               sum.pageMiss + sum.pageSkip > sum.frames);
-    t += line("快取", `切圖 ${renderCounters.cutCached}・整頁 ${renderCounters.pageCached} 張`);
+    t += line("快取", `切圖 ${renderCounters.cutCached}・整頁 ${renderCounters.pageCached} 張・塗鴉 ${doodleCounters.cached}`);
     const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
     if (mem) t += line("JS 堆", `${(mem.usedJSHeapSize / 1048576).toFixed(0)} MB`);
     d.textContent = t.trimEnd();
 
     sum.media = sum.matte = sum.video = 0;
-    sum.cutHit = sum.cutMiss = sum.pageHit = sum.pageMiss = sum.pageSkip = sum.frames = 0;
+    sum.cutHit = sum.cutMiss = sum.pageHit = sum.pageMiss = sum.pageSkip = 0;
+    sum.doodleHit = sum.doodleMiss = sum.frames = 0;
   }, 1000);
 }

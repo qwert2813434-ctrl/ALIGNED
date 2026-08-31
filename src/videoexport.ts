@@ -10,7 +10,7 @@
 import type { Block, Project } from "./core/schema";
 import { ANIM_STAGGER, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import { pageRect } from "./core/geometry";
-import { applyFilter } from "./core/filters";
+import { applyFilter , filterSig } from "./core/filters";
 import { maskAndStrokeCanvases, renderPageCanvas, type RenderOptions } from "./core/render";
 import { toBlob } from "./core/export";
 import { hiddenHost } from "./videopool";
@@ -117,7 +117,7 @@ export async function buildAnimFrames(
     for (const b of onPage) {
       if (b.content.type !== "video" || !b.content.media.assetFileName) continue;
       const file = b.content.media.assetFileName;
-      const fk = b.content.media.filterKey ?? "";
+      const fk = filterSig(b.content.media) ?? "";
       const had = vids.get(file);
       if (had) { had.keys.add(fk); continue; }
       const el = document.createElement("video");
@@ -249,7 +249,7 @@ export async function buildPageSpec(
       path: deps.assetPath(m.assetFileName),
       x: b.frame.x - page.x, y: b.frame.y - page.y, w, h,
       crop: { ...m.cropRect },
-      filter: m.filterKey,
+      filter: filterSig(m),   // c5＝代號＋參數（alignvideo 端解析）
     };
     if (mask) {
       layer.mask = `${dir}/mask-${file++}.png`;

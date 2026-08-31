@@ -213,12 +213,95 @@ export function layerColor(hex: string, mod: BrushLayer["color"], hue01 = 0): st
 /** 一條可見折線（已裁到視窗、已加位移），每點帶「在整筆中的弧長位置 0–1」與弧長。 */
 interface Piece { pts: { x: number; y: number; u: number; a: number; wm: number }[] }
 
+// ─── 靜態塗鴉點陣快取（2026-08-31）──────────────────────────────────────
+// 鉛筆這類筆刷是「蓋章」不是畫線：一塊寫滿字的塗鴉一次重畫要蓋幾萬個小圓。
+// 頁上有任何會動的東西時整頁快取不能存（render.ts pageSig 回 null），
+// 沒有這一層的話那些頁每一幀都付塗鴉全額——2026-08-31 小高 Mac 實測：
+// 8 塊塗鴉＋循環出場動畫的專案，一幀 300 ms、2–4 fps，整台像當掉。
+//
+// 鑰匙＝內容指紋（整包 JSON.stringify，同 blockSig 的哲學：新欄位自動涵蓋）
+// ＋全域軟鉛筆偏好（sp 未設的筆畫吃全域偏好——不進鑰匙的話改偏好畫面會凍住）
+// ＋烤圖尺寸。烤圖尺寸把顯示尺寸長邊**往上**進位到 1.5 的冪次（與 iOS
+// DoodleCache 同款）：縮放中尺寸連續變動，照顯示尺寸當鑰匙等於每格重烤；
+// 進位後一次縮放只跨兩三個級距，中間全是同一張圖在縮放。往上進位＝烤出來
+// 永遠 ≥ 顯示尺寸，縮小顯示是清晰的。
+const _doodleCache = new Map<string, HTMLCanvasElement>();
+const DOODLE_CACHE_MAX = 24;
+/** 1600 萬畫素 ≈ 64 MB。自己要有天花板，否則反過來製造記憶體壓力擠掉別人。 */
+const DOODLE_CACHE_PIXELS = 16_000_000;
+const DOODLE_BAKE_BASE = 128, DOODLE_BAKE_CAP = 2560;
+
+/** 命中／重算累計（效能面板讀）。縮放中應該幾乎全命中；重算一直跳＝級距沒生效。 */
+export const doodleCounters = {
+  hit: 0, miss: 0,
+  reset(): void { this.hit = this.miss = 0; },
+  get cached(): number { return _doodleCache.size; },
+};
+
+// render.ts 的 fnv 是它的私有品；抄四行，別為此製造循環 import。
+function dfnv(s: string, h = 0x811c9dc5): number {
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h >>> 0;
+}
+
+function bakedDoodle(
+  ctx: CanvasRenderingContext2D, d: DoodleBlock, w: number, h: number,
+): HTMLCanvasElement | null {
+  if (!d.strokes.length) return null;
+  // 有效縮放從 transform 拿；用行向量長度——旋轉時 m.a 只剩 cos 分量會低估
+  const m = ctx.getTransform();
+  const eff = Math.max(Math.hypot(m.a, m.b), Math.hypot(m.c, m.d), 0.01);
+  const long = Math.max(w, h) * eff;
+  const k = Math.max(0, Math.ceil(Math.log(Math.max(long, DOODLE_BAKE_BASE) / DOODLE_BAKE_BASE) / Math.log(1.5)));
+  const target = Math.min(DOODLE_BAKE_CAP, DOODLE_BAKE_BASE * Math.pow(1.5, k));
+  const s = target / Math.max(w, h);
+  const bw = Math.max(1, Math.round(w * s)), bh = Math.max(1, Math.round(h * s));
+  const key = `${dfnv(JSON.stringify(d))}|${dfnv(JSON.stringify(softPrefs))}|${bw}x${bh}`;
+  const hit = _doodleCache.get(key);
+  if (hit) {
+    _doodleCache.delete(key); _doodleCache.set(key, hit);   // LRU
+    doodleCounters.hit++;
+    return hit;
+  }
+  doodleCounters.miss++;
+  const c = document.createElement("canvas");
+  c.width = bw; c.height = bh;
+  const bx = c.getContext("2d");
+  if (!bx) return null;
+  bx.scale(bw / w, bh / h);
+  drawDoodleUncached(bx, d, w, h);
+  _doodleCache.set(key, c);
+  let px = 0;
+  for (const v of _doodleCache.values()) px += v.width * v.height;
+  while (_doodleCache.size > DOODLE_CACHE_MAX || (px > DOODLE_CACHE_PIXELS && _doodleCache.size > 1)) {
+    const oldest = _doodleCache.keys().next().value as string;
+    px -= (_doodleCache.get(oldest)?.width ?? 0) * (_doodleCache.get(oldest)?.height ?? 0);
+    _doodleCache.delete(oldest);
+  }
+  return c;
+}
+
 /**
  * 把一張塗鴉畫到 ctx（block 本地座標 0,0–w,h）。
  * `t`＝時間（travel／wobble 用）、`reveal`＝出場生長比例；都不給＝靜態全畫。
  * 渲染只有這一條路——編輯畫布、匯出、縮圖全部走這裡。
+ * 靜態的（無巡線／抖動／生長中）先走點陣快取，動態的逐筆直畫。
  */
 export function drawDoodle(
+  ctx: CanvasRenderingContext2D, d: DoodleBlock, w: number, h: number,
+  t?: number, reveal?: number,
+): void {
+  // 半透明塊不走快取：直畫是逐筆乘 alpha（筆畫重疊處會疊深），整張圖再乘 alpha
+  // 是整層淡出，重疊處長相不同。寧可少快取也不改變既有專案的外觀。
+  if (reveal === undefined && !d.play && !d.wobble && ctx.globalAlpha === 1 && w > 1 && h > 1) {
+    const img = bakedDoodle(ctx, d, w, h);
+    if (img) { ctx.drawImage(img, 0, 0, w, h); return; }
+  }
+  drawDoodleUncached(ctx, d, w, h, t, reveal);
+}
+
+/** 真正逐筆畫的那條路。測試與筆刷預覽可直呼；一般渲染請走 `drawDoodle`。 */
+export function drawDoodleUncached(
   ctx: CanvasRenderingContext2D, d: DoodleBlock, w: number, h: number,
   t?: number, reveal?: number,
 ): void {

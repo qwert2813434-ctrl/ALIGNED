@@ -108,7 +108,18 @@ fn pack_alignproj(dir: String, dest: String) -> Result<(), String> {
     let tmp = format!("{dest}.tmp");
     aa(&["archive", "-d", &dir, "-o", &tmp, "-a", "lzfse"])
         .map_err(|e| format!("打包失敗：{e}"))?;
-    fs::rename(&tmp, &dest).map_err(|e| e.to_string())
+    fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
+    // 打包完把來源暫存夾收掉。「打包 .alignproj」每按一次就複製一整份素材（可以好幾 GB），
+    // 不收就一直留在 /tmp。⚠️ 條件卡死在「系統暫存夾裡、而且是 aligned-export- 開頭」——
+    // 另一個呼叫點傳進來的是**已開啟專案的 root**（aligned-mac-* 或使用者資料夾），
+    // 兩者都不符合，絕不會被刪到。
+    let src = PathBuf::from(&dir);
+    let ours = src.file_name().and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("aligned-export-"));
+    if ours && src.starts_with(std::env::temp_dir()) {
+        let _ = fs::remove_dir_all(&src);
+    }
+    Ok(())
 }
 
 /// 輕量範本：只有一份 project.json 的 .alignproj（沒有 assets/）。

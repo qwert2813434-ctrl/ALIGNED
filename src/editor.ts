@@ -8,6 +8,7 @@
 // rect 只配拿來量尺寸。
 
 import { additiveClick, uiDark } from "./platform";
+import { filterSig } from "./core/filters";
 import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema";
 import { hex, resolvedFontSize, resolvedKerning } from "./core/schema";
 import { aspectFillCrop, intersects, pageIndexForX, pageRect, stageBounds } from "./core/geometry";
@@ -90,6 +91,8 @@ export class Editor {
   /** 多選集合。單選時就是這一個 id；空集合＝沒選。 */
   private multi = new Set<string>();
   private marquee: { from: { x: number; y: number }; to: { x: number; y: number } } | null = null;
+  /** 這次框選是從鎖定塊上起手的（沒拖動就不套用，見 pointerup）。 */
+  private marqueeFromLocked = false;
   private spaceHeld = false;
   private guides: GuideLine[] = [];
   private badges: SpacingBadge[] = [];
@@ -265,6 +268,22 @@ export class Editor {
     this.dirty = true;
   }
 
+  /** 選取範圍在畫布上的 CSS 座標（給浮動列定位用）。多選＝整組外框；沒選＝null。
+   *  用旋轉外接框，轉過的元件才不會讓列疊到它身上。 */
+  selectionScreenRect(): { x: number; y: number; w: number; h: number } | null {
+    const sel = this.selectionBlocks();
+    if (!sel.length) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const b of sel) {
+      const r = rotatedBounds(b.frame, b.rotation);
+      x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y);
+      x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
+    }
+    const s = this.view.scale;
+    return { x: x0 * s + this.view.tx, y: y0 * s + this.view.ty,
+             w: (x1 - x0) * s, h: (y1 - y0) * s };
+  }
+
   /** 目前視野（專案座標）。渲染裁切與影片池共用同一份——兩邊看到的「可見」必須一致。 */
   visibleRect(): Rect {
     return {
@@ -283,12 +302,12 @@ export class Editor {
 
   /** 最上層命中的 block。用**真正的旋轉矩形**判定而不是外接框，
    *  否則轉 45° 的元件角落一大片空白也會被點到。 */
-  private hit(p: { x: number; y: number }): Block | null {
+  private hit(p: { x: number; y: number }, includeLocked = false): Block | null {
     const blocks = this.project?.blocks ?? [];
     const order = [...blocks].sort((a, b) => a.zIndex - b.zIndex);
     for (let i = order.length - 1; i >= 0; i--) {
       const b = order[i];
-      if (b.locked) continue;
+      if (b.locked && !includeLocked) continue;
       const f = b.frame;
       const r = (-b.rotation * Math.PI) / 180;
       const dx = p.x - (f.x + f.w / 2), dy = p.y - (f.y + f.h / 2);
@@ -390,12 +409,37 @@ export class Editor {
 
   /** 素材的原始像素尺寸（裁切要用來算 aspect-fill）。查不到＝素材還沒載進來。 */
   private naturalOf(m: MediaBlock): { w: number; h: number } | null {
-    const suffix = m.filterKey ? `|${m.filterKey}` : "";
+    const sig = filterSig(m);
+    const suffix = sig ? `|${sig}` : "";
     const img = this.images?.get(m.assetFileName + suffix)
       ?? this.images?.get(`${m.assetFileName}.poster.jpg${suffix}`);
     if (!img) return null;
     const s = naturalSize(img);
     return s.w && s.h ? s : null;
+  }
+
+  /**
+   * 裁切要用來算 aspect-fill 的尺寸——**有遮罩就以遮罩為準**，不是素材。
+   *
+   * 為什麼：cropRect 只有一個欄位，卻同時被素材與遮罩讀（見 render.ts 的對位規則）。
+   * 一般去背照片兩者同尺寸，用誰都一樣；但「填材質」那層不是——素材是正方形的材質、
+   * 遮罩是 3:2 的照片。用素材算出來的 cropRect 一寫進去，遮罩就被那個矩形非等比拉伸，
+   * 人形當場變形（2026-08-30 小高在 iPad 與 Mac 都實測到；只在**裁過**之後發作，
+   * 因為沒裁過時 (0,0,1,1) 是哨兵值，兩張各自 aspect-fill 反而是對的）。
+   *
+   * 定調：**有遮罩時，cropRect 的座標系是遮罩的**。材質是均勻的，被同一個矩形拉伸
+   * 看不出來——這也正是 attachTexture 一直以來照抄原圖 cropRect 的理由。
+   */
+  private cropGeometryOf(m: MediaBlock): { w: number; h: number } | null {
+    if (m.matteFileName) {
+      const mt = this.images?.get(`matte:${m.matteFileName}${m.matteInverted ? "!" : ""}`)
+        ?? this.images?.get(`matte:${m.matteFileName}`);
+      if (mt) {
+        const s = naturalSize(mt);
+        if (s.w && s.h) return s;
+      }
+    }
+    return this.naturalOf(m);
   }
 
   /**
@@ -410,7 +454,9 @@ export class Editor {
     const c = m.cropRect;
     const uncropped = !(c.w > 0.001 && c.h > 0.001) || (c.w > 0.999 && c.h > 0.999);
     if (uncropped) {
-      const n = this.naturalOf(m);
+      // 尺寸取自 cropGeometryOf（有遮罩就以遮罩為準）——理由見該函式的檔頭。
+      // 影片仍自然跳過：它的 .mov 沒有圖進 images，naturalOf 回 null。
+      const n = this.naturalOf(m) ? this.cropGeometryOf(m) : null;
       if (n) m.cropRect = aspectFillCrop(n.w, n.h, b.frame.w, b.frame.h);
     }
     this.sizing = {
@@ -763,7 +809,9 @@ export class Editor {
       this.dirty = true;
       return;
     }
-    const b = this.hit(p);
+    // 鎖定的塊「點得到、拖不動」（照 iOS hitBlock(includeLocked:)）：
+    // 選得到才有辦法在浮動列上解鎖，但拖曳仍略過它——滿版鎖定底圖上拖曳＝平移畫布。
+    const b = this.hit(p, true);
     const additive = additiveClick(e);
     if (b) {
       if (additive) {
@@ -778,7 +826,7 @@ export class Editor {
         this.selected = b.id;   // 點在已選取的成員上＝維持整組（接著可以整組拖）
       }
       this.emitSelection();
-      if (e.altKey && this.onDuplicateForDrag) {
+      if (e.altKey && !b.locked && this.onDuplicateForDrag) {
         // ⌥ 拖曳＝原地留一份、拖走複製品（桌面共通語意）
         const copies = this.onDuplicateForDrag();
         if (copies.length) {
@@ -787,17 +835,26 @@ export class Editor {
           this.emitSelection();
           const anchor = copies.find((k) => k.id !== b.id) ?? copies[0];
           this.drag = { id: anchor.id, startFrame: { ...anchor.frame }, from: p,
-                        group: copies.map((k) => ({ id: k.id, start: { ...k.frame } })) };
+                        group: copies.filter((k) => !k.locked)
+                                     .map((k) => ({ id: k.id, start: { ...k.frame } })) };
           this.dirty = true;
           return;
         }
       }
-      if (this.multi.size) {
+      if (b.locked) {
+        // 鎖定塊：選得到（浮動列上就能解鎖），但拖曳當它不存在——
+        // 起手一個框選，跟點在空白處一樣。不這樣做的話，滿版鎖定底圖上
+        // 永遠框選不了任何東西（iOS 同題是把拖曳讓給畫布平移）。
+        this.marquee = { from: p, to: p };
+        this.marqueeFromLocked = true;   // 沒拖動就不套用＝點一下仍是「選到這塊」
+      } else if (this.multi.size) {
+        // ⚠️ 鎖定的成員要濾掉：⇧ 點選現在**選得到**鎖定塊（好讓你在浮動列上解鎖），
+        // 不濾的話整組一拖就把鎖定的滿版底圖一起搬走——「鎖定」在這條路上等於失效
+        // （2026-09-01 發版審查抓到的回歸）。鎖定＝不會動，不管它是怎麼被選到的。
         this.drag = { id: b.id, startFrame: { ...b.frame }, from: p,
-                      group: [...this.multi].map((id) => {
-                        const k = this.project!.blocks.find((x) => x.id === id)!;
-                        return { id, start: { ...k.frame } };
-                      }) };
+                      group: [...this.multi].map((id) => this.project!.blocks.find((x) => x.id === id)!)
+                                            .filter((k) => k && !k.locked)
+                                            .map((k) => ({ id: k.id, start: { ...k.frame } })) };
       }
     } else if (this.spaceHeld || e.button === 1) {
       this.pan = { x: e.offsetX, y: e.offsetY, tx: this.view.tx, ty: this.view.ty };
@@ -890,7 +947,14 @@ export class Editor {
     }
     if (this.marquee) {
       this.marquee.to = this.at(e);
-      this.applyMarquee();
+      // 起手在鎖定塊上時它已經被選起來了——真的拖出框才換成框選結果，
+      // 否則「點一下鎖定塊」會被零尺寸框選當場清掉（2026-09-01）
+      if (!this.marqueeFromLocked
+          || Math.abs(this.marquee.to.x - this.marquee.from.x) > 3
+          || Math.abs(this.marquee.to.y - this.marquee.from.y) > 3) {
+        this.marqueeFromLocked = false;
+        this.applyMarquee();
+      }
       this.dirty = true;
       return;
     }
@@ -1184,6 +1248,9 @@ export class Editor {
   }
 
   /** commitChange=false（Esc）＝還原原文。 */
+  /** 正在行內編輯文字（殼層的選取晶片要讓位）。 */
+  get editingText(): boolean { return this.editing != null; }
+
   endEdit(commitChange: boolean): void {
     const ed = this.editing;
     if (!ed) return;
@@ -1305,7 +1372,8 @@ export class Editor {
     const c = m.cropRect;
     const uncropped = !(c.w > 0.001 && c.h > 0.001) || (c.w > 0.999 && c.h > 0.999);
     if (uncropped) {
-      const n = this.naturalOf(m);
+      if (!this.naturalOf(m)) return null;
+      const n = this.cropGeometryOf(m);   // 有遮罩＝以遮罩為準，同 beginCrop
       if (!n) return null;
       m.cropRect = aspectFillCrop(n.w, n.h, b.frame.w, b.frame.h);
     }
@@ -1687,7 +1755,7 @@ export class Editor {
     }
     renderStage(ctx, this.project,
       { placeholderForMissingMedia: true, images: this.images, mattes: this.images, videos: this.videos, models: this.models,
-        filters: this.filters, skipBlockId: this.editing?.id,
+        filters: this.filters, skipBlockId: this.editing?.id, paperGPU: true,
         viewRect: this.visibleRect(), ...animOpts }, {
       hideProjectGuides: this.guidesHidden,
       // 多選時多畫一圈群組外框——手把長在它的右下角，沒有框就看不出那顆在管什麼

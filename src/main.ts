@@ -7,17 +7,18 @@ import { __, __f, keys, localizeTitles, locale, setLocale } from "./i18n";
 // - **瀏覽器（npm run dev）**：開發與自測用。開檔只吃裸 project.json（讀不到同層
 //   assets/，LZFSE 也解不了）——那是開發便利，不是產品路徑。
 import { applyPerfHud, isPerfHudOn, togglePerfHud } from "./perfhud";
-import { decodeProject, encodeProject, type Block, type Project } from "./core/schema";
+import { decodeProject, encodeProject, moveBlocks, type Block, type Project } from "./core/schema";
 import { loadFonts, registerSystemFonts, registerUserFont, type DynamicFont } from "./core/fonts";
 import { restoreStoreFonts, unresolvedNames, repairable, downloadStoreFont } from "./core/fontstore";
 import { openFontStore } from "./fontstoreui";
 import { initSoftPrefs, openBrushPrefs } from "./brushprefs";
-import { applyFilter, loadFilterAssets, type FilterAssets } from "./core/filters";
+import { getUIPrefs, onUIPrefsChanged } from "./uiprefs";
+import { applyFilter, filterSig, loadFilterAssets, type FilterAssets } from "./core/filters";
 import type { SnapStrength } from "./core/align";
 import { Editor } from "./editor";
 import { renderAllPages, toBlob, type ExportedPage } from "./core/export";
 import { buildAnimFrames, buildPageSpec, pageHasMotion, pageHasVideo } from "./videoexport";
-import { autoFitText, renderPage, renderPageCanvas } from "./core/render";
+import { attachedCanvas, autoFitText, naturalSize, renderPageCanvas } from "./core/render";
 import { Inspector } from "./inspector";
 import { PageStrip, type PageAction } from "./pagestrip";
 import { pageIndexForX, pageRect } from "./core/geometry";
@@ -78,17 +79,20 @@ const inApp = isTauri();
 
 localizeTitles(); // index.html 寫死的 title="…" 一次翻完（中文語系時等於沒作用）
 
-const editor = new Editor($<HTMLCanvasElement>("#canvas"));
+const canvasEl = $<HTMLCanvasElement>("#canvas");
+const editor = new Editor(canvasEl);
 
 editor.onSelectionChange = (blocks: Block[]) => {
   if (blocks.length > 1 && current) {
     inspector.showGroup(current, blocks);
     info.textContent = __f("已選 {n} 個元件", { n: blocks.length });
   }
+  buildSelbar(); selbarFollow();
 };
 editor.onSelect = (b: Block | null) => {
   // 多選時交給 onSelectionChange，這裡只處理「剛好一個」與「零個」
   if (b == null && editor.selectionBlocks().length > 1) return;
+  buildSelbar(); selbarFollow();
   inspector.show(current, b);
   if (!b) { info.textContent = ""; return; }
   const kind = { text: __("文字"), textFlow: __("續流文字"), image: __("圖片"), video: __("影片"), shape: __("形狀"), model: __("3D 物件"), doodle: __("塗鴉") }[b.content.type];
@@ -96,6 +100,130 @@ editor.onSelect = (b: Block | null) => {
   info.textContent = `${kind}　${Math.round(f.x)}, ${Math.round(f.y)}　${Math.round(f.w)}×${Math.round(f.h)}`
     + (b.rotation ? `　${Math.round(b.rotation)}°` : "");
 };
+// ── 選取浮動列（2026-09-01）────────────────────────────────────────────
+// 小高：「選取這張圖片時，旁邊自動跳出小按鈕，就像 iPad 版一樣」。
+// 動作全部接既有的 handler（右鍵選單那批），這裡只負責顯示與定位。
+// 鎖定的元件現在點得到（editor.hit(includeLocked)），所以解鎖不必再翻圖層面板。
+const selbar = $<HTMLDivElement>("#selbar");
+let selbarRaf = 0;
+/** 「這個選取應該要有晶片」——與 `.on`（現在看不看得到）分開：選取滑出視野時
+ *  只收 class 不收這支，滑回來才長得回來（只看 class 的話 rAF 迴圈會就地停掉）。 */
+let selbarLive = false;
+
+function selbarIcon(path: string): string {
+  return `<svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor"
+    stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+}
+const SELBAR_ICONS = {
+  copy: '<rect x="7" y="7" width="9.5" height="9.5" rx="1.6"/><path d="M13 4.5H5.2A1.7 1.7 0 003.5 6.2V14"/>',
+  del: '<path d="M4.5 6h11"/><path d="M8 6V4.4h4V6"/><path d="M6 6l.8 9.2A1.3 1.3 0 008.1 16.4h3.8a1.3 1.3 0 001.3-1.2L14 6"/>',
+  lock: '<rect x="4.5" y="9" width="11" height="7.5" rx="1.5"/><path d="M7 9V6.8a3 3 0 016 0V9"/>',
+  unlock: '<rect x="4.5" y="9" width="11" height="7.5" rx="1.5"/><path d="M7 9V6.8a3 3 0 015.6-1.4"/>',
+  // 前／後用箭頭講語意——三顆都畫成疊起來的方塊會分不出來（實測第一版就是這樣）
+  front: '<rect x="3" y="8.5" width="8.5" height="8.5" rx="1.5"/><path d="M14.5 8V2.8"/><path d="M12.2 5.1l2.3-2.3 2.3 2.3"/>',
+  back: '<rect x="3" y="3" width="8.5" height="8.5" rx="1.5"/><path d="M14.5 12v5.2"/><path d="M12.2 14.9l2.3 2.3 2.3-2.3"/>',
+};
+
+const SELBAR_CHECK = '<path d="M4.5 10.4l3.6 3.4 7.4-8"/>';
+
+/** 一顆晶片。`ack`＝按下後圖示原地變 ✓（參考影片的回饋方式，不跳提示）。 */
+function selbarButton(icon: keyof typeof SELBAR_ICONS, title: string,
+                      run: () => boolean | void, cls = "", ack = true): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.innerHTML = selbarIcon(SELBAR_ICONS[icon]);
+  b.title = title;
+  if (cls) b.className = cls;
+  // pointerdown 先擋掉：讓它冒泡到畫布會當場改選取，按鈕就打在空氣上
+  b.addEventListener("pointerdown", (e) => e.stopPropagation());
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    // run 明講 false＝什麼都沒發生（例如已經在最前面）＝不要騙人閃 ✓
+    if (run() === false || !ack || !b.isConnected) return;
+    b.innerHTML = selbarIcon(SELBAR_CHECK);
+    b.classList.add("done");
+    setTimeout(() => {
+      if (!b.isConnected) return;             // 期間重建過就別動它
+      b.innerHTML = selbarIcon(SELBAR_ICONS[icon]);
+      b.classList.remove("done");
+    }, 850);
+  });
+  return b;
+}
+
+/** 重建列的內容（選取換人／鎖定狀態變了才需要）。 */
+function buildSelbar(): void {
+  const sel = editor.selectionBlocks();
+  selbar.textContent = "";
+  // 偏好裡關掉＝整組不出現（動作都還在右鍵選單與檢視器裡，不是把功能拿掉）
+  if (!getUIPrefs().selbar || !sel.length || !current) {
+    selbarLive = false; selbar.classList.remove("on"); return;
+  }
+  const locked = sel.every((b) => b.locked);
+  if (!locked) {
+    selbar.append(selbarButton("copy", `${__("複製一份")}　⌘D`, () => duplicateSelection()));
+    selbar.append(selbarButton("front", __("移到最前"), () => inspectorReorder("front")));
+    selbar.append(selbarButton("back", __("移到最後"), () => inspectorReorder("back")));
+  }
+  // 鎖定是狀態切換：立刻重建成另一種樣子，不需要 ✓ 回饋
+  selbar.append(selbarButton(locked ? "lock" : "unlock",
+    `${locked ? __("解除鎖定") : __("鎖定")}　⌘L`, () => {
+      const to = !locked;
+      for (const k of editor.selectionBlocks()) k.locked = to;
+      inspector.show(current, editor.getSelected());
+      editor.refresh(); commit("lock"); buildSelbar();
+    }, locked ? "on" : "", false));
+  if (!locked) {
+    // 刪除之後選取就沒了、晶片會整組收掉，✓ 沒有機會出現
+    selbar.append(selbarButton("del", `${__("刪除")}　⌫`, () => deleteSelected(), "warn", false));
+  }
+  [...selbar.children].forEach((el, i) => (el as HTMLElement).style.setProperty("--i", String(i)));
+  selbarLive = true;
+  selbar.classList.add("on");
+  placeSelbar();
+}
+
+/** 定位：直立貼在選取框**右側外面**、頂端對齊（參考影片的擺法）。
+ *  右邊擠不下就翻到左側；上下夾在畫布內。 */
+function placeSelbar(): void {
+  if (!selbarLive) return;
+  // 行內編輯文字時讓位（不動 selbarLive——編輯結束 onTextEdited 會重建）
+  if (editor.editingText) { selbar.classList.remove("on"); return; }
+  const r = editor.selectionScreenRect();
+  if (!r) { selbarLive = false; selbar.classList.remove("on"); return; }
+  const cw = canvasEl.clientWidth, ch = canvasEl.clientHeight;
+  // 選取整個滑出可視範圍＝收起來。夾在邊緣的話，那顆垃圾桶會刪掉**看不見的東西**
+  // （2026-09-01 發版審查）。回到視野內下一幀自己會再出來。
+  if (r.x + r.w < 0 || r.x > cw || r.y + r.h < 0 || r.y > ch) {
+    selbar.classList.remove("on");
+    return;
+  }
+  const bw = selbar.offsetWidth || 32, bh = selbar.offsetHeight || 32;
+  const GAP = 15;   // 讓開選取框右側中間那顆縮放把手
+  let x = r.x + r.w + GAP;
+  if (x + bw > cw - 4) x = r.x - bw - GAP;          // 右邊塞不下＝翻到左側
+  selbar.classList.add("on");            // 從視野外回來
+  x = Math.max(4, Math.min(x, cw - bw - 4));
+  // 頂端對齊選取框；框比晶片列矮就整列往下對齊視覺中心，別浮在半空
+  let y = r.h < bh ? r.y + r.h / 2 - bh / 2 : r.y;
+  y = Math.max(4, Math.min(y, ch - bh - 4));
+  selbar.style.left = `${Math.round(x)}px`;
+  selbar.style.top = `${Math.round(y)}px`;
+}
+
+/** 畫布會平移／縮放／拖曳元件，位置每幀都可能變——只有列開著時才跑。 */
+// 偏好當場改當場生效：開＝立刻長出來，關＝立刻收掉
+onUIPrefsChanged(() => { buildSelbar(); selbarFollow(); });
+
+function selbarFollow(): void {
+  cancelAnimationFrame(selbarRaf);
+  const tick = (): void => {
+    if (!selbarLive) return;
+    placeSelbar();
+    selbarRaf = requestAnimationFrame(tick);
+  };
+  selbarRaf = requestAnimationFrame(tick);
+}
+
 editor.onCommit = () => {
   // ⇧ 點選多選的 up 也走這裡——不分流的話會用「最後點的那個」蓋掉多選面板
   // （2026-08-14 實案：點選多選批次欄位永遠被單選面板頂掉，框選反而正常）
@@ -112,6 +240,7 @@ editor.onTextEdited = () => {
   inspector.show(current, editor.getSelected());   // 檢視器的內容欄同步新文字
   scheduleThumbs();
   commit("textedit");
+  buildSelbar(); selbarFollow();   // 行內編輯時讓位收起來的晶片要自己回來
 };
 
 // ── 專案載入 ──────────────────────────────────────────────────────────
@@ -132,10 +261,11 @@ function assetNames(p: Project): Map<string, { file: string; filter?: string; ma
     const m = b.content.media;
     if (!m.assetFileName) continue;
     const file = b.content.type === "video" ? `${m.assetFileName}.poster.jpg` : m.assetFileName;
-    const key = (f: string): string => f + (m.filterKey ? `|${m.filterKey}` : "");
-    out.set(key(file), { file, filter: m.filterKey });
+    const sig = filterSig(m);   // c5＝代號＋參數序列化：參數變了鍵就變（快取正確性）
+    const key = (f: string): string => f + (sig ? `|${sig}` : "");
+    out.set(key(file), { file, filter: sig });
     // 輪播圖跟著框走，濾鏡也是框的——所以變體的鍵與主圖同一套算法
-    for (const f of m.carouselAssets ?? []) out.set(key(f), { file: f, filter: m.filterKey });
+    for (const f of m.carouselAssets ?? []) out.set(key(f), { file: f, filter: sig });
     // 去背遮罩：不套濾鏡（它不是要看的圖，是 alpha 來源），
     // 但正反兩面算兩個變體——反轉是每個 block 各自的設定。
     if (m.matteFileName) out.set(matteKey(m.matteFileName, m.matteInverted), { file: m.matteFileName, matte: true, inverted: m.matteInverted });
@@ -170,12 +300,18 @@ function matteCanvas(img: HTMLImageElement, inverted?: boolean): HTMLCanvasEleme
   return c;
 }
 
-/** 套一顆濾鏡到原圖，回快取用的 canvas。載入時套一次就好——每格重算拖曳會卡。 */
-function filteredCanvas(img: HTMLImageElement, filter: string, fx: FilterAssets): HTMLCanvasElement {
+/** 套一顆濾鏡到原圖，回快取用的 canvas。載入時套一次就好——每格重算拖曳會卡。
+ *  c5 孔版帽在 2560 長邊：逐像素過網 24MP 要好幾秒，而半調網點（900 基準）在 2560
+ *  上解析度綽綽有餘，放大畫也看不出差。`maxSide` 給參數拖曳的低清即烤用。 */
+function filteredCanvas(img: HTMLImageElement, filter: string, fx: FilterAssets,
+                        maxSide?: number): HTMLCanvasElement {
+  const cap = maxSide ?? (filter.startsWith("c5") ? 2560 : Infinity);
+  const sc = Math.min(1, cap / Math.max(img.naturalWidth, img.naturalHeight));
   const c = document.createElement("canvas");
-  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  c.width = Math.max(1, Math.round(img.naturalWidth * sc));
+  c.height = Math.max(1, Math.round(img.naturalHeight * sc));
   const cx = c.getContext("2d", { willReadFrequently: true })!;
-  cx.drawImage(img, 0, 0);
+  cx.drawImage(img, 0, 0, c.width, c.height);
   const d = cx.getImageData(0, 0, c.width, c.height);
   applyFilter(filter, d, fx);
   cx.putImageData(d, 0, 0);
@@ -190,6 +326,9 @@ async function loadAssets(
   fx: FilterAssets,
 ): Promise<LoadedAssets> {
   const entries = [...assetNames(p)];
+  previewVariants.clear(); c5Last.clear(); bakeSrcSent.clear();
+  bakePending.clear(); bakeInflight.clear(); bakeHealed.clear(); bakeEpoch++;   // 換專案：舊烤圖全作廢
+  _bakeWorker?.postMessage({ type: "reset" });              // 工人那頭的來源像素一起放（~百MB 級）
   const raw = new Map<string, HTMLImageElement>();
   await Promise.all([...new Set(entries.map(([, e]) => e.file))].map((file) => new Promise<void>((done) => {
     const img = new Image();
@@ -204,8 +343,12 @@ async function loadAssets(
   for (const [key, { file, filter, matte, inverted }] of entries) {
     const img = raw.get(file);
     if (!img) continue;
+    // c5 開檔只烤 900（全清一張 438ms，一本專案好幾張＝開檔凍結好幾秒）；
+    // 標成低清，show() 末尾排 worker 補全清版，匯出前 flushC5Bakes 也會同步補齊
+    const c5 = filter?.startsWith("c5");
     variants.set(key, matte ? matteCanvas(img, inverted)
-                            : filter ? filteredCanvas(img, filter, fx) : img);
+                            : filter ? filteredCanvas(img, filter, fx, c5 ? 900 : undefined) : img);
+    if (c5) previewVariants.add(key);
   }
   return { variants, raw };
 }
@@ -279,6 +422,15 @@ function applySnapshot(s: string): void {
   inspector.show(current, editor.getSelected());
   scheduleThumbs();
   updateDirty();
+  buildSelbar(); selbarFollow();   // 鎖定狀態／存在與否都可能被撤銷掉，晶片要跟著換
+  // c5 變體補烤：undo 撿回來的參數，其變體可能已被 GC（沒人用就清）——
+  // 渲染端查不到變體不會自己補，這裡是唯一的補烤點（審查 blocking 的另一半）
+  for (const b of current.blocks) {
+    if (b.content.type !== "image" && b.content.type !== "video") continue;
+    if (filterSig(b.content.media)?.startsWith("c5")) {
+      void ensureVariantFor(b).then(() => editor.refresh());
+    }
+  }
 }
 
 function undo(): void {
@@ -338,7 +490,10 @@ if (inApp) {
     void getCurrentWindow().destroy();
   });
 }
-const measureCtx = document.createElement("canvas").getContext("2d")!;   // 貼字盒重算用
+// 貼字盒重算用。⚠️ 必須走 attachedCanvas()：沒掛進 DOM 的畫布在 WKWebView 走另一條
+// 殘缺的字型解析路（使用者自裝字型整段回落襯線），量出來的字寬就是錯的——
+// 這是這批自己立的鐵則，這個入口漏掉了（2026-09-01 發版審查抓到）。
+const measureCtx = attachedCanvas().getContext("2d")!;
 
 const strip = new PageStrip($<HTMLDivElement>("#strip"), {
   pick: (i) => editor.focusPage(i),
@@ -684,7 +839,11 @@ async function resolveTexture(key: string | null): Promise<{ name: string; img: 
     });
     if (typeof src !== "string") return null;
     rememberDir("media", src);
-    name = await invoke<string>("copy_asset", { src, destDir: dir });
+    // 檔名要自己取：copy_asset 一律取名 mac-<stamp>，不帶 texture- 前綴的自選材質
+    // 一旦被移動（結構判準失效）就重演「填不了其他材質」，帶去 iPad 也認不得
+    const ext = src.split(".").pop()?.toLowerCase() || "jpg";
+    name = `texture-mac-${Date.now()}.${ext}`;
+    await invoke("copy_asset_as", { src, destDir: dir, name });
   }
   const img = assets.raw.get(name) ?? await loadImg(await localUrl(`${dir}/${name}`));
   assets.raw.set(name, img);
@@ -717,12 +876,29 @@ function textureBase(b: Block): Block | null {
 /// ⚠️ 新圖層的 cropRect 是照抄原圖的，不是歸零：遮罩的對位吃的就是這個欄位
 ///（見 render.ts 的對位規則），歸零的話原圖有裁切過就會整個錯開。材質本身是均勻的，
 /// 被同一個 cropRect 拉伸看不出來。
+/**
+ * 這塊是不是「填材質」疊出來的那一層。
+ *
+ * 結構判斷（textureBase：底下有同框無遮罩的原圖）是主判準，但它吃**框要一模一樣**——
+ * 材質層被單獨移動或改過大小就對不上了，於是「換一個材質」會再疊一層上去、還順手把
+ * 這層的遮罩拿掉（2026-08-30 小高回報「填不了其他材質」）。所以補一條檔名判準：
+ * 內建材質一律叫 `texture-*`。（iOS 的自選材質存成 `fill-*`；桌面版自選走 copy_asset_as
+ * 取名 `texture-mac-*`——兩平台的檔名判準都認得，移動過也不會漏。）
+ */
+function isFillLayer(b: Block): boolean {
+  if (b.content.type !== "image" && b.content.type !== "video") return false;
+  const m = b.content.media;
+  if (!m.matteFileName) return false;
+  if (textureBase(b)) return true;
+  return m.assetFileName.startsWith("texture-") || m.assetFileName.startsWith("fill-");
+}
+
 function attachTexture(b: Block, name: string): void {
   if (!current || (b.content.type !== "image" && b.content.type !== "video")) return;
   const m = b.content.media;
   if (!m.matteFileName) return;
 
-  if (textureBase(b)) {
+  if (isFillLayer(b)) {
     if (m.assetFileName === name) return;   // 選的還是同一張＝什麼都沒改
     m.assetFileName = name;
     m.filterKey = undefined;
@@ -762,11 +938,51 @@ function attachTexture(b: Block, name: string): void {
 
 /// 這個 block 現在填著的材質（只有材質層才有）。給編輯間預選用。
 function currentFill(b: Block): { key: string; name: string; img: HTMLImageElement } | undefined {
-  if (!textureBase(b) || b.content.type !== "image") return undefined;
+  if (!isFillLayer(b) || b.content.type !== "image") return undefined;
   const name = b.content.media.assetFileName;
   const img = assets.raw.get(name);
   if (!img || !(img instanceof HTMLImageElement)) return undefined;
   return { key: TEXTURES.find((t) => `texture-${t.key}.jpg` === name)?.key ?? "*", name, img };
+}
+
+/**
+ * 填顏色：與填材質同一條路，素材換成一張**純色圖**。
+ *
+ * 為什麼走「生一張圖」而不是加一個 fillColorHex 欄位：欄位一加就綁上三平台同版
+ *（iOS 的 Codable 會靜靜丟掉不認識的欄位），純色圖用現有的媒體管線就畫得出來、
+ * 專案檔天生互通。檔名 `fill-<HEX>-<W>x<H>.png` 是決定性的，同色不會愈存愈多張。
+ *
+ * 尺寸照**遮罩的比例**做：iOS 的 cutImage 快路要求「來源與遮罩同比例」，
+ * 給正方形會被擋下來退回慢路。桌面版不吃這條，但兩邊產出的檔要一樣。
+ */
+async function fillColor(b: Block, hex: string): Promise<void> {
+  const dir = assetsDir();
+  if (!dir || !current) return;
+  if (b.content.type !== "image" && b.content.type !== "video") return;
+  const m = b.content.media;
+  if (!m.matteFileName) return;
+  const mt = assets.variants.get(matteKey(m.matteFileName, m.matteInverted));
+  const s = mt ? naturalSize(mt) : { w: 1, h: 1 };
+  const aspect = s.h > 0 ? s.w / s.h : 1;
+  const long = 512;
+  const w = Math.round(aspect >= 1 ? long : long * aspect);
+  const h = Math.round(aspect >= 1 ? long / aspect : long);
+  const clean = hex.replace("#", "").toUpperCase().slice(0, 6).padEnd(6, "0");
+  const name = `fill-${clean}-${w}x${h}.png`;
+  if (!assets.raw.has(name)) {
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const cx = c.getContext("2d")!;
+    cx.fillStyle = `#${clean}`;
+    cx.fillRect(0, 0, w, h);
+    const blob = await new Promise<Blob>((ok, bad) =>
+      c.toBlob((v) => (v ? ok(v) : bad(new Error("PNG 編不出來"))), "image/png"));
+    await invoke("save_png", { path: `${dir}/${name}`, data: toBase64(await blob.arrayBuffer()) });
+    const img = await loadImg(await localUrl(`${dir}/${name}`));
+    assets.raw.set(name, img);
+    assets.variants.set(name, img);
+  }
+  attachTexture(b, name);
 }
 
 async function fillTexture(b: Block, key: string | null): Promise<void> {
@@ -774,18 +990,213 @@ async function fillTexture(b: Block, key: string | null): Promise<void> {
   if (t) attachTexture(b, t.name);
 }
 
-async function ensureVariantFor(b: Block): Promise<void> {
+/** c5 低清即烤的鍵（900px 先頂著，worker 全清版回來蓋掉；匯出前 flushC5Bakes 同步補齊）。 */
+const previewVariants = new Set<string>();
+
+// ── c5 worker 烤圖機（2026-09-01）────────────────────────────────
+// 滑桿每個 input 事件同步烤 900px 一張 57ms、放手 2560 一張 438ms（WKWebView 實測）
+// ＝拖曳主執行緒直接鎖死。烤圖全搬進獨立 worker（跟 videopool 那條分開，互不搶）：
+// 來源像素每檔寄一次、之後只寄 sig；latest-wins 丟中間值；回來 putImageData 換變體。
+// 不走 OffscreenCanvas 顯示畫布——worker 的 commit 到 placeholder 是非同步的，
+// 匯出與整頁快取要「同步讀到剛烤好的內容」，位圖必須落在主執行緒自己的畫布上。
+let _bakeWorker: Worker | null = null;
+const bakeSrcSent = new Set<string>();
+const bakePending = new Map<string, { sig: string; tier: "quick" | "full" }>();
+const bakeInflight = new Set<string>();
+/** 這個 epoch 已經補烤過一次的變體鍵。pending 一個 skey 只有一格，
+ *  所以下面 drain() 會自己去找「在用但還沒有全清版」的參數組補一趟——
+ *  但每個鍵只補一次，補不成功也不會無限打轉。 */
+const bakeHealed = new Set<string>();
+/** file → 最後一張烤好的 c5 畫布。拖曳中新 sig 還沒回來時先頂著，畫面不閃佔位框。 */
+const c5Last = new Map<string, HTMLCanvasElement>();
+let bakeEpoch = 0;   // flush／換專案時 +1，晚到的 worker 結果一律作廢
+
+function sendBakeSrc(skey: string, img: HTMLImageElement, size: number): void {
+  const sc = Math.min(1, size / Math.max(img.naturalWidth, img.naturalHeight));
+  const c = attachedCanvas();   // 掛著讀像素 0.8ms、不掛 10.3ms（2026-09-01 實測）
+  c.width = Math.max(1, Math.round(img.naturalWidth * sc));
+  c.height = Math.max(1, Math.round(img.naturalHeight * sc));
+  const cx = c.getContext("2d", { willReadFrequently: true })!;
+  cx.drawImage(img, 0, 0, c.width, c.height);
+  const d = cx.getImageData(0, 0, c.width, c.height);
+  c.remove();
+  bakeWorker().postMessage({ type: "bakesrc", skey, w: d.width, h: d.height, buf: d.data.buffer },
+                           [d.data.buffer]);
+  bakeSrcSent.add(skey);
+}
+
+function bakeC5(f: string, img: HTMLImageElement, tier: "quick" | "full", sig: string): void {
+  // 快烤 720（iOS 快烤同級）：worker 執行緒吃不到 P-core，900px 一張 222ms、
+  // 720px ~140ms（2026-09-01 實測），拖曳預覽跟手度差很多
+  const size = tier === "quick" ? 720 : 2560;
+  const skey = `${f}|${size}`;
+  if (tier === "full") bakePending.delete(`${f}|720`);   // 放手＝拖曳中排隊的低清作廢
+  if (!bakeSrcSent.has(skey)) sendBakeSrc(skey, img, size);
+  if (bakeInflight.has(skey)) { bakePending.set(skey, { sig, tier }); return; }   // latest-wins
+  bakeInflight.add(skey);
+  bakeWorker().postMessage({ type: "bake", skey, sig, seq: bakeEpoch, tier });
+}
+
+function bakeWorker(): Worker {
+  if (_bakeWorker) return _bakeWorker;
+  const w = new Worker(new URL("./filterworker.ts", import.meta.url), { type: "module" });
+  w.onmessage = (e: MessageEvent<{ needsrc?: string; bake?: string; sig: string; seq: number;
+                                   tier: "quick" | "full"; w: number; h: number; buf: ArrayBuffer }>) => {
+    const r = e.data;
+    // 一支結束了就把排在後面那筆放出去。⚠️ 死路分支也要走這裡，不能直接
+    // `bakePending.delete()`——那格可能是 flush 之後排進來的**新**請求，
+    // 連坐刪掉的話畫布就永遠停在舊參數的孔版畫面（2026-09-01 發版審查）。
+    const drain = (skey: string): void => {
+      bakeInflight.delete(skey);
+      const next = bakePending.get(skey);
+      if (next) {
+        bakePending.delete(skey); bakeInflight.add(skey);
+        w.postMessage({ type: "bake", skey, sig: next.sig, seq: bakeEpoch, tier: next.tier });
+        return;
+      }
+      // 沒人排隊了，回頭看這個檔還有沒有「在用、但還沒有全清版」的參數組。
+      // ⌘D 兩塊同圖不同孔版參數時，bakePending 同一格會互相蓋掉，被蓋掉的那組
+      // 會永遠停在 720 低清（匯出不受影響，flushC5Bakes 會同步補齊）。2026-09-01 審查。
+      const cut = skey.lastIndexOf("|");
+      if (skey.slice(cut + 1) !== "2560") return;
+      const f = skey.slice(0, cut);
+      for (const key of c5KeysInUse()) {
+        if (!key.startsWith(`${f}|`) || bakeHealed.has(key)) continue;
+        if (assets.variants.has(key) && !previewVariants.has(key)) continue;   // 已經是全清版
+        bakeHealed.add(key);
+        bakeInflight.add(skey);
+        w.postMessage({ type: "bake", skey, sig: key.slice(f.length + 1), seq: bakeEpoch, tier: "full" });
+        return;
+      }
+    };
+    if (r.needsrc) {   // 來源被工人 LRU 擠掉：補寄再重烤
+      // ⚠️ 自癒必須守原本的 epoch——不驗 seq 的話，flush 前發的舊烤圖經這裡
+      // 換上現任 epoch 復活，回來就蓋掉 flush 剛同步烤好的全清版（審查 blocking）
+      if (r.seq !== bakeEpoch) { drain(r.needsrc); return; }
+      const f = r.needsrc.slice(0, r.needsrc.lastIndexOf("|"));
+      const img = assets.raw.get(f);
+      if (img && c5KeysInUse().has(`${f}|${r.sig}`)) {
+        sendBakeSrc(r.needsrc, img, r.tier === "quick" ? 720 : 2560);
+        bakeInflight.add(r.needsrc);   // flush 清過帳的話補回，latest-wins 才守得住
+        w.postMessage({ type: "bake", skey: r.needsrc, sig: r.sig, seq: bakeEpoch, tier: r.tier });
+      } else { drain(r.needsrc); }
+      return;
+    }
+    if (!r.bake) return;
+    const skey = r.bake;
+    drain(skey);
+    if (r.seq !== bakeEpoch) return;
+    const f = skey.slice(0, skey.lastIndexOf("|"));
+    const key = `${f}|${r.sig}`;
+    if (!c5KeysInUse().has(key)) return;   // 參數又變了／濾鏡已移除＝這張作廢
+    // 全清版已就位的鍵，晚到的低清一律丟——放手瞬間 pending 的 quick 會排在
+    // full 後面完成，沒這道護欄畫面「先銳利再軟掉」且不再自癒（審查 blocking）
+    if (r.tier !== "full" && !previewVariants.has(key)) return;
+    const c = document.createElement("canvas");
+    c.width = r.w; c.height = r.h;
+    c.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(r.buf), r.w, r.h), 0, 0);
+    assets.variants.set(key, c);
+    c5Last.set(f, c);
+    if (r.tier === "full") previewVariants.delete(key); else previewVariants.add(key);
+    sweepC5(f, key);
+    editor.refresh();
+    if (r.tier === "full") scheduleThumbs();
+  };
+  // 工人掛掉（載入失敗／未捕捉例外）：不處理的話 bakeInflight 永遠不歸零，
+  // 之後每一次烤圖都只會排進 pending＝孔版預覽整個凍住。丟掉這隻、把帳清乾淨，
+  // 下一次呼叫重建一隻；真的建不起來就退回主執行緒（flushC5Bakes 那條路，匯出照樣正確）。
+  w.onerror = (ev) => {
+    console.warn("c5 烤圖 worker 掛了，重建", ev.message ?? ev);
+    try { w.terminate(); } catch { /* 已經死了 */ }
+    if (_bakeWorker === w) _bakeWorker = null;
+    bakeInflight.clear(); bakePending.clear(); bakeHealed.clear(); bakeSrcSent.clear();
+  };
+  _bakeWorker = w;
+  return w;
+}
+
+/** 同一檔的舊參數變體清掉（拖一輪滑桿會經過幾十組、每組一張大畫布），
+ *  但**只刪沒人在用的**——⌘D 兩塊同圖不同參數各掛一份（審查 blocking）。 */
+function sweepC5(f: string, keep: string): void {
+  const used = c5KeysInUse();
+  for (const k of [...assets.variants.keys()]) {
+    if (k.startsWith(`${f}|c5`) && k !== keep && !used.has(k)) {
+      assets.variants.delete(k); previewVariants.delete(k);
+    }
+  }
+}
+
+/** 專案裡**還有人在用**的 c5 變體鍵（GC 白名單）。同一張圖可以被兩個 block
+ *  用不同參數各掛一份——只認「檔名前綴」硬刪會把別人的變體刪成虛線佔位框
+ *  （審查抓到的 blocking：⌘D 複製後在複本調參數，原本那塊當場消失）。 */
+function c5KeysInUse(): Set<string> {
+  const used = new Set<string>();
+  if (!current) return used;
+  for (const ob of current.blocks) {
+    if (ob.content.type !== "image" && ob.content.type !== "video") continue;
+    const om = ob.content.media;
+    if (!om.assetFileName) continue;
+    const osig = filterSig(om);
+    if (!osig?.startsWith("c5")) continue;
+    const ofile = ob.content.type === "video" ? `${om.assetFileName}.poster.jpg` : om.assetFileName;
+    for (const ff of [ofile, ...(om.carouselAssets ?? [])]) used.add(`${ff}|${osig}`);
+  }
+  return used;
+}
+
+/** 匯出前把還是低清／還在 worker 路上的 c5 變體**同步**烤到全解析度——
+ *  不沖的話拖完滑桿馬上按匯出，成品會吃到 900px 低清變體。 */
+function flushC5Bakes(): void {
+  bakeEpoch++;   // 還在路上的 worker 結果作廢，別讓晚到的低清蓋掉這裡的全清版
+  bakePending.clear(); bakeInflight.clear(); bakeHealed.clear();
+  const used = c5KeysInUse();
+  for (const key of [...previewVariants]) {
+    const i = key.indexOf("|c5");
+    if (i < 0) continue;
+    previewVariants.delete(key);
+    const f = key.slice(0, i);
+    if (!used.has(key)) { assets.variants.delete(key); continue; }   // 孤兒鍵（block 已刪／換濾鏡）：刪掉，別替它凍 438ms
+    const img = assets.raw.get(f);
+    if (img) assets.variants.set(key, filteredCanvas(img, key.slice(i + 1), filterAssets));
+  }
+  // c5Last 只是拖曳中的頂替圖——沒有任何 c5 鍵還在用這個檔＝畫布可以放了
+  for (const f of [...c5Last.keys()]) {
+    let alive = false;
+    for (const k of used) if (k.startsWith(`${f}|c5`)) { alive = true; break; }
+    if (!alive) c5Last.delete(f);
+  }
+}
+
+async function ensureVariantFor(b: Block, preview = false): Promise<void> {
   if (b.content.type !== "image" && b.content.type !== "video") return;
   const m = b.content.media;
   if (!m.assetFileName) return;
   const file = b.content.type === "video" ? `${m.assetFileName}.poster.jpg` : m.assetFileName;
   // 輪播圖與主圖共用框上的那顆濾鏡——漏掉的話換濾鏡後輪播到第二張就閃佔位框
+  const sig = filterSig(m);
   for (const f of [file, ...(m.carouselAssets ?? [])]) {
-    const key = f + (m.filterKey ? `|${m.filterKey}` : "");
-    if (assets.variants.has(key)) continue;
+    const key = f + (sig ? `|${sig}` : "");
     const img = assets.raw.get(f);
-    if (!img) continue;
-    assets.variants.set(key, m.filterKey ? filteredCanvas(img, m.filterKey, filterAssets) : img);
+    if (!img) { continue; }
+    if (sig?.startsWith("c5")) {
+      sweepC5(f, key);
+      if (!assets.variants.has(key)) {
+        const last = preview ? c5Last.get(f) : undefined;
+        if (last) {
+          assets.variants.set(key, last);   // 舊參數畫面先頂著，worker 回來無縫換張
+        } else {
+          // 首次套用／undo 撿回：同步快烤 900（57ms，畫面立刻有東西），全清版交給 worker
+          const q = filteredCanvas(img, sig, filterAssets, 900);
+          assets.variants.set(key, q); c5Last.set(f, q);
+        }
+        previewVariants.add(key);
+      }
+      if (!preview && !previewVariants.has(key)) continue;   // 已是全清版＝不必重烤
+      bakeC5(f, img, preview ? "quick" : "full", sig);
+      continue;
+    }
+    if (assets.variants.has(key)) continue;
+    assets.variants.set(key, sig ? filteredCanvas(img, sig, filterAssets) : img);
   }
 }
 
@@ -810,8 +1221,9 @@ async function addCarouselImages(b: Block): Promise<void> {
     const img = await loadImg(await localUrl(`${dir}/${name}`));
     assets.raw.set(name, img);
     assets.variants.set(name, img);
-    if (m.filterKey) {
-      assets.variants.set(`${name}|${m.filterKey}`, filteredCanvas(img, m.filterKey, filterAssets));
+    const csig = filterSig(m);
+    if (csig) {
+      assets.variants.set(`${name}|${csig}`, filteredCanvas(img, csig, filterAssets));
     }
     m.carouselAssets = [...(m.carouselAssets ?? []), name];
   }
@@ -933,6 +1345,7 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
   },
   matteTextures: () => TEXTURES.map((t) => ({ key: t.key, label: __(t.label), url: `textures/${t.file}` })),
   fillTexture: (b, key) => fillTexture(b, key),
+  fillColor: (b, hex) => fillColor(b, hex),
   // 匯入字型檔（剪映語彙的「自訂」）：存進 App 資料夾 UserFonts/，重開還在。
   // 專案照舊只存 PostScript 名——iPad 也匯同一套字型，專案就兩邊長一樣。
   importFont: async () => {
@@ -1005,7 +1418,8 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
       const m = b.content.media;
       if (!m.assetFileName) return undefined;
       const file = b.content.type === "video" ? `${m.assetFileName}.poster.jpg` : m.assetFileName;
-      return assets.variants.get(file + (m.filterKey ? `|${m.filterKey}` : ""));
+      const tsig = filterSig(m);
+      return assets.variants.get(file + (tsig ? `|${tsig}` : ""));
     },
     toggleLock: (id) => {
       const b = current?.blocks.find((k) => k.id === id);
@@ -1045,8 +1459,7 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
   clearAnims: (b) => editor.clearCurrentPageAnims(b),
   reorder: (b, dir) => {
     if (!current) return;
-    const zs = current.blocks.map((k) => k.zIndex);
-    b.zIndex = dir === "front" ? Math.max(...zs) + 1 : Math.min(...zs) - 1;
+    moveBlocks(current, new Set([b.id]), dir);   // 搬陣列不是改 z——iOS 讀的是陣列排列
     editor.refresh();
     scheduleThumbs();
     commit("reorder");
@@ -1082,6 +1495,11 @@ function show(p: Project, a?: LoadedAssets, videoSrc?: (file: string) => string)
   };
   models.attach(videoSrc ?? null);   // 3D 池同一個素材 URL 解析器（媒體伺服器通吃）
   editor.setModels(models);
+  // 開檔只烤了 900 低清（見 loadAssets），這裡排 worker 補全清版
+  for (const b of p.blocks) {
+    if (b.content.type !== "image" && b.content.type !== "video") continue;
+    if (filterSig(b.content.media)?.startsWith("c5")) void ensureVariantFor(b);
+  }
 }
 
 function renderOpts() {
@@ -1226,6 +1644,10 @@ $<HTMLSelectElement>("#sample").addEventListener("change", (e) => {
 
 $<HTMLButtonElement>("#exporttpl").addEventListener("click", () => {
   exportTemplate().catch((x) => { meta.textContent = __f("匯出範本失敗：{msg}", { msg: x.message ?? x }); });
+});
+
+$<HTMLButtonElement>("#exportpack").addEventListener("click", () => {
+  exportPackage().catch((x) => { meta.textContent = __f("打包失敗：{msg}", { msg: x.message ?? x }); });
 });
 
 $<HTMLSelectElement>("#snap").addEventListener("change", (e) => {
@@ -1373,12 +1795,13 @@ function openMenu(items: MenuItem[], at: { x: number; y: number }): void {
   menu.style.top = `${Math.min(at.y, window.innerHeight - menu.offsetHeight - 12)}px`;
 }
 
-function inspectorReorder(dir: "front" | "back"): void {
-  const b = editor.getSelected();
-  if (!b || !current) return;
-  const zs = current.blocks.map((k) => k.zIndex);
-  b.zIndex = dir === "front" ? Math.max(...zs) + 1 : Math.min(...zs) - 1;
+/** 移到最前／最後。**整個選取一起搬**（多選時只搬一個是 bug），回傳有沒有真的動到。 */
+function inspectorReorder(dir: "front" | "back"): boolean {
+  const sel = editor.selectionBlocks();
+  if (!sel.length || !current) return false;
+  if (!moveBlocks(current, new Set(sel.map((k) => k.id)), dir)) return false;
   editor.refresh(); scheduleThumbs(); commit("reorder");
+  return true;
 }
 
 // ⌥ 拖曳＝複製：殼層負責複製與 undo，編輯器只管拖
@@ -1504,7 +1927,11 @@ function renderHome(): void {
   }
 }
 
-function showHome(): void { renderHome(); home.classList.add("on"); }
+function showHome(): void {
+  renderHome(); home.classList.add("on");
+  selbarLive = false;
+  selbar.classList.remove("on");   // 畫布退場＝列跟著收（不然會浮在首頁上）
+}
 function closeHome(): void { home.classList.remove("on"); }
 
 // 新專案先不關首頁：取消建立就回到首頁，建立成功 show() 會自己關
@@ -1588,6 +2015,57 @@ async function exportTemplate(): Promise<void> {
   meta.textContent = __f("已匯出範本　{file}", { file: baseName(path) });
 }
 
+/** 專案包會用到的素材檔名（影片連 mp4 本體＋海報、模型連 .glb——渲染只用海報，
+ *  但 iPad 播放要 mp4 本體，漏了＝過去開起來全是空框）。 */
+function packageFiles(p: Project): Set<string> {
+  const files = new Set<string>();
+  for (const b of p.blocks) {
+    const c = b.content;
+    if (c.type === "image" || c.type === "video") {
+      const m = c.media;
+      if (!m.assetFileName) continue;
+      files.add(m.assetFileName);
+      if (c.type === "video") files.add(`${m.assetFileName}.poster.jpg`);
+      if (m.matteFileName) files.add(m.matteFileName);
+      for (const f of m.carouselAssets ?? []) files.add(f);
+    } else if (c.type === "model" && c.model.assetFileName) {
+      files.add(c.model.assetFileName);
+    }
+  }
+  return files;
+}
+
+/** 打包 .alignproj（**含素材**）：裸 json 專案帶去 iPad 的唯一通道——iOS 只吃
+ *  素材打包好的專案包（範本匯出是剝素材的，別搞混）。
+ *  流程全用既有 Rust 指令：暫存夾 → project.json＋assets 逐檔複製 → pack。 */
+async function exportPackage(): Promise<void> {
+  if (!current) return;
+  if (!inApp) { meta.textContent = __("打包要在 App 內用"); return; }
+  if (origin.kind === "sample") { meta.textContent = __("先 ⌘S 存檔，素材才有著落"); return; }
+  const dest = await saveDialog({
+    defaultPath: inDir("export", `${current.name}.alignproj`),
+    filters: [{ name: __("ALIGN 專案包"), extensions: ["alignproj"] }],
+  });
+  if (typeof dest !== "string") return;
+  rememberDir("export", dest);
+  meta.textContent = __("打包中…");
+  const tmp = await invoke<string>("make_temp_dir");
+  await invoke("save_text", { path: `${tmp}/project.json`,
+                              contents: JSON.stringify(encodeProject(current), null, 2) });
+  const srcDir = origin.kind === "alignproj" ? `${origin.root}/assets`
+                                             : `${origin.path.replace(/\/[^/]*$/, "")}/assets`;
+  let missing = 0;
+  for (const f of packageFiles(current)) {
+    // 缺檔不擋整包：本來就會畫佔位框，帶得走的先帶走
+    await invoke("copy_asset_as", { src: `${srcDir}/${f}`, destDir: `${tmp}/assets`, name: f })
+      .catch(() => { missing++; });
+  }
+  await invoke("pack_alignproj", { dir: tmp, dest });
+  meta.textContent = missing
+    ? __f("已打包　{file}（{n} 個素材缺檔，開起來是空框）", { file: baseName(dest), n: missing })
+    : __f("已打包　{file}——iPad 檔案 App 點開即可匯入", { file: baseName(dest) });
+}
+
 // ── 匯出 ──────────────────────────────────────────────────────────────
 let shots: ExportedPage[] = [];
 const sheet = $<HTMLDivElement>("#sheet");
@@ -1664,19 +2142,17 @@ function repaintVideoPages(): void {
   const seen = new Set(visibleShotIndexes());
   for (const s of shots) {
     if (!videoPageSet.has(s.index) || !seen.has(s.index)) continue;
-    if (current.paperKey && filterAssets) {
-      // 紙張是整頁逐像素運算，只能走離屏路。
-      // 2× 匯出時 shot 的 ctx 帶著縮放 transform，貼整張離屏圖前要歸零才不會貼成四倍
-      const live = renderPageCanvas(current, s.index, previewOpts());
-      const ctx = s.canvas.getContext("2d")!;
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
-      ctx.drawImage(live, 0, 0);
-      ctx.restore();
-    } else {
-      renderPage(s.canvas.getContext("2d")!, current, s.index, previewOpts());
-    }
+    // 一律走離屏再整張貼回。⚠️ 不能直接 renderPage 到 shot 畫布：renderPage 只認頁
+    // 座標、不看 opts.scale（縮放是 pageCanvas 裡做的），而 shot 畫布是 renderPageCanvas
+    // 交出來的**複製品**、transform 是 identity——2× 時畫布 2160×2700 卻只被畫左上
+    // 1080×1350，其餘四分之三留著上一輪的舊圖（2026-09-01 發版審查）。
+    const live = renderPageCanvas(current, s.index, previewOpts());
+    const ctx = s.canvas.getContext("2d")!;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
+    ctx.drawImage(live, 0, 0, s.canvas.width, s.canvas.height);
+    ctx.restore();
   }
 }
 
@@ -1703,6 +2179,7 @@ function syncSheet(): void {
 /** 依目前的 PNG 選項重拍全部頁面並鋪進畫廊（匯出台開著時切選項也走這裡）。 */
 function buildShots(): void {
   if (!current) return;
+  flushC5Bakes();   // c5 防抖窗內按匯出＝吃到 900px 低清變體，先沖掉
   // 匯出走的是與編輯預覽同一支 renderPageCanvas，所以所見即所得
   shots = renderAllPages(current, exportOpts());
   // 透明匯出的檔名帶記號，落地才分得出哪張是疊層
@@ -1823,10 +2300,18 @@ async function pngBase64(s: ExportedPage): Promise<string> {
   return btoa(bin);
 }
 
+/** 透明模式下不能走 mp4：mp4 沒有 alpha 通道，而動畫／影片那兩條路餵渲染器的是
+ *  **編輯畫布**的選項（沒有 transparent／onlyBlockIds），出來的是完整不透明的成品，
+ *  檔名卻還掛著「_透明」——預覽與落地物件是兩回事（2026-09-01 發版審查）。
+ *  勾了透明就一律當靜態頁走 PNG，說話算話。 */
+const asMp4 = (index: number): boolean =>
+  !exportPng.alpha && inApp && !!current
+  && (pageHasMotion(current, index) || pageHasVideo(current, index));
+
 async function saveOne(s: ExportedPage): Promise<void> {
   // 會動的頁存成 mp4：有出場動畫／輪播＝逐格烤（含頁上影片）；只有影片＝原本的合成路
-  const motion = inApp && current && pageHasMotion(current, s.index);
-  if (motion || (inApp && current && pageHasVideo(current, s.index))) {
+  const motion = asMp4(s.index) && current && pageHasMotion(current, s.index);
+  if (asMp4(s.index)) {
     const path = await saveDialog({
       defaultPath: inDir("export", s.name.replace(/\.png$/, ".mp4")),
       filters: [{ name: __("影片"), extensions: ["mp4"] }],
@@ -1865,21 +2350,32 @@ $<HTMLButtonElement>("#saveAll").addEventListener("click", async () => {
     rememberDirExact("export", dir);
     const title = $<HTMLSpanElement>("#sheetSub");
     const base = title.textContent ?? "";
+    let done = 0;
+    const failed: string[] = [];
     for (const s of shots) {
-      const isMotion = current ? pageHasMotion(current, s.index) : false;
-      const isVideo = current ? pageHasVideo(current, s.index) : false;
+      const isMotion = asMp4(s.index) && current ? pageHasMotion(current, s.index) : false;
+      const isVideo = asMp4(s.index) && current ? pageHasVideo(current, s.index) : false;
       title.textContent = (isMotion ? __f("{base}　烤動畫第 {n} 頁…", { base, n: s.index + 1 })
         : isVideo ? __f("{base}　合成影片第 {n} 頁…", { base, n: s.index + 1 })
         : __f("{base}　輸出第 {n} 頁…", { base, n: s.index + 1 }));
-      if (isMotion) {
-        await exportAnimPage(s.index, `${dir}/${s.name.replace(/\.png$/, ".mp4")}`);
-      } else if (isVideo) {
-        await exportVideoPage(s.index, `${dir}/${s.name.replace(/\.png$/, ".mp4")}`);
-      } else {
-        await invoke("save_png", { path: `${dir}/${s.name}`, data: await pngBase64(s) });
+      // 逐頁包起來：原本任何一頁失敗會讓整個 listener reject，收尾那句永遠跑不到，
+      // 狀態列凍在進度文字上——使用者拿到缺頁的資料夾卻毫無提示（2026-09-01 審查）
+      try {
+        if (isMotion) {
+          await exportAnimPage(s.index, `${dir}/${s.name.replace(/\.png$/, ".mp4")}`);
+        } else if (isVideo) {
+          await exportVideoPage(s.index, `${dir}/${s.name.replace(/\.png$/, ".mp4")}`);
+        } else {
+          await invoke("save_png", { path: `${dir}/${s.name}`, data: await pngBase64(s) });
+        }
+        done++;
+      } catch (x) {
+        failed.push(`${s.index + 1}（${(x as Error).message ?? x}）`);
       }
     }
-    title.textContent = __f("{base}　✓ 已存入 {dir}", { base, dir: baseName(dir) });
+    title.textContent = failed.length
+      ? __f("{base}　✓ {n} 頁　✗ 第 {pages} 頁", { base, n: done, pages: failed.join("、") })
+      : __f("{base}　✓ 已存入 {dir}", { base, dir: baseName(dir) });
     return;
   }
   // 瀏覽器會對連續下載設限，逐張間隔一下
@@ -1898,6 +2394,7 @@ async function exportAnimPage(index: number, dest: string): Promise<void> {
   const fps = Number($<HTMLSelectElement>("#fps").value) || 30;
   const title = $<HTMLSpanElement>("#sheetSub");
   const base = title.textContent ?? "";
+  flushC5Bakes();   // 理由同 buildShots
   const { count } = await buildAnimFrames(current, index, dir, { fps }, {
     saveJpg: (path, data) => invoke("save_png", { path, data }),
     videoUrl: videoUrl ?? null,
@@ -1917,6 +2414,7 @@ async function exportAnimPage(index: number, dest: string): Promise<void> {
 
 /** 一頁的影片匯出：組規格→寫圖層 PNG→交給 alignvideo 合成 mp4。 */
 async function exportVideoPage(index: number, dest: string): Promise<void> {
+  flushC5Bakes();   // 影片頁 still 圖層即時讀 variants——跟 buildShots／exportAnimPage 同一道防線
   if (!current) return;
   const dir = await invoke<string>("make_temp_dir");
   const assetDir = origin.kind === "alignproj" ? `${origin.root}/assets`
@@ -2279,8 +2777,10 @@ function duplicateSelection(): void {
   if (!current || !blocks.length) return;
   const zs = current.blocks.map((k) => k.zIndex);
   let top = Math.max(...zs);
+  // 複製品一律**不鎖**：鎖定的滿版底圖複製出來如果也是鎖的，它蓋住整頁、
+  // 拖不動也刪不掉（⌫ 會略過鎖定塊），只能翻圖層面板解鎖（2026-09-01 發版審查）。
   const copies = blocks.map((b) => ({
-    ...structuredClone(b), id: newId(), zIndex: ++top,
+    ...structuredClone(b), id: newId(), zIndex: ++top, locked: false,
     frame: { ...b.frame, x: b.frame.x + 48, y: b.frame.y + 48 },
   }));
   current.blocks.push(...copies);
@@ -2291,8 +2791,13 @@ function duplicateSelection(): void {
 }
 
 function deleteSelected(): void {
-  const blocks = editor.selectionBlocks().filter((b) => !b.locked);
-  if (!current || !blocks.length) return;
+  const sel = editor.selectionBlocks();
+  const blocks = sel.filter((b) => !b.locked);
+  if (!current || !blocks.length) {
+    // 全部都鎖著＝按了沒反應，講一聲（原本是靜靜什麼都不做）
+    if (sel.length) meta.textContent = __("元件已鎖定，先解鎖才能刪除");
+    return;
+  }
   const ids = new Set(blocks.map((b) => b.id));
   current.blocks = current.blocks.filter((k) => !ids.has(k.id));
   editor.select(null);
@@ -2342,11 +2847,13 @@ async function pasteClipboard(): Promise<void> {
     for (const b of clip.blocks) {
       const files: string[] = [];
       let poster: string | null = null;
+      let matteOf: string | null = null;   // 去背遮罩跟著主檔一起搬，命名照 <新名>.matte.png
       if (b.content.type === "image" || b.content.type === "video") {
         const m = b.content.media;
         if (m.assetFileName) files.push(m.assetFileName);
         files.push(...(m.carouselAssets ?? []));
         if (b.content.type === "video" && m.assetFileName) poster = m.assetFileName;
+        if (m.matteFileName && m.assetFileName) matteOf = m.assetFileName;
       } else if (b.content.type === "model" && b.content.model.assetFileName) {
         files.push(b.content.model.assetFileName);
         glbs.add(b.content.model.assetFileName);
@@ -2360,6 +2867,16 @@ async function pasteClipboard(): Promise<void> {
           if (poster === name) {
             const ps = clip.assetSrc[`${name}.poster.jpg`];
             if (ps) await invoke("copy_asset_as", { src: ps, destDir: dir, name: `${newName}.poster.jpg` });
+          }
+          if (matteOf === name) {
+            const mb = b.content.type === "image" || b.content.type === "video"
+              ? b.content.media.matteFileName : undefined;
+            const ms = mb ? clip.assetSrc[mb] : undefined;
+            if (mb && ms) {
+              const mn = `${newName}.matte.png`;
+              await invoke("copy_asset_as", { src: ms, destDir: dir, name: mn });
+              renamed.set(mb, mn);
+            }
           }
           if (glbs.has(name)) glbs.add(newName);
           renamed.set(name, newName);
@@ -2553,8 +3070,8 @@ $<HTMLButtonElement>("#gearBtn").addEventListener("click", (e) => {
     { label: __("字體商店"), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15L8.2 5h.8L13 15M5.6 11.5h5.6"/><path d="M14 15c1.6 0 2.5-.9 2.5-2.3V9.4c0-.9-.7-1.4-1.7-1.4-.8 0-1.4.3-1.8.8"/></svg>', run: () => {
       openFontStore(() => { inspector.show(current, editor.getSelected()); });
     } },
-    // 筆刷偏好設定：軟鉛筆參數（P1）；改完編輯畫布上的軟鉛筆筆畫立即重渲
-    { label: __("筆刷偏好設定") + " · New", icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12.2 3.8l4 4L8 16H4v-4z"/><path d="M10.5 5.5l4 4"/></svg>', run: () => {
+    // 偏好設定：一般（介面開關）＋筆刷（軟鉛筆參數）；改完編輯畫布立即重渲
+    { label: __("偏好設定"), icon: '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.6v2.1M10 15.3v2.1M15.2 4.8l-1.5 1.5M6.3 13.7l-1.5 1.5M17.4 10h-2.1M4.7 10H2.6M15.2 15.2l-1.5-1.5M6.3 6.3L4.8 4.8"/></svg>', run: () => {
       openBrushPrefs(() => editor.refresh());
     } },
     // 效能數據：卡頓回報時直接念數字，不用兩邊猜（2026-08-30 收回主線）
@@ -3022,5 +3539,8 @@ function zoomProbe(): void {
   }
 })().catch((e) => { meta.textContent = __f(__("載入失敗：{msg}"), { msg: e.message }); });
 
-// dev：?brushprefs=1 直接開筆刷偏好設定（headless 截圖驗版面用）
-if (new URLSearchParams(location.search).has("brushprefs")) openBrushPrefs(() => editor.refresh());
+// dev：?brushprefs=1 直接開偏好設定；?brushprefs=general 開「一般」那頁（headless 截圖驗版面用）
+{
+  const bp = new URLSearchParams(location.search).get("brushprefs");
+  if (bp !== null) openBrushPrefs(() => editor.refresh(), bp === "general" ? "general" : "brush");
+}

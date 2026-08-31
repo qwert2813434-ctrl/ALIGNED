@@ -5,10 +5,13 @@
 // devicePixelRatio、view 變換），純函式測試完全碰不到。這頁跑 headless Chrome 也能過。
 
 import { Editor } from "./editor";
-import type { Block, Project, Rect, TextBlock } from "./core/schema";
+import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema";
 import { renderAllPages } from "./core/export";
-import { autoFitText, renderPageCanvas, renderStage, snugTextWidth, textPrintLines } from "./core/render";
-import { decodeProject, encodeProject } from "./core/schema";
+import { autoFitText, maskAndStrokeCanvases, renderPageCanvas, renderStage, snugTextWidth, textPrintLines } from "./core/render";
+import { doodleCounters, drawDoodle, drawDoodleUncached, type DoodleBlock } from "./core/doodle";
+import { applyRiso, filterSig, parseRisoSig, RISO_DEFAULTS } from "./core/filters";
+import { tornCanvases, tornOf } from "./core/tornedge";
+import { decodeProject, encodeProject, moveBlocks, reconcileOrder } from "./core/schema";
 import { Inspector } from "./inspector";
 import { PageStrip } from "./pagestrip";
 import { addPage, deletePage, duplicatePage, retargetToPage, stripToTemplate, swapAdjacentPages } from "./core/pages";
@@ -348,6 +351,33 @@ async function run(): Promise<void> {
     check("空欄位框：佔位樣式有畫（含匯出）", slotInk > 30, `非白取樣點 ${slotInk}`);
   }
 
+  // 內文框裡有一個「不可斷單位」比整個框還寬（超長網址／長英數字串）。
+  // 2026-09-01 回歸：斷行改成單位化之後，這種單位塞不進任何一段 → i 不前進 →
+  // yTop 一路加到框底 → **它以後的字整段消失**。硬斷之後兩段都要看得見。
+  {
+    const long = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".repeat(4);   // 144 個字元不可斷
+    const p = project([{
+      id: "long", frame: { x: 100, y: 100, w: 400, h: 400 },
+      rotation: 0, zIndex: 1, locked: false, opacity: 1,
+      content: { type: "text", text: { text: `${long}\n後面這段一定要看得見`,
+        alignment: "leading", fontSize: 30, colorHex: "000000",
+        isBodyFrame: true, manualWidth: 400, manualHeight: 400 } },
+    }]);
+    p.pageCount = 1;
+    const cv = renderAllPages(p)[0].canvas;
+    const g = cv.getContext("2d")!;
+    const rowHasInk = (y: number): boolean => {
+      const d = g.getImageData(102, y, 396, 1).data;
+      for (let i = 0; i < d.length; i += 4) if (d[i] < 120 && d[i + 1] < 120 && d[i + 2] < 120) return true;
+      return false;
+    };
+    let firstInk = -1, lastInk = -1;
+    for (let y = 102; y < 498; y++) if (rowHasInk(y)) { if (firstInk < 0) firstInk = y; lastInk = y; }
+    check("內文框：超長不可斷字串會硬斷，後面的段落不會整段消失",
+          firstInk > 0 && lastInk - firstInk > 90,
+          `墨跡 y ${firstInk}…${lastInk}（只有一行＝後面被吃掉了）`);
+  }
+
   // ── 12. 四點縮放手把（2026-08-04）────────────────────────────────────
   //    鐵則：**錨在看得見的對角**。旋轉後如果拿沒轉過的 frame 當錨，
   //    元件會邊拉邊漂——iOS 端 8/1 修過同一個坑，這裡一次測到。
@@ -526,6 +556,120 @@ async function run(): Promise<void> {
       check("小元件不長手把（拖得動、不是被縮放）",
             near(f.w, 60) && near(f.h, 60) && near(f.x, 470) && near(f.y, 370),
             `${f.w.toFixed(0)}×${f.h.toFixed(0)} @ ${f.x.toFixed(0)},${f.y.toFixed(0)}（應為 60×60 @ 470,370）`);
+    }
+
+    // (e) 極細描邊不准消失（2026-08-30 迴歸）
+    //     描邊寬度存的是短邊的比例，面板最小刻度 1 ＝ 0.12%。短邊 400 的框上是 0.48 畫素，
+    //     畫得出來但只有三成多的不透明度，匯出的圖上等於沒有。地板訂在一個頁面畫素。
+    {
+      const white = (): HTMLCanvasElement => {
+        const c = document.createElement("canvas");
+        c.width = 200; c.height = 200;
+        const x = c.getContext("2d")!;
+        x.fillStyle = "#ffffff"; x.fillRect(0, 0, 200, 200);
+        return c;
+      };
+      const images = new Map<string, CanvasImageSource>([["w.png", white()]]);
+      const p = project([]);
+      p.blocks.push({
+        id: "thin", frame: { x: 100, y: 100, w: 400, h: 400 }, rotation: 0, zIndex: 1,
+        locked: false, opacity: 1,
+        content: { type: "image", media: {
+          assetFileName: "w.png", cropRect: { x: 0, y: 0, w: 1, h: 1 },
+          strokeHex: "000000", strokeWidth: 0.0012,   // 面板刻度 1（黑線壓在白圖上才看得出來）
+        } },
+      });
+      const c = renderAllPages(p, { images })[0].canvas;
+      const d = c.getContext("2d")!.getImageData(100, 250, 1, 1).data;
+      // 未修時這裡約 165（0.48 畫素的鬼影），修好是實心黑
+      check("描邊：面板刻度 1 也畫得滿一個畫素",
+            d[0] < 12 && d[1] < 12 && d[2] < 12,
+            `最外側畫素 R=${d[0]}（應接近 0）`);
+    }
+
+    // (e2) 匯出那條路同一個下限（2026-08-31 迴歸）
+    //     影片匯出的描邊不走 drawFrameStroke，走 maskAndStrokeCanvases 烤圖——
+    //     漏了下限的話，畫布上 1px 的實線在 mp4 裡是 0.48px 的半透明淡線＝預覽與匯出不一致。
+    {
+      const m: MediaBlock = {
+        assetFileName: "", cropRect: { x: 0, y: 0, w: 1, h: 1 },
+        strokeHex: "000000", strokeWidth: 0.0012,   // 面板刻度 1
+      };
+      const { stroke } = maskAndStrokeCanvases(m, 600, 400);
+      const a = stroke ? stroke.getContext("2d")!.getImageData(300, 0, 1, 1).data[3] : 0;
+      // 未修時上緣畫素 alpha 約 122（36% 淡線），修好是實心
+      check("描邊：匯出烤圖同守 1px 下限", a >= 200, `邊緣 alpha=${a}（應 ≥ 200）`);
+    }
+
+    // (d) 填材質層拉邊裁切，遮罩不能變形（2026-08-30 迴歸）
+    //     那層的素材是**正方形材質**、遮罩是 3:2 照片的，兩張比例不同卻共用一個
+    //     cropRect。裁切前 (0,0,1,1) 是哨兵值，兩張各自 aspect-fill 所以是對的；
+    //     一裁下去，若把材質算出來的矩形寫進 cropRect，遮罩就被非等比拉伸＝人形變形。
+    //     修法：有遮罩時 cropRect 的座標系是**遮罩**的（editor.cropGeometryOf）。
+    {
+      const tex = (): HTMLCanvasElement => {           // 正方形材質，純紅好認
+        const c = document.createElement("canvas");
+        c.width = 800; c.height = 800;
+        const x = c.getContext("2d")!;
+        x.fillStyle = "#ff0000"; x.fillRect(0, 0, 800, 800);
+        return c;
+      };
+      const matte = (): HTMLCanvasElement => {         // 3:2 遮罩，中央一個正方形的洞
+        const c = document.createElement("canvas");
+        c.width = 900; c.height = 600;
+        const x = c.getContext("2d")!;
+        x.clearRect(0, 0, 900, 600);
+        x.fillStyle = "#fff"; x.fillRect(300, 150, 300, 300);
+        return c;
+      };
+      const images = new Map<string, CanvasImageSource>([
+        ["tex.png", tex()], ["matte:cut.png", matte()],
+      ]);
+      const mk = (): Project => {
+        const p = project([]);
+        p.blocks.push({
+          id: "fill", frame: { x: 100, y: 100, w: 400, h: 400 }, rotation: 0, zIndex: 1,
+          locked: false, opacity: 1,
+          content: { type: "image", media: {
+            assetFileName: "tex.png", cropRect: { x: 0, y: 0, w: 1, h: 1 },
+            matteFileName: "cut.png",
+          } },
+        });
+        return p;
+      };
+      /** 畫出來那塊紅色的外接框——比例 1 才代表遮罩沒被拉扁。 */
+      const redBox = (p: Project): { w: number; h: number } => {
+        const c = renderAllPages(p, { images, mattes: images })[0].canvas;
+        const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+        let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+        for (let y = 0; y < c.height; y++) {
+          for (let x = 0; x < c.width; x++) {
+            const i = (y * c.width + x) * 4;
+            if (d[i] > 200 && d[i + 1] < 80 && d[i + 2] < 80) {
+              if (x < x0) x0 = x; if (x > x1) x1 = x;
+              if (y < y0) y0 = y; if (y > y1) y1 = y;
+            }
+          }
+        }
+        return { w: x1 - x0 + 1, h: y1 - y0 + 1 };
+      };
+
+      const p0 = mk();
+      const b0 = redBox(p0);
+      const p = mk();
+      editor.load(p, images); editor.snapStrength = "none"; editor.select("fill");
+      pointer("pointerdown", 500, 300);          // 右邊中點
+      pointer("pointermove", 400, 300);          // 往內 100
+      const c = { ...(p.blocks[0].content as { media: { cropRect: Rect } }).media.cropRect };
+      pointer("pointerup", 400, 300);
+      const b1 = redBox(p);
+      // 遮罩的 aspect-fill：3:2 進 1:1＝(0.1667,0,0.6667,1)，再乘 300/400
+      // （用素材算的話會是 (0,0,1,1) 乘 0.75＝x:0 w:0.75，遮罩就被壓成 2:3）
+      check("填材質：裁切後遮罩不變形（cropRect 以遮罩為座標系）",
+            near(c.x, 0.1667, 0.002) && near(c.w, 0.5, 0.002)
+            && near(b0.w / b0.h, 1, 0.03) && near(b1.w / b1.h, 1, 0.03),
+            `crop x=${c.x.toFixed(4)} w=${c.w.toFixed(4)}（應 0.1667/0.5）　`
+            + `裁前 ${b0.w}×${b0.h}　裁後 ${b1.w}×${b1.h}（都該是正方形）`);
     }
 
     // (c) 旋轉過的媒體不給邊手把（錨定邊的算式假設軸對齊）——拉邊＝整塊移動
@@ -1317,8 +1461,9 @@ async function run(): Promise<void> {
       const ink = inkOf(p);
       const pl = textPrintLines(ectx, tOf(b), b.frame, p.canvasWidth, p.pageHeight)!;
       // 全大寫沒有降部：基線＝墨跡底；大寫線＝墨跡頂（與框頂重合就不給，允許 undefined）
+      // 容差 3：WebKit 的 metrics vs 光柵化差 2.7px、Chrome 2 以內（引擎差，兩邊都要能跑）
       check("印刷線：全大寫的基線＝墨跡底",
-            Math.abs(pl.base - (ink.y1 + 1)) <= 2, `base=${pl.base.toFixed(1)} 墨跡底=${ink.y1 + 1}`);
+            Math.abs(pl.base - (ink.y1 + 1)) <= 3, `base=${pl.base.toFixed(1)} 墨跡底=${ink.y1 + 1}`);
 
       const g = project([textBlk("g", { text: "Align gap", fontSize: 120 }, { x: 100, y: 300, w: 900, h: 400 })]);
       editor.load(g);
@@ -2030,10 +2175,49 @@ async function run(): Promise<void> {
 
     if (reported) applyLayerOrder(p, reported);
     const z = (id: string) => p.blocks.find((b) => b.id === id)!.zIndex;
-    check("圖層順序落成 zIndex：第一筆最大（最上層）",
-          z("middle") === 3 && z("bottom") === 2 && z("top") === 1,
-          `middle=${z("middle")} bottom=${z("bottom")} top=${z("top")}`);
+    // 2026-09-01 起順序的真相＝**陣列排列**（與 iOS 同一套），zIndex 只是沿陣列遞增的鏡子
+    check("圖層順序落成陣列排列（清單第一筆＝陣列最後一個）",
+          p.blocks.map((b) => b.id).join(",") === "top,bottom,middle"
+          && z("top") === 0 && z("bottom") === 1 && z("middle") === 2,
+          `陣列=${p.blocks.map((b) => b.id).join(",")}　z top=${z("top")} bottom=${z("bottom")} middle=${z("middle")}`);
     host.remove();
+  }
+
+  // 開舊檔的順序和解：Mac 歷來只改 zIndex、iOS 只搬陣列，同一份專案兩種真相。
+  // 和解規則＝z 有重複（iOS 參與過，新 block 一律 z=0）就信陣列；z 全相異就信 z。
+  {
+    const mk = (ids: string[], zs: number[]): Project => {
+      const q = project(ids.map((id) => block(id, { x: 0, y: 0, w: 10, h: 10 })));
+      q.blocks.forEach((b, i) => { b.zIndex = zs[i]; });
+      return q;
+    };
+    // ① iPad 排的：底圖搬到陣列最前面（最底層），但它的 z 還是當初的舊值
+    const ipad = mk(["bg", "a", "b"], [7, 0, 0]);
+    const k1 = reconcileOrder(ipad);
+    check("順序和解：z 有重複＝信陣列（iPad 排的順序不被 z 蓋掉）",
+          k1 === "array" && ipad.blocks.map((b) => b.id).join(",") === "bg,a,b"
+          && ipad.blocks.map((b) => b.zIndex).join(",") === "0,1,2",
+          `${k1}　${ipad.blocks.map((b) => `${b.id}:${b.zIndex}`).join(" ")}`);
+    // ② Mac 排的：移到最後寫 min−1，陣列位置沒動
+    const mac = mk(["a", "b", "bg", "c"], [1, 2, 0, 4]);
+    const k2 = reconcileOrder(mac);
+    check("順序和解：z 全相異＝信 z（舊 Mac 專案版面不被改掉）",
+          k2 === "zindex" && mac.blocks.map((b) => b.id).join(",") === "bg,a,b,c"
+          && mac.blocks.map((b) => b.zIndex).join(",") === "0,1,2,3",
+          `${k2}　${mac.blocks.map((b) => `${b.id}:${b.zIndex}`).join(" ")}`);
+    // ③ 本來就一致的檔案一個字都不動
+    const ok = mk(["a", "b", "c"], [0, 1, 2]);
+    check("順序和解：本來就一致就不動", reconcileOrder(ok) === "none"
+          && ok.blocks.map((b) => b.id).join(",") === "a,b,c", ok.blocks.map((b) => b.id).join(","));
+    // ④ 移到最前／最後＝搬陣列，不是改 z
+    const mv = mk(["a", "b", "c"], [0, 1, 2]);
+    moveBlocks(mv, new Set(["a"]), "front");
+    const front = mv.blocks.map((b) => b.id).join(",");
+    moveBlocks(mv, new Set(["c"]), "back");
+    check("移到最前／最後＝搬陣列元素且 z 重新遞增",
+          front === "b,c,a" && mv.blocks.map((b) => b.id).join(",") === "c,b,a"
+          && mv.blocks.map((b) => b.zIndex).join(",") === "0,1,2",
+          `最前後=${front}　最後後=${mv.blocks.map((b) => `${b.id}:${b.zIndex}`).join(" ")}`);
   }
 
   // 影片池的可見性判定必須跟渲染裁切同一個形狀（旋轉 AABB）——
@@ -2246,6 +2430,114 @@ async function run(): Promise<void> {
     pointer("pointerdown", 125, 125); pointer("pointerup", 125, 125);
     check("塗鴉：離開後點塗鴉＝選取（不畫）", editor.getSelected()?.content.type === "doodle" && p.blocks.length === 2);
     editor.onDoodleStroke = undefined;
+  }
+
+  // ── 塗鴉點陣快取 ──
+  {
+    const dood: DoodleBlock = { strokes: [
+      { pts: [0.1,0.2, 0.5,0.4, 0.9,0.3, 0.7,0.8], w: 0.06, color: "222222", brush: "pencil" },
+      { pts: [0.2,0.7, 0.6,0.6, 0.85,0.75], w: 0.05, color: "224488", brush: "pencil" },
+    ] };
+    const mk = () => { const c = document.createElement("canvas"); c.width = 128; c.height = 128; return c; };
+    // 128×128 剛好落在級距 base 上→烤圖尺寸＝顯示尺寸，可做畫素級比對
+    const a = mk(), b = mk(), u = mk();
+    doodleCounters.reset();
+    drawDoodle(a.getContext("2d")!, dood, 128, 128);
+    const miss1 = doodleCounters.miss;
+    drawDoodle(b.getContext("2d")!, dood, 128, 128);
+    check("塗鴉快取：第一次烤、第二次命中", miss1 === 1 && doodleCounters.hit === 1, `miss=${miss1} hit=${doodleCounters.hit}`);
+    drawDoodleUncached(u.getContext("2d")!, dood, 128, 128);
+    const pa = a.getContext("2d")!.getImageData(0,0,128,128).data, pu = u.getContext("2d")!.getImageData(0,0,128,128).data;
+    let diff = 0; for (let i = 0; i < pa.length; i++) if (Math.abs(pa[i]-pu[i]) > 1) diff++;
+    check("塗鴉快取：快取與直畫畫素一致", diff === 0, `不同分量 ${diff}`);
+    doodleCounters.reset();
+    drawDoodle(mk().getContext("2d")!, { ...dood, wobble: "boil" }, 128, 128, 0.5);
+    const g = mk().getContext("2d")!; g.globalAlpha = 0.5;
+    drawDoodle(g, dood, 128, 128);
+    check("塗鴉快取：會動的與半透明的不進快取", doodleCounters.hit + doodleCounters.miss === 0, `hit+miss=${doodleCounters.hit + doodleCounters.miss}`);
+  }
+
+  // ── c5 孔版濾鏡＋撕紙邊（2026-08-31）──────────────────────────────────
+  {
+    // 身份字串：非 c5 逐位不變（既有鍵零變動）；c5＝代號＋參數；參數變了鍵就變
+    const plain: MediaBlock = { assetFileName: "a.jpg", cropRect: { x: 0, y: 0, w: 1, h: 1 }, filterKey: "a1" };
+    check("filterSig：非 c5＝代號本身", filterSig(plain) === "a1", String(filterSig(plain)));
+    const c5: MediaBlock = { assetFileName: "a.jpg", cropRect: { x: 0, y: 0, w: 1, h: 1 }, filterKey: "c5" };
+    const sigA = filterSig(c5)!;
+    check("filterSig：c5 預設參數進鍵", sigA.startsWith("c5:") && sigA.includes("236996"), sigA);
+    const c5b = { ...c5, risoPitch: 8 };
+    check("filterSig：參數變了鍵就變", filterSig(c5b) !== sigA, String(filterSig(c5b)));
+    const rt = parseRisoSig(sigA);
+    check("filterSig：round-trip 解回同參數",
+          rt.inks.join() === RISO_DEFAULTS.inks.join() && rt.pitch === RISO_DEFAULTS.pitch
+          && rt.hard === RISO_DEFAULTS.hard && rt.grain === RISO_DEFAULTS.grain,
+          JSON.stringify(rt));
+    // 孔版本體：確定性（同輸入同輸出）＋真的有網點（輸出不等於輸入）＋純紙色輸入近紙色輸出
+    const mkImg = (fill: [number, number, number]) => {
+      const d = new Uint8ClampedArray(64 * 64 * 4);
+      for (let i = 0; i < d.length; i += 4) { d[i] = fill[0]; d[i + 1] = fill[1]; d[i + 2] = fill[2]; d[i + 3] = 255; }
+      return d;
+    };
+    const i1 = mkImg([60, 90, 120]), i2 = mkImg([60, 90, 120]);
+    applyRiso(i1, 64, 64, RISO_DEFAULTS); applyRiso(i2, 64, 64, RISO_DEFAULTS);
+    let same = true, changed = false;
+    for (let i = 0; i < i1.length; i++) { if (i1[i] !== i2[i]) { same = false; break; } }
+    const orig = mkImg([60, 90, 120]);
+    for (let i = 0; i < i1.length; i++) { if (Math.abs(i1[i] - orig[i]) > 8) { changed = true; break; } }
+    check("c5：同輸入同輸出（確定性，iOS 對齊的前提）", same);
+    check("c5：深色輸入真的被過網（輸出≠輸入）", changed);
+    const ip = mkImg([221, 215, 201]);
+    applyRiso(ip, 64, 64, { ...RISO_DEFAULTS, grain: 0 });
+    let paperOk = true;
+    for (let i = 0; i < ip.length; i += 4) {
+      if (Math.abs(ip[i] - 221) > 30 || Math.abs(ip[i + 1] - 215) > 30) { paperOk = false; break; }
+    }
+    check("c5：紙色輸入≈紙色輸出（分色不倒灌）", paperOk);
+    // 撕紙邊：absent＝關（舊專案零變動）；tear 烤圖確定性＋真的有裁（角落 alpha 0）
+    const bare: MediaBlock = { assetFileName: "a.jpg", cropRect: { x: 0, y: 0, w: 1, h: 1 } };
+    check("撕紙邊：欄位 absent＝關", tornOf(bare) === null);
+    const tm: MediaBlock = { assetFileName: "a.jpg", cropRect: { x: 0, y: 0, w: 1, h: 1 }, tornStyle: "tear" };
+    const tp = tornOf(tm)!;
+    check("撕紙邊：預設參數補齊", tp.amt === 0.055 && tp.sides === 15 && tp.core === "F5F1E6", JSON.stringify(tp));
+    // ⚠️ 烤圖尺寸是**正規化**的（長寬比 bucket＋短邊 1024，見 tornBakeSize），
+    // 不等於傳進去的顯示尺寸——取樣一律用畫布自己的寬高，別寫死 300×200。
+    const t1 = tornCanvases(tp, 300, 200), t2 = tornCanvases({ ...tp }, 300, 200);
+    const TW = t1.mask.width, TH = t1.mask.height;
+    const alphaAt = (cv: HTMLCanvasElement, x: number, y: number): number =>
+      cv.getContext("2d")!.getImageData(x, y, 1, 1).data[3];
+    const d1 = t1.mask.getContext("2d")!.getImageData(0, 0, TW, TH).data;
+    const d2 = t2.mask.getContext("2d")!.getImageData(0, 0, TW, TH).data;
+    let tsame = true;
+    for (let i = 3; i < d1.length; i += 4) { if (d1[i] !== d2[i]) { tsame = false; break; } }
+    check("撕紙邊：同參數同遮罩（快取與確定性）", tsame);
+    check("撕紙邊：烤圖尺寸正規化（不含顯示尺寸，縮放不重烤）",
+          t1.mask.width === tornCanvases(tp, 600, 400).mask.width && TW === 1536 && TH === 1024,
+          `${TW}×${TH}`);
+    check("撕紙邊：角落真的被撕掉（alpha 0）、中心完好（alpha 255）",
+          d1[3] === 0 && alphaAt(t1.mask, TW >> 1, TH >> 1) === 255,
+          `corner=${d1[3]} center=${alphaAt(t1.mask, TW >> 1, TH >> 1)}`);
+    // 只開右邊：左上角完好
+    const tR = tornCanvases(tornOf({ ...tm, tornSides: 2 })!, 300, 200);
+    check("撕紙邊：單邊 bitmask（只撕右）",
+          alphaAt(tR.mask, 0, 0) === 255 && alphaAt(tR.mask, tR.mask.width - 1, 0) === 0,
+          `左上=${alphaAt(tR.mask, 0, 0)} 右上=${alphaAt(tR.mask, tR.mask.width - 1, 0)}`);
+    // 純影片頁匯出：撕紙邊烤進 mask＋stroke（alignvideo 零改動的那條）
+    const { mask: vm, stroke: vs } = maskAndStrokeCanvases(tm, 300, 200);
+    check("撕紙邊：影片匯出 mask/stroke 有烤出來", !!vm && !!vs);
+    const vg = vm!.getContext("2d")!;
+    check("撕紙邊：影片 mask 角落也是撕掉的",
+          vg.getImageData(0, 0, 1, 1).data[3] === 0
+          && vg.getImageData(vm!.width >> 1, vm!.height >> 1, 1, 1).data[3] === 255);
+    // 存檔 round-trip：riso/torn 欄位原樣穿透
+    const proj = project([]);
+    proj.blocks.push({ id: "x", frame: { x: 0, y: 0, w: 100, h: 100 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+      content: { type: "image", media: { ...c5, risoInks: ["112233"], risoPitch: 6.5, tornStyle: "tear", tornSides: 5, tornAmt: 0.08 } } });
+    const rp = decodeProject(JSON.parse(JSON.stringify(encodeProject(proj))));
+    const rm = rp.blocks[0].content.type === "image" ? rp.blocks[0].content.media : null;
+    check("c5＋撕紙邊：存檔 round-trip 欄位原樣",
+          rm?.filterKey === "c5" && rm?.risoInks?.[0] === "112233" && rm?.risoPitch === 6.5
+          && rm?.tornStyle === "tear" && rm?.tornSides === 5 && rm?.tornAmt === 0.08,
+          JSON.stringify({ f: rm?.filterKey, i: rm?.risoInks, p: rm?.risoPitch, t: rm?.tornStyle }));
   }
 
   const pass = results.filter((r) => r.ok).length;

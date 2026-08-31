@@ -8,11 +8,12 @@ import { additiveClick } from "./platform";
 // 重畫／重算貼字盒。**改自己的值時不重建面板**——重建會把正在打字的輸入框炸掉。
 import type { Block, MediaBlock, ModelBlock, Project, ShapeBlock, TextAlign, TextBlock } from "./core/schema";
 import { FONT_CHOICES, WEIGHT_LABELS, fontCatalog } from "./core/fonts";
-import { FILTER_KEYS, FILTER_LABELS } from "./core/filters";
+import { FILTER_KEYS, FILTER_LABELS , risoOf, RISO_PRESETS } from "./core/filters";
+import { TORN_DEFAULTS } from "./core/tornedge";
 import { alignToPage } from "./core/group";
 import { pageRect } from "./core/geometry";
 import type { GroupAlign, GroupAxis } from "./core/group";
-import { paperScope, snugTextWidth } from "./core/render";
+import { paperScope, snugTextWidth , attachedCanvas } from "./core/render";
 import { ANIM_DUR, ANIM_DUR_MAX, ANIM_HOLD, ANIM_HOLD_MAX, ANIM_STAGE2_DUR, ANIM_STAGE2_SCALE, ANIM_STAGGER, ANIM_STAGGER_MAX, CAROUSEL_INTERVAL, MODEL_SECS_PER_TURN, MODEL_SPIN_DUR, MODEL_TURNS, defaultDur, type AnimDir, type AnimKind, type Stage2 } from "./core/anim";
 import { GUIDE_PRESETS, MODULAR_COMBOS, defaultParams, generateGuides, replaceBatch } from "./core/guidegen";
 import type { GuideGenParams, GuidePreset } from "./core/guidegen";
@@ -25,7 +26,7 @@ const GEN_STORE = "align.guidegen";
 /** 貼字寬要量字——共用一個量測 ctx（字型都在 document 層，量得到匯入字型）。 */
 let MEASURE: CanvasRenderingContext2D | null = null;
 const measureCtx = (): CanvasRenderingContext2D =>
-  (MEASURE ??= document.createElement("canvas").getContext("2d")!);
+  (MEASURE ??= attachedCanvas().getContext("2d")!);
 import { CANVAS_PRESETS, canvasSize, simplifiedRatio } from "./core/canvas";
 
 /** 圖層列的類型圖示（單色線性 SVG，絕不用 emoji 當 icon）。 */
@@ -100,7 +101,7 @@ export interface InspectorHooks {
   /** 值改完。retext＝文字內容或樣式有動，殼層要重算貼字盒。 */
   onChange: (opts?: { retext?: boolean }) => void;
   /** 濾鏡換了——殼層要確保「素材×濾鏡」的變體已生成。 */
-  ensureVariant: (block: Block) => Promise<void>;
+  ensureVariant: (block: Block, preview?: boolean) => Promise<void>;
   reorder: (block: Block, dir: "front" | "back") => void;
   /** 播放出場動畫。給 block＝只播那一個（面板即時回饋）；不給＝整個版面。 */
   playAnim?: (block?: Block) => void;
@@ -133,6 +134,8 @@ export interface InspectorHooks {
   matteTextures?: () => { key: string; label: string; url: string }[];
   /** 把材質填進去背出來的形狀裡。key = null ＝自己選一張圖。 */
   fillTexture?: (block: Block, key: string | null) => Promise<void>;
+  /** 填顏色——與填材質同一條路，素材是一張純色圖。 */
+  fillColor?: (block: Block, hexNoHash: string) => Promise<void>;
   /** 匯入字型檔（開選檔框→存 UserFonts→註冊）。回匯入結果，null＝取消或失敗。 */
   importFont?: () => Promise<{ label: string; value: string } | null>;
   /** 塗鴉模式（editor.doodle 的代理）。 */
@@ -189,6 +192,9 @@ export class Inspector {
   private panel: SidePanel = "none";
   /** 剛在畫布上碰到的那一條參考線——面板裡標出來，才知道手上是哪一條。 */
   private hotGuide: { axis: "x" | "y"; index: number } | null = null;
+  /** 填顏色的收斂 timer。掛實例不掛閉包：閉包版在面板重建後還會開火，抓著舊的
+   *  block 搶選取、甚至把已 undo 的物件塞回專案（timer 裡那份複本沒人作廢）。 */
+  private fillSettle: number | undefined;
 
   constructor(private el: HTMLElement, private hooks: InspectorHooks) {}
 
@@ -218,6 +224,8 @@ export class Inspector {
   }
 
   show(project: Project | null, block: Block | null): void {
+    // 換選取／重建＝上一輪填顏色的收斂 timer 作廢——它抓的是舊 block，開火只會出事
+    window.clearTimeout(this.fillSettle);
     this.project = project;
     this.block = block;
     // .pin 是自己的捲動容器（max-height 46vh）——重畫會整個換新，捲動位置要
@@ -1285,9 +1293,10 @@ export class Inspector {
       (v) => {
         m.filterKey = v || undefined;
         // 變體要先生成再重畫，否則會閃一格佔位框
-        this.hooks.ensureVariant(b).then(() => this.emit());
+        this.hooks.ensureVariant(b).then(() => { this.rebuild(); this.emit(); });
       },
     ));
+    if (m.filterKey === "c5") this.risoRows(s, b, m);
     // 去背——與「遮罩」是兩件事：遮罩是幾何形狀，去背是照片內容的主體輪廓。
     // 兩者可以並存（先被形狀裁、再被去背裁），所以分成兩列不合併。
     if (this.hooks.makeMatte && m.assetFileName) {
@@ -1351,6 +1360,34 @@ export class Inspector {
         }
         fillRow.append(swatch(__("自選…"), null, () => fill(null)));
       }
+      // 填顏色：跟填材質同一件事，素材是純色。色票與 iPad 那排同一組
+      //（同一顆 App 裡不該有兩套色票），最後一顆是系統選色器＝任何顏色。
+      if (m.matteFileName && this.hooks.fillColor) {
+        const colorRow = this.row(s, __("填顏色"));
+        const run = (hex: string) => {
+          colorRow.querySelectorAll("button").forEach((n) => { (n as HTMLButtonElement).disabled = true; });
+          void this.hooks.fillColor!(b, hex).finally(() => this.rebuild());
+        };
+        for (const hex of ["FFFFFF", "000000", "FF4D84", "F5C518", "2EC4B6", "3A86FF"]) {
+          const n = document.createElement("button");
+          n.className = "texsw";
+          n.title = `#${hex}`;
+          n.style.background = `#${hex}`;
+          n.onclick = () => run(hex);
+          colorRow.append(n);
+        }
+        // 選色器拖動中會逐格發 input——不收斂的話每一格都生一個色檔＋一步 undo。
+        // 停 0.4 秒才落一次，與 iPad 端 settleFillColor 同一套收斂邏輯。
+        // 開火前驗 b 還在不在專案裡：系統選色器活得比面板久，400ms 內 undo／換選取
+        // 的話，這顆 timer 沒資格再動專案。
+        colorRow.append(this.color("FFFFFF", (hex) => {
+          window.clearTimeout(this.fillSettle);
+          this.fillSettle = window.setTimeout(() => {
+            if (!this.project?.blocks.some((k) => k.id === b.id)) return;
+            run(hex);
+          }, 400);
+        }));
+      }
       if (m.matteFileName) {
         this.row(s, __("保留哪一邊")).append(this.select(
           [["", __("主體")], ["1", __("背景")]],
@@ -1390,6 +1427,7 @@ export class Inspector {
         this.emit();
       }),
     );
+    this.tornRows(s, b, m);
     if (m.assetFileName) {
       // 拉直：轉的是**內容**不是 block（與 iOS 裁切畫面的那個角度同一個欄位）
       this.row(s, __("拉直")).append(
@@ -1520,6 +1558,108 @@ export class Inspector {
     if (!proj) return;
     row.append(this.num(proj.animHold ?? ANIM_HOLD, { min: 0, max: ANIM_HOLD_MAX, step: 0.5 },
                         (v) => { proj.animHold = v; this.emit(); onChange?.(); }));
+  }
+
+  /** c5 孔版參數列（2026-08-31）。調參數＝先低清即烤（快、不卡拖曳）再防抖全清重烤，
+   *  兩段都走 ensureVariant——鍵是 filterSig，參數變了鍵就變，不會拿到舊圖。 */
+  private risoRows(s: HTMLElement, b: Block, m: MediaBlock): void {
+    const p = risoOf(m);
+    const live = () => { void this.hooks.ensureVariant(b, true).then(() => this.emit()); };
+    const commit = () => { void this.hooks.ensureVariant(b).then(() => this.emit()); };
+    // 三組定案配方（工具間同款一鍵）：整組參數回定案值
+    const pr = this.row(s, __("配方"));
+    for (const ps of RISO_PRESETS) {
+      pr.append(this.btn(ps.name, () => {
+        m.risoInks = [...ps.inks];
+        m.risoPaper = undefined; m.risoPitch = undefined; m.risoHard = undefined;
+        m.risoReg = undefined; m.risoDens = undefined; m.risoGrain = undefined;
+        this.rebuild(); commit();
+      }));
+    }
+    // ⚠️ 每個 handler 都要**當場**重讀 risoOf(m)，不能用外面那份 p：
+    // p 是建面板那一刻的快照，改完第一支墨之後它就過期了，
+    // 接著改第二支會拿舊陣列覆寫回去＝第一支的新顏色被吃掉（面板顯示新的、圖是舊的）。
+    p.inks.forEach((ink, i) => {
+      const r = this.row(s, i === 0 ? __("油墨") : "");
+      const ic = this.color(ink, (hex) => {
+        const inks = [...risoOf(m).inks]; inks[i] = hex;
+        m.risoInks = inks; live();
+      });
+      ic.addEventListener("change", commit);   // 選色器收起＝全清重烤
+      r.append(ic);
+      if (p.inks.length > 1) {
+        r.append(this.btn("×", () => {
+          m.risoInks = risoOf(m).inks.filter((_, j) => j !== i);
+          this.rebuild(); commit();
+        }));
+      }
+    });
+    if (p.inks.length < 3) {
+      this.row(s, "").append(this.btn(__("＋加一支油墨"), () => {
+        m.risoInks = [...risoOf(m).inks, "404040"];
+        this.rebuild(); commit();
+      }));
+    }
+    const pc = this.color(p.paper, (hex) => { m.risoPaper = hex; live(); });
+    pc.addEventListener("change", commit);
+    this.row(s, __("紙色")).append(pc);
+    const slider = (label: string, val: number, min: number, max: number, st: number,
+                    set: (v: number) => void): void => {
+      const el = this.range(val, min, max, st, (v) => { set(v); live(); });
+      el.addEventListener("change", commit);     // 放手＝全解析度重烤
+      this.row(s, label).append(el);
+    };
+    slider(__("網點間距"), p.pitch, 2, 12, 0.5, (v) => { m.risoPitch = v; });
+    slider(__("網點硬度"), p.hard, 0, 1, 0.05, (v) => { m.risoHard = v; });
+    slider(__("套印偏移"), p.reg, 0, 4, 0.25, (v) => { m.risoReg = v; });
+    slider(__("油墨濃度"), p.dens, 0.5, 1.8, 0.05, (v) => { m.risoDens = v; });
+    slider(__("紙張顆粒"), p.grain, 0, 24, 1, (v) => { m.risoGrain = v; });
+  }
+
+  /** 撕紙邊（2026-08-31，工具間濾鏡工坊同款邊緣系統）。只動 block 欄位不動變體——
+   *  邊是渲染時從快取畫布蓋上去的，blockSig 吃整塊 JSON、切圖快取自動重烤。 */
+  private tornRows(s: HTMLElement, _b: Block, m: MediaBlock): void {
+    this.row(s, __("撕紙邊")).append(this.select(
+      [["", __("無")], ["riso", __("孔版粗邊")], ["torn", __("撕毛邊")],
+       ["tear", __("真撕紙")], ["feather", __("羽化")]],
+      m.tornStyle ?? "",
+      (v) => {
+        if (!v) {
+          m.tornStyle = undefined; m.tornSides = undefined; m.tornAmt = undefined;
+          m.tornDeform = undefined; m.tornRough = undefined; m.tornSeed = undefined;
+        } else {
+          m.tornStyle = v;   // 其他欄位 absent＝預設（見 tornedge.ts TORN_DEFAULTS）
+        }
+        this.rebuild(); this.emit();
+      },
+    ));
+    if (!m.tornStyle) return;
+    const sides = m.tornSides ?? TORN_DEFAULTS.sides;
+    const sr = this.row(s, __("邊"));
+    ([[__("上"), 1], [__("右"), 2], [__("下"), 4], [__("左"), 8]] as [string, number][])
+      .forEach(([name, bit]) => {
+        const lbl = document.createElement("label");
+        lbl.append(this.check((sides & bit) !== 0, (on) => {
+          m.tornSides = on ? (m.tornSides ?? TORN_DEFAULTS.sides) | bit
+                           : (m.tornSides ?? TORN_DEFAULTS.sides) & ~bit;
+          this.emit();
+        }), name);
+        sr.append(lbl);
+      });
+    const slider = (label: string, val: number, min: number, max: number, st: number,
+                    set: (v: number) => void): void => {
+      this.row(s, label).append(this.range(val, min, max, st, (v) => { set(v); this.emit(); }));
+    };
+    slider(__("咬深"), m.tornAmt ?? TORN_DEFAULTS.amt, 0.01, 0.15, 0.005, (v) => { m.tornAmt = v; });
+    // 羽化＝均勻漸淡，`tornedge.ts` 那條分支完全沒吃 deform／rough／seed。
+    // 擺出來只會讓人以為壞了，還每動一下就全尺寸重烤＋記一筆 undo，所以直接不顯示。
+    if (m.tornStyle === "feather") return;
+    slider(__("變形隨機"), m.tornDeform ?? TORN_DEFAULTS.deform, 0, 1, 0.05, (v) => { m.tornDeform = v; });
+    slider(__("深淺隨機"), m.tornRough ?? TORN_DEFAULTS.rough, 0, 1, 0.05, (v) => { m.tornRough = v; });
+    this.row(s, "").append(this.btn(__("換一個邊"), () => {
+      m.tornSeed = ((m.tornSeed ?? TORN_DEFAULTS.seed) + 1) % 9999;
+      this.emit();
+    }));
   }
 
   private row(parent: HTMLElement, label: string): HTMLDivElement {
