@@ -1031,12 +1031,38 @@ function drawMedia(
       const sg = stage.getContext("2d")!;
       sg.save();
       sg.setTransform(1, 0, 0, 1, 0, 0);
-      sg.globalCompositeOperation = "destination-in";
-      sg.drawImage(tc.mask, 0, 0, stage.width, stage.height);   // 烤圖有帽，明確拉到目標尺寸
-      // 🔴 覆蓋層要用 source-atop 不是 source-over：stage 這時可能已經被去背遮罩／
-      // 橢圓／大圓角挖過，source-over 會讓紙芯白帶浮在輪廓外面一整圈（2026-09-01 審查）。
-      sg.globalCompositeOperation = "source-atop";
-      sg.drawImage(tc.overlay, 0, 0, stage.width, stage.height);
+      if (matte) {
+        // 🔴 **去背圖撕的是背後那張紙**（2026-09-01 小高實測回報「撕紙邊在去背圖上不管用」）。
+        // 主體已經被遮罩剪成人形，圖片外框附近本來就沒有東西，撕外框與它不相交＝
+        // 什麼都不會發生。改成在主體背後鋪一張撕邊的紙、人疊在紙上面——孔版拼貼那個語彙。
+        // 刻意**不加欄位**：「有去背＋有撕紙邊」現況是條死路（畫不出任何東西），
+        // 所以改行為不會動到任何既有專案，也就不觸發「動 project.json 就三平台同發」。
+        // 之後要讓人選「撕外框／背紙／沿輪廓」再加 tornTarget，那時候才三平台同發。
+        const sheet = document.createElement("canvas");
+        sheet.width = stage.width; sheet.height = stage.height;
+        const hg = sheet.getContext("2d")!;
+        // 紙也要吃形狀遮罩（橢圓／大圓角），不然紙會從形狀外面露出來
+        hg.setTransform(sheet.width / w, 0, 0, sheet.height / h, 0, 0);
+        hg.save();
+        if (m.maskShape != null || (m.maskCornerRadius ?? 0) > 0) { maskPath(hg, m, w, h); hg.clip(); }
+        hg.fillStyle = hex(torn.core);
+        hg.fillRect(0, 0, w, h);
+        hg.restore();
+        hg.setTransform(1, 0, 0, 1, 0, 0);
+        hg.globalCompositeOperation = "destination-in";
+        hg.drawImage(tc.mask, 0, 0, sheet.width, sheet.height);
+        hg.globalCompositeOperation = "source-atop";
+        hg.drawImage(tc.overlay, 0, 0, sheet.width, sheet.height);
+        sg.globalCompositeOperation = "destination-over";   // 紙在下、人在上
+        sg.drawImage(sheet, 0, 0);
+      } else {
+        sg.globalCompositeOperation = "destination-in";
+        sg.drawImage(tc.mask, 0, 0, stage.width, stage.height);   // 烤圖有帽，明確拉到目標尺寸
+        // 🔴 覆蓋層要用 source-atop 不是 source-over：stage 這時可能已經被
+        // 橢圓／大圓角挖過，source-over 會讓紙芯白帶浮在形狀外面一整圈（2026-09-01 審查）。
+        sg.globalCompositeOperation = "source-atop";
+        sg.drawImage(tc.overlay, 0, 0, stage.width, stage.height);
+      }
       sg.restore();
     }
     if (key) cutCacheSet(key, stage);

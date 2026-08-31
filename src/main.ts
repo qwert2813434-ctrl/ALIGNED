@@ -149,6 +149,16 @@ function buildSelbar(): void {
     selbarLive = false; selbar.classList.remove("on"); return;
   }
   const locked = sel.every((b) => b.locked);
+  // 選到一張塗鴉＝第一顆給「續畫」，直接回去畫那張（等同 B 鍵、等同檢視器那顆）。
+  // 小高：「繼續畫那個變成一隻小筆 icon，放在選擇塗鴉的時候上面的小按鈕」（2026-09-01）
+  if (!locked && sel.length === 1 && sel[0].content.type === "doodle") {
+    const d = sel[0];
+    selbar.append(selbarButton("draw", `${__("繼續畫")}　B`, () => {
+      editor.beginDoodle(d);
+      inspector.show(current, editor.getSelected());
+      buildSelbar(); selbarFollow();
+    }, "", false));
+  }
   if (!locked) {
     selbar.append(selbarButton("copy", `${__("複製一份")}　⌘D`, () => duplicateSelection()));
     selbar.append(selbarButton("front", __("移到最前"), () => inspectorReorder("front")));
@@ -176,8 +186,8 @@ function buildSelbar(): void {
  *  右邊擠不下就翻到左側；上下夾在畫布內。 */
 function placeSelbar(): void {
   if (!selbarLive) return;
-  // 行內編輯文字時讓位（不動 selbarLive——編輯結束 onTextEdited 會重建）
-  if (editor.editingText) { selbar.classList.remove("on"); return; }
+  // 行內編輯文字／作畫中都讓位（不動 selbarLive——結束後會重建）
+  if (editor.editingText || editor.doodle) { selbar.classList.remove("on"); return; }
   const r = editor.selectionScreenRect();
   if (!r) { selbarLive = false; selbar.classList.remove("on"); return; }
   const cw = canvasEl.clientWidth, ch = canvasEl.clientHeight;
@@ -1819,6 +1829,7 @@ editor.onDoodleMode = (on) => {
   $<HTMLButtonElement>("#doodleBtn").classList.toggle("on", on);
   meta.textContent = on ? __("塗鴉模式：直接畫；⌘Z 回上一筆、Esc 或再按畫筆離開") : "";
   inspector.show(current, editor.getSelected());
+  buildSelbar(); selbarFollow();   // 作畫中收起晶片列、畫完自己回來
 };
 // 每一筆各自一步 undo（tag 帶流水號，不讓 900ms 合併窗把連續幾筆黏成一步）
 let strokeSeq = 0;
@@ -2701,7 +2712,11 @@ async function addBlock(kind: string): Promise<void> {
       break;
     case "doodle":
       // 塗鴉不是「加一個東西」而是切模式：第一筆落下才生成 block
-      if (editor.doodle) editor.endDoodle(); else editor.beginDoodle();
+      // 跟 B 鍵同語意：選著塗鴉就**續畫那張**，不是另開一張新的（2026-09-01 統一）
+      if (editor.doodle) { editor.endDoodle(); } else {
+        const selB = editor.getSelected();
+        editor.beginDoodle(selB?.content.type === "doodle" ? selB : undefined);
+      }
       return;
   }
   if (!b) return;

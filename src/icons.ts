@@ -13,6 +13,8 @@ export const CHIP = {
   // 前／後用箭頭講語意——「一個方塊＋它往哪邊走」比兩個疊方塊好認太多
   front: '<rect x="3" y="8.5" width="8.5" height="8.5" rx="1.5"/><path d="M14.5 8V2.8"/><path d="M12.2 5.1l2.3-2.3 2.3 2.3"/>',
   back: '<rect x="3" y="3" width="8.5" height="8.5" rx="1.5"/><path d="M14.5 12v5.2"/><path d="M12.2 14.9l2.3 2.3 2.3-2.3"/>',
+  // 續畫：一支筆。選到塗鴉時晶片列第一顆＝直接回去畫那張
+  draw: '<path d="M12.2 3.8l4 4L8 16H4v-4z"/><path d="M10.5 5.5l4 4"/>',
   check: '<path d="M4.5 10.4l3.6 3.4 7.4-8"/>',
 } as const;
 

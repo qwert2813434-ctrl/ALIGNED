@@ -351,6 +351,51 @@ async function run(): Promise<void> {
     check("空欄位框：佔位樣式有畫（含匯出）", slotInk > 30, `非白取樣點 ${slotInk}`);
   }
 
+  // 撕紙邊 × 去背：撕的是**背後那張紙**，不是圖片外框。
+  // 外框那圈在去背之後本來就沒有東西，撕它等於什麼都不會發生（2026-09-01 小高實測）。
+  {
+    const solid = (): HTMLCanvasElement => {
+      const c = document.createElement("canvas");
+      c.width = c.height = 800;
+      const x = c.getContext("2d")!;
+      x.fillStyle = "#ff0000"; x.fillRect(0, 0, 800, 800);
+      return c;
+    };
+    const matte = (): HTMLCanvasElement => {      // 中央一小塊＝主體，其餘透明
+      const c = document.createElement("canvas");
+      c.width = c.height = 800;
+      const x = c.getContext("2d")!;
+      x.clearRect(0, 0, 800, 800);
+      x.fillStyle = "#fff"; x.fillRect(300, 300, 200, 200);
+      return c;
+    };
+    const images = new Map<string, CanvasImageSource>([
+      ["s.png", solid()], ["matte:cut.png", matte()],
+    ]);
+    const p = project([]);
+    p.pageCount = 1;
+    p.blocks.push({
+      id: "cut", frame: { x: 100, y: 100, w: 400, h: 400 }, rotation: 0, zIndex: 0,
+      locked: false, opacity: 1,
+      content: { type: "image", media: {
+        assetFileName: "s.png", cropRect: { x: 0, y: 0, w: 1, h: 1 },
+        matteFileName: "cut.png", tornStyle: "tear",
+      } },
+    });
+    const cv = renderAllPages(p, { images, mattes: images })[0].canvas;
+    const at = (x: number, y: number): number[] =>
+      [...cv.getContext("2d")!.getImageData(x, y, 1, 1).data];
+    const subject = at(300, 300);                 // 主體：紅
+    const between = at(140, 300);                 // 主體與外框之間：應該是撕出來的紙
+    const corner = at(104, 104);                  // 角落：被撕掉，露出頁面白底
+    const isPaper = (d: number[]) => d[3] > 200 && d[0] > 225 && d[2] > 200 && d[0] - d[2] > 6;
+    check("撕紙邊 × 去背：撕的是背後那張紙（不是外框，也不是什麼都不做）",
+          subject[0] > 200 && subject[1] < 80
+          && isPaper(between)
+          && !(corner[0] - corner[2] > 6),
+          `主體=${subject.slice(0, 3)} 紙=${between.slice(0, 3)} 角落=${corner.slice(0, 3)}`);
+  }
+
   // 內文框裡有一個「不可斷單位」比整個框還寬（超長網址／長英數字串）。
   // 2026-09-01 回歸：斷行改成單位化之後，這種單位塞不進任何一段 → i 不前進 →
   // yTop 一路加到框底 → **它以後的字整段消失**。硬斷之後兩段都要看得見。
