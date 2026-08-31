@@ -1340,6 +1340,9 @@ export class Inspector {
       // 底下那張變回完整的照片。手動要四步，這一列一次做完。
       if (m.matteFileName && this.hooks.fillTexture && this.hooks.matteTextures) {
         const fillRow = this.row(s, __("填材質"));
+        const grid = document.createElement("div");
+        grid.className = "swgrid";                 // 一排放不下就換行，別溢出面板
+        fillRow.append(grid);
         const fill = (key: string | null) => {
           fillRow.querySelectorAll("button").forEach((n) => { (n as HTMLButtonElement).disabled = true; });
           void this.hooks.fillTexture!(b, key).finally(() => this.rebuild());
@@ -1356,14 +1359,17 @@ export class Inspector {
           return n;
         };
         for (const t of this.hooks.matteTextures()) {
-          fillRow.append(swatch(t.label, t.url, () => fill(t.key)));
+          grid.append(swatch(t.label, t.url, () => fill(t.key)));
         }
-        fillRow.append(swatch(__("自選…"), null, () => fill(null)));
+        grid.append(swatch(__("自選…"), null, () => fill(null)));
       }
       // 填顏色：跟填材質同一件事，素材是純色。色票與 iPad 那排同一組
       //（同一顆 App 裡不該有兩套色票），最後一顆是系統選色器＝任何顏色。
       if (m.matteFileName && this.hooks.fillColor) {
         const colorRow = this.row(s, __("填顏色"));
+        const cgrid = document.createElement("div");
+        cgrid.className = "swgrid";                // 六顆色票＋自訂＝一排放不下，要換行
+        colorRow.append(cgrid);
         const run = (hex: string) => {
           colorRow.querySelectorAll("button").forEach((n) => { (n as HTMLButtonElement).disabled = true; });
           void this.hooks.fillColor!(b, hex).finally(() => this.rebuild());
@@ -1374,19 +1380,28 @@ export class Inspector {
           n.title = `#${hex}`;
           n.style.background = `#${hex}`;
           n.onclick = () => run(hex);
-          colorRow.append(n);
+          cgrid.append(n);
         }
         // 選色器拖動中會逐格發 input——不收斂的話每一格都生一個色檔＋一步 undo。
         // 停 0.4 秒才落一次，與 iPad 端 settleFillColor 同一套收斂邏輯。
         // 開火前驗 b 還在不在專案裡：系統選色器活得比面板久，400ms 內 undo／換選取
         // 的話，這顆 timer 沒資格再動專案。
-        colorRow.append(this.color("FFFFFF", (hex) => {
+        // 自訂顏色做成跟「自選…」同一顆的樣子（虛線＋加號），原生選色器透明疊在上面。
+        // 原本是一顆 34×22 的裸 input 排在六顆 36px 色票後面——那一排寬度直接超出
+        // 252px 的面板，這顆被推到看不見也點不到的地方（2026-09-01 小高回報）。
+        const pick = document.createElement("label");
+        pick.className = "texsw plain dashed swpick";
+        pick.title = __("自訂顏色…");
+        pick.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" '
+          + 'stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+        pick.append(this.color("FFFFFF", (hex) => {
           window.clearTimeout(this.fillSettle);
           this.fillSettle = window.setTimeout(() => {
             if (!this.project?.blocks.some((k) => k.id === b.id)) return;
             run(hex);
           }, 400);
         }));
+        cgrid.append(pick);
       }
       if (m.matteFileName) {
         this.row(s, __("保留哪一邊")).append(this.select(

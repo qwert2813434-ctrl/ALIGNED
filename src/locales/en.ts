@@ -530,6 +530,7 @@ export const en: Record<string, string> = {
   "已打包　{file}（{n} 個素材缺檔，開起來是空框）": "Packaged　{file} ({n} assets missing — they open as empty slots)",
   "{base}　✓ {n} 頁　✗ 第 {pages} 頁": "{base}　✓ {n} pages　✗ page {pages}",
   "填顏色": "Fill color",
+  "自訂顏色…": "Custom color…",
   "移除": "Remove",
   "偏好設定": "Preferences",
   "元件已鎖定，先解鎖才能刪除": "Locked — unlock it first to delete",
