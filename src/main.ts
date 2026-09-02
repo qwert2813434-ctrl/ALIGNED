@@ -1469,7 +1469,13 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
 /** 目前專案的影片 URL 解析器（修剪後要重接影片池，所以留一份在模組層）。 */
 let videoUrl: ((file: string) => string) | undefined;
 
+/** 這個 session 裡使用者剛指定的專案封面頁（右鍵「設為專案封面」）。
+ *  落地前就能設——⌘S 之後 rememberRecent 會把它寫進最近清單；
+ *  換專案歸 null，改回從清單裡讀（封面選擇跟專案走，不跨專案沾黏）。 */
+let coverChoice: number | null = null;
+
 function show(p: Project, a?: LoadedAssets, videoSrc?: (file: string) => string): void {
+  coverChoice = null;
   current = p; assets = a ?? { variants: new Map(), raw: new Map() }; videoUrl = videoSrc;
   closeHome();   // 有專案上台，首頁退場
   title.textContent = p.name;
@@ -1724,6 +1730,11 @@ function pageMenu(i: number): MenuItem[] {
   return [
     { label: __("複製這一頁（含內容）"), run: () => doPageAct("duplicate", i) },
     { label: __("在後面插入空白頁"), run: () => insertBlankAfter(i) },
+    // 首頁瀑布流的縮圖用哪一頁。瀏覽器版沒有首頁，項目藏起來
+    ...(inApp ? [{
+      label: coverPageNow() === i ? __("✓ 專案封面（首頁縮圖）") : __("設為專案封面（首頁縮圖）"),
+      run: () => setCoverPage(i),
+    } satisfies MenuItem] : []),
     "-",
     { label: __("往前一頁"), run: () => doPageAct("left", i) },
     { label: __("往後一頁"), run: () => doPageAct("right", i) },
@@ -1844,7 +1855,7 @@ editor.onDoodleStroke = () => {
 // 只在 App 內出現（瀏覽器拿不到檔案路徑）；?open=／?export= 這類驗證旗標會跳過。
 // Esc＝先逛範本（首頁底下墊著的就是範本樣本）。
 
-interface RecentEntry { path: string; name: string; time: number; thumb?: string }
+interface RecentEntry { path: string; name: string; time: number; thumb?: string; coverPage?: number }
 const RECENT_KEY = "align.recent";
 const home = $<HTMLDivElement>("#home");
 
@@ -1866,22 +1877,44 @@ function saveRecents(list: RecentEntry[]): void {
   }
 }
 
-/** 記住目前專案（開啟成功與存檔後呼叫）。縮圖＝第一頁縮成 JPEG，
+/** 記住目前專案（開啟成功與存檔後呼叫）。縮圖＝**封面頁**縮成 JPEG——
+ *  預設第一頁，右鍵頁面「設為專案封面」可以挑（2026-09-03 小高要的：
+ *  瀑布流靠縮圖認專案，第一頁不一定是最好認的那頁）。
  *  高度做 2×（卡片顯示框 128px、Retina 要 256——1.0.5 之前只存 148，糊）。 */
 function rememberRecent(): void {
   if (!inApp || !current || origin.kind === "sample") return;
   const path = origin.path;
+  // 這一 session 挑過就用挑的；沒挑過沿用清單裡存的；頁被刪了就夾回範圍
+  const cover = Math.max(0, Math.min(
+    coverChoice ?? recents().find((r) => r.path === path)?.coverPage ?? 0,
+    current.pageCount - 1));
   let thumb: string | undefined;
   try {
-    const c = renderPageCanvas(current, 0, renderOpts());
+    const c = renderPageCanvas(current, cover, renderOpts());
     const h = 296, w = Math.max(1, Math.round((c.width / c.height) * h));
     const s = document.createElement("canvas");
     s.width = w; s.height = h;
     s.getContext("2d")!.drawImage(c, 0, 0, w, h);
     thumb = s.toDataURL("image/jpeg", 0.72);
   } catch { /* 縮圖抓不到就不放，卡片顯示占位圖示 */ }
-  saveRecents([{ path, name: current.name, time: Date.now(), thumb },
+  saveRecents([{ path, name: current.name, time: Date.now(), thumb,
+                 ...(cover > 0 ? { coverPage: cover } : {}) },
                ...recents().filter((r) => r.path !== path)]);
+}
+
+/** 右鍵頁面「設為專案封面」：立即重烤縮圖（未落地就先記著，⌘S 時生效）。 */
+function setCoverPage(i: number): void {
+  coverChoice = i;
+  rememberRecent();
+  meta.textContent = __f("專案封面＝第 {n} 頁", { n: i + 1 });
+}
+
+/** 目前的封面頁（給選單標 ✓ 用）。 */
+function coverPageNow(): number {
+  if (coverChoice !== null) return coverChoice;
+  const o = origin;   // 窄化不跨 callback，先落地
+  if (o.kind === "sample") return 0;
+  return recents().find((r) => r.path === o.path)?.coverPage ?? 0;
 }
 
 function timeAgo(t: number): string {
