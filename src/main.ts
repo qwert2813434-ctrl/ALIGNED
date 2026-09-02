@@ -1880,7 +1880,8 @@ function saveRecents(list: RecentEntry[]): void {
 /** 記住目前專案（開啟成功與存檔後呼叫）。縮圖＝**封面頁**縮成 JPEG——
  *  預設第一頁，右鍵頁面「設為專案封面」可以挑（2026-09-03 小高要的：
  *  瀑布流靠縮圖認專案，第一頁不一定是最好認的那頁）。
- *  高度做 2×（卡片顯示框 128px、Retina 要 256——1.0.5 之前只存 148，糊）。 */
+ *  高度 512＝瀑布流全比例顯示的 2×（直式卡高約 245px、Retina 要 490；
+ *  舊值 296 是裁切顯示時代的，全圖顯示會拉糊——舊縮圖重開專案就會重烤）。 */
 function rememberRecent(): void {
   if (!inApp || !current || origin.kind === "sample") return;
   const path = origin.path;
@@ -1891,7 +1892,7 @@ function rememberRecent(): void {
   let thumb: string | undefined;
   try {
     const c = renderPageCanvas(current, cover, renderOpts());
-    const h = 296, w = Math.max(1, Math.round((c.width / c.height) * h));
+    const h = 512, w = Math.max(1, Math.round((c.width / c.height) * h));
     const s = document.createElement("canvas");
     s.width = w; s.height = h;
     s.getContext("2d")!.drawImage(c, 0, 0, w, h);

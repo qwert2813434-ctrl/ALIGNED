@@ -232,14 +232,21 @@
   #home .samples a:hover { color: var(--ink); }
   #home h3 { font-size: 11px; letter-spacing: .2em; color: var(--ink2);
              margin: 44px 0 12px; font-weight: 600; }
-  #recentgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
-                gap: 14px; }
+  /* 真瀑布流（2026-09-03 小高：「縮圖還是 16:9」）——原本 .shot 固定 128px 高＋
+     object-fit: cover，直式 4:5 的專案被裁成橫條，認不出是哪份。改 CSS columns：
+     卡片照專案原比例把縮圖**整張**顯示出來，直式就是直式。
+     columns 是逐欄填充（最新的在最左欄往下走），break-inside 防卡片被攔腰切欄。 */
+  #recentgrid { columns: 196px; column-gap: 14px; }
+  #recentgrid .empty { column-span: all; }
   .recent { position: relative; border: 1px solid var(--line); border-radius: 12px;
-            overflow: hidden; cursor: pointer; background: var(--card); }
+            overflow: hidden; cursor: pointer; background: var(--card);
+            break-inside: avoid; margin-bottom: 14px; }
   .recent:hover { border-color: var(--ink2); }
-  .recent .shot { height: 128px; display: flex; align-items: center; justify-content: center;
+  .recent .shot { display: flex; align-items: center; justify-content: center;
                   background: color-mix(in srgb, var(--ink) 5%, var(--chrome)); }
-  .recent .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .recent .shot img { width: 100%; height: auto; display: block; }
+  /* 沒縮圖的占位卡維持一個看得出是卡的高度 */
+  .recent .shot:not(:has(img)) { height: 128px; }
   .recent .shot svg { color: var(--ink2); }
   .recent .nm { font-size: 13px; font-weight: 600; padding: 9px 12px 0;
                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
