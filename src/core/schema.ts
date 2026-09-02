@@ -66,6 +66,16 @@ export interface MediaBlock {
   matteFileName?: string;
   /** 反轉遮罩：留背景、把主體挖掉。未設＝留主體。 */
   matteInverted?: boolean;
+  /** 貼紙邊（2026-08-27）：去背輪廓往外擴一圈實色邊，讓去背圖看起來像模切貼紙。
+   *  短邊分數（與 strokeWidth 同一套制度）。剪影來源兩種都吃：去背遮罩，
+   *  或貼圖庫那種本來就帶 alpha 的 PNG（沒有遮罩）。
+   *  與 strokeHex／strokeWidth 是兩件事：那是**框**的內描邊，這是**輪廓**的外擴邊。
+   *  ⚠️ iOS 端同名欄位 1.2.0 起已出貨在寫（Block.swift），這裡是追平不是新開。 */
+  matteEdgeWidth?: number;
+  matteEdgeHex?: string;
+  /** 貼紙邊的斜面浮雕強度 0–1（未設＝不做）。沿輪廓內側一條白線一條灰線，
+   *  把扁的貼紙撐出一點厚度。貼紙本來就薄，帶寬只有邊寬的 15%。 */
+  matteEdgeBevel?: number;
   strokeHex?: string;
   strokeWidth?: number;       // 短邊分數
   excludesText?: boolean;

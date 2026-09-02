@@ -70,14 +70,16 @@ export function applyPerfHud(src: FrameSource): void {
   let lastPaints = src.frameStats.paints;
   let lastAt = performance.now();
   // 這一秒內的累計——計數器每幀被歸零，所以要在 rAF 上收集，不能等一秒才讀
-  const sum = { media: 0, matte: 0, video: 0, cutHit: 0, cutMiss: 0,
+  const sum = { media: 0, matte: 0, video: 0, edge: 0, cutHit: 0, cutMiss: 0,
                 pageHit: 0, pageMiss: 0, pageSkip: 0,
+                edgeHit: 0, edgeMiss: 0,
                 doodleHit: 0, doodleMiss: 0, frames: 0 };
   const collect = (): void => {
     if (!isPerfHudOn()) return;
     sum.media += renderCounters.media; sum.matte += renderCounters.matte;
-    sum.video += renderCounters.video;
+    sum.video += renderCounters.video; sum.edge += renderCounters.edge;
     sum.cutHit += renderCounters.cutHit; sum.cutMiss += renderCounters.cutMiss;
+    sum.edgeHit += renderCounters.edgeHit; sum.edgeMiss += renderCounters.edgeMiss;
     sum.pageHit += renderCounters.pageHit; sum.pageMiss += renderCounters.pageMiss;
     sum.pageSkip += renderCounters.pageSkip;
     sum.doodleHit += doodleCounters.hit; sum.doodleMiss += doodleCounters.miss;
@@ -111,16 +113,19 @@ export function applyPerfHud(src: FrameSource): void {
     t += line("這幀", `圖 ${per(sum.media)}・去背 ${per(sum.matte)}`);
     if (sum.video) t += line("影片", `${per(sum.video)} 塊即時影格`);
     t += line("切圖", `命中 ${sum.cutHit}・重算 ${sum.cutMiss}`, sum.cutMiss > sum.frames);
+    // 貼紙邊：重算＝膨脹＋浮雕整套重跑，是最貴的一項；數字一直跳＝快取被擠掉了
+    if (sum.edge) t += line("貼紙邊", `命中 ${sum.edgeHit}・重算 ${sum.edgeMiss}`, sum.edgeMiss > sum.frames);
     t += line("塗鴉", `命中 ${sum.doodleHit}・重算 ${sum.doodleMiss}`, sum.doodleMiss > sum.frames);
     t += line("整頁", `命中 ${sum.pageHit}・重算 ${sum.pageMiss}・不可存 ${sum.pageSkip}`,
               sum.pageMiss + sum.pageSkip > sum.frames);
-    t += line("快取", `切圖 ${renderCounters.cutCached}・整頁 ${renderCounters.pageCached} 張・塗鴉 ${doodleCounters.cached}`);
+    t += line("快取", `切圖 ${renderCounters.cutCached}・整頁 ${renderCounters.pageCached}・貼紙邊 ${renderCounters.edgeCached}・塗鴉 ${doodleCounters.cached}`);
     const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
     if (mem) t += line("JS 堆", `${(mem.usedJSHeapSize / 1048576).toFixed(0)} MB`);
     d.textContent = t.trimEnd();
 
-    sum.media = sum.matte = sum.video = 0;
+    sum.media = sum.matte = sum.video = sum.edge = 0;
     sum.cutHit = sum.cutMiss = sum.pageHit = sum.pageMiss = sum.pageSkip = 0;
+    sum.edgeHit = sum.edgeMiss = 0;
     sum.doodleHit = sum.doodleMiss = sum.frames = 0;
   }, 1000);
 }

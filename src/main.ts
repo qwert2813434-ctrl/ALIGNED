@@ -1852,8 +1852,18 @@ function recents(): RecentEntry[] {
   try { return JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]") as RecentEntry[]; }
   catch { return []; }
 }
+/** 清單**不設數量上限**——原本 slice(0, 12) 是存檔時就把第 13 個起的專案永久擠出
+ *  清單，首頁改瀑布流後「往下捲找不到以前的專案」（2026-09-03 小高回報）就是它。
+ *  條目本身很小（路徑＋名字＋時間），肥的是縮圖 dataURL（一張 20–50 KB），
+ *  所以只有最近 40 筆保留縮圖，更舊的退成占位圖示、條目永遠留著。
+ *  寫爆 localStorage 配額就對半砍縮圖數重試——縮圖是快取，條目不是。 */
 function saveRecents(list: RecentEntry[]): void {
-  localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 12)));
+  let keep = 40;
+  for (;;) {
+    const out = list.map((r, i) => (i < keep ? r : { ...r, thumb: undefined }));
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify(out)); return; }
+    catch { if (keep === 0) return; keep = Math.floor(keep / 2); }
+  }
 }
 
 /** 記住目前專案（開啟成功與存檔後呼叫）。縮圖＝第一頁縮成 JPEG，

@@ -870,23 +870,170 @@ function cutCacheSet(key: string, c: HTMLCanvasElement): void {
   }
 }
 
+/** 貼紙邊用的離屏畫布：三張輪流當來源／目的地（每一輪擴張都要換一張畫；浮雕再借一張）。 */
+const _edgeScratch: HTMLCanvasElement[] = [];
+function edgeScratch(i: number, w: number, h: number): CanvasRenderingContext2D {
+  if (!_edgeScratch[i]) _edgeScratch[i] = document.createElement("canvas");
+  const c = _edgeScratch[i];
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const g = c.getContext("2d")!;
+  g.clearRect(0, 0, w, h);
+  return g;
+}
+
+/** 算好的貼紙邊快取。鍵＝內容指紋＋頁座標框尺寸（見 drawMedia 的 edgeKey）。 */
+interface Sticker { edge: HTMLCanvasElement; bevel: HTMLCanvasElement | null }
+const _edgeCache = new Map<string, Sticker>();
+
+/** 貼紙邊的正規化烤圖尺寸：短邊 1024、長邊帽 8192（同 iOS StickerEdge.canonMinSide
+ *  與撕紙邊 tornBakeSize）。**顯示尺寸不能當鑰匙**（畫布快取六鐵則第一條）——
+ *  縮放畫布不重烤，貼上去時讓 drawImage 縮放（邊是一塊實色，縮放看不出來）。 */
+function edgeBakeSize(w: number, h: number): { w: number; h: number } {
+  const k = 1024 / Math.min(w, h);
+  return { w: Math.min(8192, Math.max(1, Math.round(w * k))),
+           h: Math.min(8192, Math.max(1, Math.round(h * k))) };
+}
+
+/**
+ * 斜面浮雕：沿輪廓**內側**一條白線（左上受光）一條灰線（右下背光）。
+ * 帶狀區＝形狀減掉「位移過的自己」——往右下位移再挖掉，剩下的就是左上那條受光邊。
+ * 貼紙是薄的，暗線只要「看得出有一點點差異」就夠——帶寬只有邊寬的 15%、糊掉一半，
+ * 灰線再壓到 0.26。粗一點就從浮雕變成描邊（2026-08-28 小高打回的第一版是這個值的兩倍）。
+ * ⚠️ 參數與 iOS `StickerEdge.bevel` 必須一致：帶寬 15%、糊 0.5 倍、白 0.85×、灰 0.26×。
+ */
+function bevelLayer(E: HTMLCanvasElement, band: number, strength: number): HTMLCanvasElement {
+  const W = E.width, H = E.height, d = band * 0.7071;   // 光從左上（PS 的 135°）
+  const rim = (dx: number, dy: number, color: string): HTMLCanvasElement => {
+    const g = edgeScratch(2, W, H);
+    g.drawImage(E, 0, 0);
+    g.globalCompositeOperation = "destination-out";
+    g.drawImage(E, dx, dy);
+    g.globalCompositeOperation = "source-in";
+    g.fillStyle = color; g.fillRect(0, 0, W, H);
+    g.globalCompositeOperation = "source-over";
+    return g.canvas;
+  };
+  const out = document.createElement("canvas");
+  out.width = W; out.height = H;
+  const g = out.getContext("2d")!;
+  g.filter = `blur(${Math.max(0.4, band * 0.5).toFixed(2)}px)`;
+  g.globalAlpha = strength * 0.85;
+  g.drawImage(rim(d, d, "#FFFFFF"), 0, 0);            // 受光：白線在左上
+  g.globalAlpha = strength * 0.26;
+  g.drawImage(rim(-d, -d, "#000000"), 0, 0);          // 背光：灰線在右下
+  g.filter = "none"; g.globalAlpha = 1;
+  return out;
+}
+
+/**
+ * 貼紙邊：把剪影往外擴 r 個畫素、填成實色，畫在圖**底下**（浮雕畫在圖**上面**）。
+ * 與 iOS `StickerEdge` 是同一個效果，**改一邊要同步另一邊**。
+ *
+ * 做法＝**朝 20 個方向反覆蓋章**（每一輪擴一小段），不是逐畫素距離場。
+ * 距離場是 O(N) 的 JS 迴圈，拖曳時每格每個 block 都會進來；drawImage 走 GPU，
+ * 蓋幾十次也比一次 getImageData 便宜。（iOS 用 CIMorphologyMaximum 一次到位，
+ * 那邊有形態學濾鏡；兩邊做法不同是刻意的，參數語彙一致。）
+ *
+ * ⚠️ **一輪蓋不完，步長要跟著長胖**：一次跨 r 的話，20 個方向的落點誤差是 r×0.157，
+ * 比 2r 細的部位（手把、髮絲、腳架）根本沒有一個方向會落在它身上，
+ * 邊就會斷成星芒。所以從 2px 起步，每擴一輪最細部位就寬 2s，下一輪才敢跨得更遠
+ * （safe = 已長寬度×3）——r=60 也只要 3～4 輪。
+ */
+function stickerEdge(
+  sil: CanvasImageSource, w: number, h: number, r: number, color: string,
+  bevel: number, key: string,
+): Sticker {
+  const cached = _edgeCache.get(key);
+  if (cached) {
+    _edgeCache.delete(key); _edgeCache.set(key, cached);   // 命中移到尾端＝LRU
+    renderCounters.edgeHit++;
+    return cached;
+  }
+  renderCounters.edgeMiss++;
+
+  const pad = Math.ceil(r) + 2;              // 邊會長到框外——貼紙就是會超出照片的框
+  const W = w + pad * 2, H = h + pad * 2;
+
+  // 起點：剪影填成實色（後面每一章都是同一塊顏色，疊起來只有 alpha 在長）。
+  // ⚠️ 指定寬高——sil 是裝置畫素的 stage，要縮進正規化畫布，不是原尺寸平移
+  let a = edgeScratch(0, W, H);
+  a.drawImage(sil, pad, pad, w, h);
+  a.globalCompositeOperation = "source-in";
+  a.fillStyle = color;
+  a.fillRect(0, 0, W, H);
+  a.globalCompositeOperation = "source-over";
+
+  const K = 20;
+  let rem = r, grown = 1, i = 0;             // grown ＝目前最細部位的寬度，起點當 1px 髮絲
+  while (rem > 0.01 && i < 12) {
+    const st = Math.min(rem, Math.max(2, grown * 3));
+    const bctx = edgeScratch((i + 1) % 2, W, H);
+    bctx.drawImage(a.canvas, 0, 0);
+    for (let k = 0; k < K; k++) {
+      const ang = ((k + (i % 2) * 0.5) / K) * Math.PI * 2;
+      bctx.drawImage(a.canvas, Math.cos(ang) * st, Math.sin(ang) * st);
+    }
+    a = bctx; rem -= st; grown += 2 * st; i++;
+  }
+
+  const out = document.createElement("canvas");
+  out.width = W; out.height = H;
+  const g = out.getContext("2d")!;
+  g.drawImage(a.canvas, 0, 0);
+  // 疊了幾十層半透明邊緣，色相不變但要壓成實色，不然邊緣會比中心淡
+  g.globalCompositeOperation = "source-in";
+  g.fillStyle = color;
+  g.fillRect(0, 0, W, H);
+
+  const made: Sticker = {
+    edge: out,
+    bevel: bevel > 0 ? bevelLayer(out, Math.max(1, r * 0.15), bevel) : null,
+  };
+  // 8 張＝與 iOS 的 countLimit 一致；一組（邊＋浮雕）約 9 MB，天花板 70 MB 上下
+  if (_edgeCache.size >= 8) _edgeCache.delete(_edgeCache.keys().next().value as string);
+  _edgeCache.set(key, made);
+  return made;
+}
+
+/** 把切好的圖貼上頁面：貼紙邊在底下、圖、浮雕在上面（順序同 iOS MediaBlockRendering）。 */
+function drawWithEdge(
+  ctx: CanvasRenderingContext2D, m: MediaBlock,
+  stage: HTMLCanvasElement, w: number, h: number, edgeKey: string | null,
+): void {
+  if (!edgeKey) { ctx.drawImage(stage, 0, 0, w, h); return; }
+  const bake = edgeBakeSize(w, h);
+  const r = (m.matteEdgeWidth ?? 0) * Math.min(bake.w, bake.h);   // 短邊分數制，同 strokeWidth
+  const stk = stickerEdge(stage, bake.w, bake.h, r, hex(m.matteEdgeHex, "FFFFFF"),
+                          m.matteEdgeBevel ?? 0, edgeKey);
+  const pad = Math.ceil(r) + 2;                                   // 同 stickerEdge 內的算式
+  const px = pad * (w / bake.w), py = pad * (h / bake.h);
+  ctx.drawImage(stk.edge, -px, -py, w + px * 2, h + py * 2);
+  ctx.drawImage(stage, 0, 0, w, h);
+  // 浮雕是整張貼紙的厚度，不是白邊自己的——所以蓋在照片**上面**
+  if (stk.bevel) ctx.drawImage(stk.bevel, -px, -py, w + px * 2, h + py * 2);
+}
+
 /** 效能計數器。每幀由讀的人歸零——渲染核心只管加。全是整數 ++，可以永遠開著。 */
 export const renderCounters = {
   media: 0,        // 這一幀畫了幾塊圖／影片
   matte: 0,        // 其中幾塊有去背遮罩
   video: 0,        // 其中幾塊是影片的即時影格（不進快取）
+  edge: 0,         // 其中幾塊有貼紙邊
   cutHit: 0,       // 切好的圖：快取命中
   cutMiss: 0,      // 切好的圖：重算（＝那一幀真的去縮了原圖）
+  edgeHit: 0,      // 貼紙邊：快取命中
+  edgeMiss: 0,     // 貼紙邊：重算（膨脹＋浮雕，最貴的一項）
   pageHit: 0,      // 整頁：快取命中（紙張那條才會用到）
   pageMiss: 0,     // 整頁：重烤（＝整頁重畫＋逐畫素套紙）
   pageSkip: 0,     // 整頁：這一頁**不能**快取（有動畫／影片／3D／會動的塗鴉）
   reset(): void {
-    this.media = this.matte = this.video = 0;
-    this.cutHit = this.cutMiss = 0;
+    this.media = this.matte = this.video = this.edge = 0;
+    this.cutHit = this.cutMiss = this.edgeHit = this.edgeMiss = 0;
     this.pageHit = this.pageMiss = this.pageSkip = 0;
   },
   get cutCached(): number { return _cutCache.size; },
   get pageCached(): number { return _pageCache.size; },
+  get edgeCached(): number { return _edgeCache.size; },
 };
 
 function drawMedia(
@@ -934,15 +1081,24 @@ function drawMedia(
   // 太大就不進快取：一張就把別人全擠出去，反而每塊都在重算
   const tooBig = SW * SH > 12_000_000;
 
+  // 貼紙邊：鍵＝內容指紋＋**頁座標**框尺寸——正規化烤圖（edgeBakeSize），
+  // 縮放畫布不重烤；指紋涵蓋整塊 JSON，邊寬邊色立體感變了自動換鍵。
+  // 影片的剪影取第一次看到的影格（blockSig 對 live 內容穩定）——邊是框外一圈實色，
+  // 影格間的差異吃不進來，iOS 也是拿靜態那張當剪影。
+  const edgeOn = (m.matteEdgeWidth ?? 0) > 0 && !!img;
+  if (edgeOn) renderCounters.edge++;
+  const edgeKey = edgeOn
+    ? `edge|${blockSig(b, opts)}|${Math.round(w)}|${Math.round(h)}` : null;
+
   // 這一塊「畫出來的樣子」由什麼決定：來源圖的身分＋幾何＋裝置尺寸。都沒變就整張
   // 重用，每幀只剩一次 drawImage。圖還沒載進來（畫佔位框）不能快取——載好了就換不掉了。
   // 鑰匙＝內容指紋＋裝置尺寸。指紋涵蓋整塊 block 的 JSON，所以新增外觀欄位
   // 不必回來改這裡（見 blockSig 的檔頭）。
   const key = img && !live && !tooBig ? `${blockSig(b, opts)}|${SW}|${SH}` : null;
   const hit = key ? cutCacheGet(key) : undefined;
-  if (hit) {
+  if (hit && (!edgeOn || _edgeCache.has(edgeKey!))) {
     renderCounters.cutHit++;
-    ctx.drawImage(hit, 0, 0, w, h);
+    drawWithEdge(ctx, m, hit, w, h, edgeKey);
     if (!tornOf(m)) drawFrameStroke(ctx, m, w, h);   // 撕紙邊＝邊取代框（同下方主路）
     return;
   }
@@ -952,7 +1108,7 @@ function drawMedia(
   // 逐位不變。其餘都畫進離屏 stage：進快取的自己一張，不進的用共用那張。
   const torn = tornOf(m);
   let stage: HTMLCanvasElement | null = null;
-  if (matte || key || torn) {
+  if (matte || key || torn || edgeOn) {
     if (key) {
       stage = document.createElement("canvas");
       stage.width = SW; stage.height = SH;
@@ -1024,6 +1180,15 @@ function drawMedia(
       sg.drawImage(matte, mc.x * mw, mc.y * mh, mc.w * mw, mc.h * mh, 0, 0, w, h);
       sg.globalCompositeOperation = "source-over";
     }
+    if (edgeOn && edgeKey) {
+      // 貼紙邊的剪影在這裡先烤：**撕紙邊之前**——iOS 的剪影取 source＋matte＋形狀、
+      // 不含撕痕（StickerEdge.layers），兩平台要同一個形。收尾 drawWithEdge 憑同鍵命中；
+      // 上面的 cut-hit 捷徑也只在這份剪影還在快取時才走，走不了就會回到這裡重烤。
+      const bake = edgeBakeSize(w, h);
+      stickerEdge(stage, bake.w, bake.h,
+                  (m.matteEdgeWidth ?? 0) * Math.min(bake.w, bake.h),
+                  hex(m.matteEdgeHex, "FFFFFF"), m.matteEdgeBevel ?? 0, edgeKey);
+    }
     if (torn) {
       // 撕紙邊：烤好的遮罩把照片沿撕痕裁掉，覆蓋層補紙芯白帶＋細影。
       // 靜態圖整組跟著進切圖快取（blockSig 吃整塊 JSON），影片每幀只多兩次 drawImage。
@@ -1066,7 +1231,7 @@ function drawMedia(
       sg.restore();
     }
     if (key) cutCacheSet(key, stage);
-    ctx.drawImage(stage, 0, 0, w, h);
+    drawWithEdge(ctx, m, stage, w, h, edgeKey);
   }
 
   // 撕紙邊開著＝邊取代框，矩形描邊不畫（畫了會浮在被撕掉的缺口上）

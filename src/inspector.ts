@@ -1450,6 +1450,7 @@ export class Inspector {
         this.emit();
       }),
     );
+    this.stickerRows(s, m);
     this.tornRows(s, b, m);
     if (m.assetFileName) {
       // 拉直：轉的是**內容**不是 block（與 iOS 裁切畫面的那個角度同一個欄位）
@@ -1641,6 +1642,42 @@ export class Inspector {
     // 小高：「顆粒拉桿拉了沒什麼反應，那能幹嘛？」。**預設 7 不動**，只是把上面那段
     // 沒作用的路加長到真的看得見（±30/255）。c5 還沒發過版，改範圍不影響任何既有專案。
     slider(__("紙張顆粒"), p.grain, 0, 60, 1, (v) => { m.risoGrain = v; });
+  }
+
+  /** 貼紙邊（2026-08-28 分支收回主線）＝輪廓往外擴一圈實色，讓去背圖／貼圖像模切貼紙。
+   *  與「外框」是兩件事：外框描的是**框**（矩形／橢圓），這條描的是**輪廓**。
+   *  iOS 端 1.2.0 起已出貨（MaskPanel.stickerSection），欄位、預設值、滑桿範圍都照那邊。
+   *  數字欄在這個級距沒用：num 顯示是兩位小數，0.012 會被印成 0.01，所以全用滑桿。 */
+  private stickerRows(s: HTMLElement, m: MediaBlock): void {
+    if (!m.assetFileName) return;
+    const edgeRow = this.row(s, __("貼紙邊"));
+    if (!(m.matteEdgeWidth ?? 0)) {
+      edgeRow.append(this.btn(__("加上"), () => {
+        m.matteEdgeWidth = 0.02;
+        m.matteEdgeHex ??= "FFFFFF";
+        m.matteEdgeBevel ??= 0.6;   // 2026-08-28 小高看樣張定案（邊 0.02＋白＋立體感 0.6）
+        this.rebuild(); this.emit();
+      }));
+      return;
+    }
+    edgeRow.append(this.range(m.matteEdgeWidth ?? 0.02, 0.004, 0.06, 0.002, (v) => {
+      m.matteEdgeWidth = v; this.emit();
+    }));
+    edgeRow.append(this.color(m.matteEdgeHex ?? "FFFFFF", (hexv) => {
+      m.matteEdgeHex = hexv; this.emit();
+    }));
+    edgeRow.append(this.btn(__("移除"), () => {
+      m.matteEdgeWidth = undefined;
+      m.matteEdgeHex = undefined;
+      m.matteEdgeBevel = undefined;
+      this.rebuild(); this.emit();
+    }));
+    // 斜面浮雕：沿輪廓內側一白一灰。貼紙很扁，是「調得很小」的那種浮雕
+    this.row(s, __("立體感")).append(
+      this.range(m.matteEdgeBevel ?? 0, 0, 1, 0.05, (v) => {
+        m.matteEdgeBevel = v > 0 ? v : undefined; this.emit();
+      }),
+    );
   }
 
   /** 撕紙邊（2026-08-31，工具間濾鏡工坊同款邊緣系統）。只動 block 欄位不動變體——

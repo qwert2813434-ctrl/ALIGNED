@@ -7,7 +7,7 @@
 import { Editor } from "./editor";
 import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema";
 import { renderAllPages } from "./core/export";
-import { autoFitText, maskAndStrokeCanvases, renderPageCanvas, renderStage, snugTextWidth, textPrintLines } from "./core/render";
+import { autoFitText, maskAndStrokeCanvases, renderCounters, renderPageCanvas, renderStage, snugTextWidth, textPrintLines } from "./core/render";
 import { doodleCounters, drawDoodle, drawDoodleUncached, type DoodleBlock } from "./core/doodle";
 import { applyRiso, filterSig, parseRisoSig, RISO_DEFAULTS } from "./core/filters";
 import { tornCanvases, tornOf } from "./core/tornedge";
@@ -2583,6 +2583,49 @@ async function run(): Promise<void> {
           rm?.filterKey === "c5" && rm?.risoInks?.[0] === "112233" && rm?.risoPitch === 6.5
           && rm?.tornStyle === "tear" && rm?.tornSides === 5 && rm?.tornAmt === 0.08,
           JSON.stringify({ f: rm?.filterKey, i: rm?.risoInks, p: rm?.risoPitch, t: rm?.tornStyle }));
+  }
+
+  // ── 貼紙邊（matteEdge*，2026-09-03 從 feat/sticker-edge-0828 收回主線）────
+  // 剪影替身＝貼滿框的圓形 alpha canvas（貼圖庫 PNG 那型，沒有遮罩）。
+  // 邊往輪廓外擴＝**框外**要長出實色畫素——這是它跟「外框描邊」的本質差異。
+  {
+    const disc = document.createElement("canvas");
+    disc.width = disc.height = 64;
+    const dg = disc.getContext("2d")!;
+    dg.fillStyle = "#0000FF";
+    dg.beginPath(); dg.arc(32, 32, 32, 0, Math.PI * 2); dg.fill();
+    const p = project([{
+      id: "S", frame: { x: 300, y: 300, w: 400, h: 400 }, rotation: 0, zIndex: 1,
+      locked: false, opacity: 1,
+      content: { type: "image", media: { assetFileName: "s.png", cropRect: { x: 0, y: 0, w: 1, h: 1 },
+        matteEdgeWidth: 0.05, matteEdgeHex: "FF0000", matteEdgeBevel: 0.6 } },
+    }]);
+    p.pageCount = 1;
+    const images = new Map<string, CanvasImageSource>([["s.png", disc]]);
+    const c = renderPageCanvas(p, 0, { transparent: true, images });
+    const g = c.getContext("2d")!;
+    // 圓最右點在框右緣 (700, 500)，邊寬 0.05×400＝20px 往外——掃框外那一條該有紅
+    const band = g.getImageData(702, 500, 16, 1).data;
+    let edgePx = 0;
+    for (let i = 0; i < band.length; i += 4) if (band[i + 3] > 200 && band[i] > 180 && band[i + 2] < 80) edgePx++;
+    // 圓心是圖自己的藍（邊不能蓋到圖上）；框外遠處（邊再往外 60px）仍是透明
+    const mid = g.getImageData(500, 500, 1, 1).data;
+    const far = g.getImageData(780, 500, 1, 1).data;
+    check("貼紙邊：輪廓外長出實色邊、圖不被蓋、更外面仍透明",
+          edgePx >= 10 && mid[2] > 180 && mid[0] < 80 && far[3] === 0,
+          `邊帶紅畫素=${edgePx}/16　圓心=rgb(${mid[0]},${mid[1]},${mid[2]})　遠處α=${far[3]}`);
+    // 同一份再渲一次＝快取命中，不重烤（膨脹＋浮雕是最貴的一項）
+    const missBefore = renderCounters.edgeMiss;
+    renderPageCanvas(p, 0, { transparent: true, images });
+    check("貼紙邊：同內容重渲走快取（edgeMiss 不動）",
+          renderCounters.edgeMiss === missBefore && renderCounters.edgeHit > 0,
+          `miss=${renderCounters.edgeMiss}（前=${missBefore}）　hit=${renderCounters.edgeHit}`);
+    // 存檔 round-trip：三欄位原樣穿透（iOS 1.2.0 起已出貨在寫，這裡是追平驗收）
+    const rp2 = decodeProject(JSON.parse(JSON.stringify(encodeProject(p))));
+    const em = rp2.blocks[0].content.type === "image" ? rp2.blocks[0].content.media : null;
+    check("貼紙邊：存檔 round-trip 欄位原樣",
+          em?.matteEdgeWidth === 0.05 && em?.matteEdgeHex === "FF0000" && em?.matteEdgeBevel === 0.6,
+          JSON.stringify({ w: em?.matteEdgeWidth, x: em?.matteEdgeHex, b: em?.matteEdgeBevel }));
   }
 
   const pass = results.filter((r) => r.ok).length;
