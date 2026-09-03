@@ -96,4 +96,10 @@ LOCAL=$(shasum -a 256 "${DMG}" | cut -d' ' -f1)
 [ "${REMOTE}" = "${LOCAL}" ] || { echo "❌ 遠端 SHA 不符（remote ${REMOTE:0:8} vs local ${LOCAL:0:8}）"; exit 1; }
 
 echo "✅ 已發佈 ${URL}"
-echo "   還要手動做的只剩：改 37 - 工具間/上線/aligned-latest.json 的 version 與 notes（url 不用動）後 push"
+echo "   還要手動做兩件："
+echo "   1. 改 37 - 工具間/上線/aligned-latest.json 的 version 與 notes（url 不用動）後 push"
+echo "   2. 官網更新卡：20 - 網站製作/ALIGNED官網/{zh-Hant,en}/index.html 的「更新與預告」欄"
+echo "      補一張卡（新功能用 .up-card、修 bug 用 .up-card fix、預告用 .up-card soon），"
+echo "      短標題＋2-3 條短句，zh/en 同步，然後 git push"
+echo "      🔴 這條 2026-09-04 才補進清單：STB 官網的卡片曾經停在舊版三週沒人發現，"
+echo "      就是因為這步驟從來不在任何清單上。日報已加落差偵測當保險（事後抓，不代替你寫）"
