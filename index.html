@@ -360,7 +360,7 @@
   /* 數字欄＋拉桿一組（2026-09-05） */
   #inspector .ns { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
   #inspector .ns input[type=range] { flex: 1; min-width: 40px; }
-  #inspector .ns input[type=number] { width: 54px; flex: none; }
+  #inspector .ns input[type=number] { width: 62px; flex: none; }   /* 與單獨的數字欄同寬，側欄才齊 */
   /* 自家選色面板（colorpop.ts）：色票／深淺／標準色／灰階＋任何顏色 */
   #colorpop { position: fixed; z-index: 30; width: 264px; padding: 10px 10px 9px;
               background: color-mix(in srgb, var(--card) 97%, transparent); border: 1px solid var(--line);
@@ -371,7 +371,7 @@
   #colorpop .cp-grid { display: grid; gap: 3px; }
   #colorpop .cp-sw { width: 20px; height: 20px; border-radius: 5px; padding: 0; cursor: pointer;
                      border: 1px solid rgba(0,0,0,.14); }
-  #colorpop .cp-grid .cp-sw { width: 100%; border-radius: 4px; }
+  #colorpop .cp-grid .cp-sw { width: 100%; height: auto; aspect-ratio: 1; border-radius: 4px; }
   #colorpop .cp-sw.on { box-shadow: 0 0 0 2px var(--chrome), 0 0 0 3.5px var(--ink); }
   #colorpop .cp-foot { display: flex; gap: 8px; align-items: center; margin-top: 9px; }
   #colorpop .cp-hex { width: 86px; font: inherit; font-size: 12px; font-variant-numeric: tabular-nums;

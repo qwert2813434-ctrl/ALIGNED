@@ -4,12 +4,14 @@ import { PALETTE } from "./palette";
 // 自家選色面板（2026-09-05 小高：「希望色票裡有標準色，以及我們自己配色的深淺差異」）。
 // WebKit 原生 <input type=color> 的色格改不了，所以入口全部換成這一片；原生選色器只留在
 // 最底下「任何顏色…」那顆（要吸管、要細調的人再進去）。
-// 四區：色票（八顆）→ 深淺（六個彩色各五階）→ 標準色 → 灰階；底下 hex 欄＋任何顏色。
+// 三區：色票（十顆）→ 深淺（十欄各五階，墨／紙兩欄就是灰階）→ 標準色；底下 hex 欄＋任何顏色。
 
 const STANDARD = ["C8102E", "E87722", "F2C230", "6BA539", "2E8B57", "1F9E9E", "2E6DB4", "4B4E9E", "7B4F9D", "C85A8C"];
-const GREYS = ["FFFFFF", "EDEAE0", "D9D9D4", "B3B3AE", "808080", "4D4D4D", "262626", "000000"];
-/** 五階：往白 60%／30%、本色、往黑 25%／50%。 */
+/** 彩色五階：往白 60%／30%、本色、往黑 25%／50%。墨與紙是中性階（一路往白／一路往黑），
+ *  所以深淺格本身就含灰階，不另開一列。 */
 const STEPS: [number, boolean][] = [[0.6, true], [0.3, true], [0, true], [0.25, false], [0.5, false]];
+const INK_STEPS: [number, boolean][] = [[0.75, true], [0.55, true], [0.35, true], [0.15, true], [0, true]];
+const PAPER_STEPS: [number, boolean][] = [[0, true], [0.08, false], [0.2, false], [0.35, false], [0.55, false]];
 
 function mix(hex: string, amt: number, toWhite: boolean): string {
   const t = toWhite ? 255 : 0;
@@ -18,7 +20,10 @@ function mix(hex: string, amt: number, toWhite: boolean): string {
     return Math.round(v + (t - v) * amt).toString(16).padStart(2, "0");
   }).join("").toUpperCase();
 }
-export function shades(hex: string): string[] { return STEPS.map(([a, w]) => (a === 0 ? hex : mix(hex, a, w))); }
+export function shades(hex: string): string[] {
+  const steps = hex === "1A1A1A" ? INK_STEPS : hex === "FFFFFF" ? PAPER_STEPS : STEPS;
+  return steps.map(([a, w]) => (a === 0 ? hex : mix(hex, a, w)));
+}
 
 let pop: HTMLDivElement | null = null;
 let offClose: (() => void) | null = null;
@@ -52,13 +57,12 @@ export function openColorPop(anchor: HTMLElement, cur: string,
   };
   row(__("色票"), PALETTE);
   head(__("深淺"));
+  // 跟上面的色票一格對一格（十欄），方格為主
   const grid = document.createElement("div"); grid.className = "cp-grid";
-  const chroma = PALETTE.filter((h) => h !== "1A1A1A" && h !== "FFFFFF");
-  grid.style.gridTemplateColumns = `repeat(${chroma.length}, 1fr)`;
-  for (let s = 0; s < STEPS.length; s++) for (const h of chroma) grid.append(sw(shades(h)[s]));
+  grid.style.gridTemplateColumns = `repeat(${PALETTE.length}, 1fr)`;
+  for (let s = 0; s < STEPS.length; s++) for (const h of PALETTE) grid.append(sw(shades(h)[s]));
   el.append(grid);
   row(__("標準色"), STANDARD);
-  row(__("灰階"), GREYS);
   const foot = document.createElement("div"); foot.className = "cp-foot";
   const hexIn = document.createElement("input");
   hexIn.type = "text"; hexIn.className = "cp-hex"; hexIn.spellcheck = false; hexIn.value = `#${current}`;

@@ -17,13 +17,20 @@ import { paperScope, snugTextWidth , attachedCanvas } from "./core/render";
 import { ANIM_DUR, ANIM_DUR_MAX, ANIM_HOLD, ANIM_HOLD_MAX, ANIM_STAGE2_DUR, ANIM_STAGE2_SCALE, ANIM_STAGGER, ANIM_STAGGER_MAX, CAROUSEL_INTERVAL, MODEL_SECS_PER_TURN, MODEL_SPIN_DUR, MODEL_TURNS, defaultDur, type AnimDir, type AnimKind, type Stage2 } from "./core/anim";
 import { GUIDE_PRESETS, MODULAR_COMBOS, defaultParams, generateGuides, replaceBatch } from "./core/guidegen";
 import type { GuideGenParams, GuidePreset } from "./core/guidegen";
-import { PALETTE, PAPERS } from "./palette";
+import { PAPERS, QUICK } from "./palette";
 import { openColorPop } from "./colorpop";
 
 /** 產生器每個專案「上次生成的那批」——重生成時只換這批，手動線不動。
  *  存記憶體就好：關掉 App 後舊批就當手動線看待，頂多多按一次刪除。 */
 const GEN_BATCH = new Map<string, { x: number[]; y: number[] }>();
 const GEN_STORE = "align.guidegen";
+
+/** 塗鴉「套用全部」三顆的 icon（15px 線性，與晶片列同語彙）。 */
+const APPLY_ICON = {
+  color: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.2s-4.6 5.2-4.6 8.3a4.6 4.6 0 009.2 0C14.6 8.4 10 3.2 10 3.2z"/></svg>',
+  width: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M3.5 6h13" stroke-width="1"/><path d="M3.5 10h13" stroke-width="2"/><path d="M3.5 14.5h13" stroke-width="3.2"/></svg>',
+  brush: '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 15.5c.4-2.6 1-4 2-5l7.6-7.6 2.5 2.5L8 13c-1 1-2.4 1.6-4.5 2.5z"/><path d="M11.6 4.4l2.5 2.5"/></svg>',
+};
 
 /** 參考線預設的縮圖：generateGuides 的結果縮進 52×52 的框裡畫成 SVG，頁面比例照畫布。
  *  線對到半格（1px 不糊）、貼邊的往內收半格才看得到。 */
@@ -332,12 +339,6 @@ export class Inspector {
       for (const st of d.strokes) fn(st);
       this.emit();
     };
-    // 「套用全部」點下去才現抓目前的筆（setPen 不重畫面板，抓建面板時的 pen 會是舊值）
-    const applyBtn = (fn: (p: NonNullable<ReturnType<NonNullable<typeof dk>["pen"]>>) => void): HTMLButtonElement | null =>
-      active && d && d.strokes.length
-        ? this.btn(__("套用全部"), () => { const p = dk?.pen(); if (p) fn(p); })
-        : null;
-
     const brushRow = this.row(s, __("筆刷"));
     brushRow.append(this.select(
       BRUSH_ORDER.map((k) => [k, __(BRUSHES[k].name) + (k === "soft" ? "（New）" : "")] as [string, string]),
@@ -350,8 +351,6 @@ export class Inspector {
     const stampSp = (st: DoodleBlock["strokes"][number]): void => {
       st.sp = st.brush === "soft" ? softSnapshot() : undefined;
     };
-    const brushApply = applyBtn((p) => applyEach((st) => { st.brush = p.brush; stampSp(st); }));
-    if (brushApply) brushRow.append(brushApply);
     if (this.hooks.openBrushPrefs) {
       const gear = document.createElement("button");
       gear.className = "act";
@@ -366,16 +365,26 @@ export class Inspector {
       dk?.setPen({ color: v, eraser: false });
       if (live) applyEach((st) => { st.color = v; });
     }));
-    const colorApply = applyBtn((p) => applyEach((st) => { st.color = p.color; }));
-    if (colorApply) colorRow.append(colorApply);
-
-    const widthRow = this.row(s, __("筆寬"));
-    widthRow.append(this.num(pen.width, { min: 1, max: 200, step: 1 }, (v) => {
+    const setWidth = (v: number): void => {
       dk?.setPen({ width: v, eraser: false });
       if (live) applyEach((st) => { st.w = v / short; });
-    }));
-    const widthApply = applyBtn((p) => applyEach((st) => { st.w = p.width / short; }));
-    if (widthApply) widthRow.append(widthApply);
+    };
+    this.row(s, __("筆寬")).append(this.numSlider(pen.width, { min: 1, max: 200, step: 1 }, setWidth, setWidth));
+    // 「套用全部」集中成一列三顆 icon（2026-09-05 小高：顏色列被它擠到色票一排只剩兩顆）。
+    // 點下去才現抓目前的筆（setPen 不重畫面板，抓建面板時的 pen 會是舊值）。
+    if (active && d && d.strokes.length) {
+      const ap = (icon: string, title: string,
+                  fn: (p: NonNullable<ReturnType<NonNullable<typeof dk>["pen"]>>) => void): HTMLButtonElement => {
+        const btn = this.iconBtn(icon, title, () => { const p = dk?.pen(); if (p) fn(p); });
+        btn.classList.add("wide");
+        return btn;
+      };
+      this.row(s, __("套用全部")).append(
+        ap(APPLY_ICON.color, __("目前顏色套到全部筆畫"), (p) => applyEach((st) => { st.color = p.color; })),
+        ap(APPLY_ICON.width, __("目前筆寬套到全部筆畫"), (p) => applyEach((st) => { st.w = p.width / short; })),
+        ap(APPLY_ICON.brush, __("目前筆刷套到全部筆畫"), (p) => applyEach((st) => { st.brush = p.brush; stampSp(st); })),
+      );
+    }
     if (!b || !d) return;
 
     const play = (): void => this.hooks.playAnim?.();
@@ -1054,8 +1063,21 @@ export class Inspector {
       this.num(Math.round(b.frame.w), { step: 1, disabled: !editable }, (v) => { b.frame.w = v; this.emit(); }),
       this.num(Math.round(b.frame.h), { step: 1, disabled: !editable }, (v) => { b.frame.h = v; this.emit(); }),
     );
+    if (editable) {
+      // 縮放拉桿（2026-09-05 小高：「尺寸跟旋轉最需要拉桿」）：以拖動起點的尺寸為 100%，
+      // 等比、以中心為錨（跟角把手同語意）；放手重建＝下一次再從 100% 起
+      const w0 = b.frame.w, h0 = b.frame.h, cx = b.frame.x + w0 / 2, cy = b.frame.y + h0 / 2;
+      const scaleTo = (pct: number): void => {
+        const w = Math.max(1, w0 * pct / 100), h = Math.max(1, h0 * pct / 100);
+        b.frame.w = w; b.frame.h = h; b.frame.x = cx - w / 2; b.frame.y = cy - h / 2;
+        this.emit();
+      };
+      this.row(s, __("縮放")).append(this.numSlider(100, { min: 10, max: 400, step: 1 },
+        scaleTo, (v) => { scaleTo(v); this.rebuild(); }));
+    }
     this.row(s, __("旋轉")).append(
-      this.num(b.rotation, { min: -180, max: 180, step: 1 }, (v) => { b.rotation = v; this.emit(); }),
+      this.numSlider(b.rotation, { min: -180, max: 180, step: 1 },
+        (v) => { b.rotation = v; this.emit(); }, (v) => { b.rotation = v; this.emit(); }),
     );
     this.row(s, __("不透明")).append(
       this.range(b.opacity, 0, 1, 0.05, (v) => { b.opacity = v; this.emit(); }),
@@ -1186,14 +1208,14 @@ export class Inspector {
       (v) => { t.fontWeightValue = Number(v); this.emit(true); },
     ));
     this.row(s, __("字級")).append(
-      this.num(t.fontSize ?? 49, { min: 8, max: 500, step: 1 }, (v) => { t.fontSize = v; this.emit(true); }),
+      this.numSlider(t.fontSize ?? 49, { min: 8, max: 500, step: 1 }, (v) => { t.fontSize = v; this.emit(true); }, (v) => { t.fontSize = v; this.emit(true); }),
     );
     // 字距用 em 制（新模型優先）；行高倍數 <1 可壓緊，這是 iOS 舊點制做不到的
     this.row(s, __("字距 em")).append(
-      this.num(t.kerningEm ?? 0, { min: -0.05, max: 1.5, step: 0.01 }, (v) => { t.kerningEm = v; this.emit(true); }),
+      this.numSlider(t.kerningEm ?? 0, { min: -0.05, max: 1.5, step: 0.01 }, (v) => { t.kerningEm = v; this.emit(true); }, (v) => { t.kerningEm = v; this.emit(true); }),
     );
     this.row(s, __("行高 ×")).append(
-      this.num(t.lineHeightMultiple ?? 1, { min: 0.7, max: 2, step: 0.05 }, (v) => { t.lineHeightMultiple = v; this.emit(true); }),
+      this.numSlider(t.lineHeightMultiple ?? 1, { min: 0.7, max: 2, step: 0.05 }, (v) => { t.lineHeightMultiple = v; this.emit(true); }, (v) => { t.lineHeightMultiple = v; this.emit(true); }),
     );
 
     const seg = this.row(s, __("對齊"));
@@ -1213,7 +1235,10 @@ export class Inspector {
 
     if (!t.vertical) {
       this.row(s, __("段落間距")).append(
-        this.num(t.paragraphSpacingEm ?? 0, { min: 0, max: 3, step: 0.1 }, (v) => {
+        this.numSlider(t.paragraphSpacingEm ?? 0, { min: 0, max: 3, step: 0.1 }, (v) => {
+          t.paragraphSpacingEm = v > 0 ? v : undefined;
+          this.emit(true);
+        }, (v) => {
           t.paragraphSpacingEm = v > 0 ? v : undefined;
           this.emit(true);
         }),
@@ -1332,7 +1357,7 @@ export class Inspector {
     if (sh.kind === "line") {
       // 下限 0.25、一格 0.25——與 iOS 端 2026-08-01 的髮絲線修正同規格
       this.row(s, __("粗細")).append(
-        this.num(sh.lineWidth ?? 8, { min: 0.25, max: 60, step: 0.25 }, (v) => { sh.lineWidth = v; this.emit(); }),
+        this.numSlider(sh.lineWidth ?? 8, { min: 0.25, max: 60, step: 0.25 }, (v) => { sh.lineWidth = v; this.emit(); }, (v) => { sh.lineWidth = v; this.emit(); }),
       );
     }
     this.wrapControls(s, () => sh);
@@ -1466,7 +1491,7 @@ export class Inspector {
           colorRow.querySelectorAll("button").forEach((n) => { (n as HTMLButtonElement).disabled = true; });
           void this.hooks.fillColor!(b, hex).finally(() => this.rebuild());
         };
-        for (const hex of PALETTE) {
+        for (const hex of QUICK) {
           const n = document.createElement("button");
           n.className = "texsw";
           n.title = `#${hex}`;
@@ -1530,7 +1555,11 @@ export class Inspector {
     }));
     this.row(s, __("外框寬")).append(
       // 短邊的分數制——所以跨畫布尺寸會等比（與圖形線的點數制不同，是 iOS 的原始設計）
-      this.num(m.strokeWidth ?? 0, { min: 0, max: 0.15, step: 0.005 }, (v) => {
+      this.numSlider(m.strokeWidth ?? 0, { min: 0, max: 0.15, step: 0.005 }, (v) => {
+        m.strokeWidth = v > 0 ? v : undefined;
+        if (v > 0 && !m.strokeHex) m.strokeHex = "FFFFFF";
+        this.emit();
+      }, (v) => {
         m.strokeWidth = v > 0 ? v : undefined;
         if (v > 0 && !m.strokeHex) m.strokeHex = "FFFFFF";
         this.emit();
@@ -1541,7 +1570,10 @@ export class Inspector {
     if (m.assetFileName) {
       // 拉直：轉的是**內容**不是 block（與 iOS 裁切畫面的那個角度同一個欄位）
       this.row(s, __("拉直")).append(
-        this.num(m.rotationDegrees ?? 0, { min: -45, max: 45, step: 0.5 }, (v) => {
+        this.numSlider(m.rotationDegrees ?? 0, { min: -45, max: 45, step: 0.5 }, (v) => {
+          m.rotationDegrees = v !== 0 ? v : undefined;
+          this.emit();
+        }, (v) => {
           m.rotationDegrees = v !== 0 ? v : undefined;
           this.emit();
         }),
@@ -1897,7 +1929,7 @@ export class Inspector {
   /** 色票列（2026-09-05 小高定案「傳統色」）：共用色票＋自訂（原生選色器透明疊在虛線那顆上）。
    *  取代以前直接露一顆 <input type=color>——那顆點開是 WebKit 的螢光色格，跟 App 的色沒關係。
    *  `cur` 對得上就亮那顆；自訂那顆帶目前色，點開就從目前色出發。 */
-  private swatches(cur: string, set: (hexNoHash: string) => void, list: readonly string[] = PALETTE): HTMLDivElement {
+  private swatches(cur: string, set: (hexNoHash: string) => void, list: readonly string[] = QUICK): HTMLDivElement {
     const grid = document.createElement("div");
     grid.className = "swgrid";
     const curU = cur.toUpperCase();
