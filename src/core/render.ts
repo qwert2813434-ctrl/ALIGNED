@@ -782,6 +782,29 @@ export function maskAndStrokeCanvases(
   return { mask, stroke };
 }
 
+/** 大圖的中解析度替身（2026-09-05 第二批卡頓「Mac 不去背大圖每幀縮整張」）：12MP 原圖每次重切
+ *  （縮放每一級、快取失效）都得從整張 downsample——headless 實測一張 ~15ms、三張一格 44ms，
+ *  拉縮放時就是 20fps。長邊 > 3000 的來源存一份長邊 2560 的副本，這一格要的來源畫素
+ *  （裝置尺寸÷裁切比例）用得下時就從它切；匯出 2×／放很大要更多畫素就回原圖，畫質不打折。
+ *  iOS displayCache 1600px 是同一件事。LRU 6 張（2560×1920 一張 20MB）。 */
+const _midRes = new Map<number, { c: HTMLCanvasElement; src: CanvasImageSource }>();
+const MID_LONG = 2560, MID_MAX = 6;
+function midRes(img: CanvasImageSource, need: number): CanvasImageSource {
+  const { w, h } = naturalSize(img);
+  const long = Math.max(w, h);
+  if (!(long > 3000) || !(need <= MID_LONG)) return img;
+  const id = srcId(img);
+  const hit = _midRes.get(id);
+  if (hit) { _midRes.delete(id); _midRes.set(id, hit); return hit.c; }
+  const k = MID_LONG / long;
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+  c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+  if (_midRes.size >= MID_MAX) _midRes.delete(_midRes.keys().next().value as number);
+  _midRes.set(id, { c, src: img });
+  return c;
+}
+
 /** 去背合成用的離屏畫布。重用一張——拖曳時每格都會進來，每格 new 一張會頓。 */
 let _stage: HTMLCanvasElement | null = null;
 function mediaStage(w: number, h: number): HTMLCanvasElement {
@@ -1210,16 +1233,20 @@ function drawMedia(
   }
 
   if (img) {
-    const { w: iw, h: ih } = naturalSize(img);
     // ⚠️ cropRect 的 (0,0,1,1) 是「未曾裁切」的哨兵值，**不可照字面拉伸**——
     // 要解成置中的 aspect-fill，否則換圖後會變形、裁切介面也會出現零餘裕的死狀態。
-    const c = (m.cropRect.x === 0 && m.cropRect.y === 0 && m.cropRect.w === 1 && m.cropRect.h === 1)
-      ? aspectFillCrop(iw, ih, w, h)
-      : m.cropRect;
+    const sentinel = m.cropRect.x === 0 && m.cropRect.y === 0 && m.cropRect.w === 1 && m.cropRect.h === 1;
+    const n0 = naturalSize(img);
+    const c0 = sentinel ? aspectFillCrop(n0.w, n0.h, w, h) : m.cropRect;
+    // 大圖走中解析度替身（2026-09-05 第二批卡頓）：這一格要的來源畫素＝裝置尺寸÷裁切比例，
+    // 替身夠用就從替身切。裁切比例不變，所以下面的數學一個字不用改。影片即時影格不替。
+    const src = live ? img : midRes(img, Math.max(SW / c0.w, SH / c0.h));
+    const { w: iw, h: ih } = naturalSize(src);
+    const c = sentinel ? aspectFillCrop(iw, ih, w, h) : m.cropRect;
     const deg = m.rotationDegrees ?? 0;
     if (!deg) {
       // 沒拉直（絕大多數）＝原本那條路，逐位不變——不能讓沒轉過的圖有任何位移
-      target.drawImage(img, c.x * iw, c.y * ih, c.w * iw, c.h * ih, 0, 0, w, h);
+      target.drawImage(src, c.x * iw, c.y * ih, c.w * iw, c.h * ih, 0, 0, w, h);
     } else {
       // 拉直：把**放大後的整張圖**繞自己的中心轉，再平移讓裁切區中心落到視窗中心。
       // 平移量本身也要被同一個角度轉過（那是螢幕空間的位移）——iOS 修過的 parity bug，
@@ -1233,7 +1260,7 @@ function drawMedia(
       target.clip();
       target.translate(w / 2 - (cs * ax - sn * ay), h / 2 - (sn * ax + cs * ay));
       target.rotate(r);
-      target.drawImage(img, -sw / 2, -sh / 2, sw, sh);
+      target.drawImage(src, -sw / 2, -sh / 2, sw, sh);
       target.restore();
     }
   } else if (opts.placeholderForMissingMedia) {

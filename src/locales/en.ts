@@ -105,6 +105,8 @@ export const en: Record<string, string> = {
   "貼上失敗：{msg}": "Paste failed: {msg}",
   "透明": "Transparent",
   "只留文字": "Text only",
+  "只留文字塗鴉": "Text & doodles",
+  "只留文字塗鴉：藏起圖片與影片，出字幕／片尾疊層": "Text & doodles only: hide images and videos, export a subtitle / credits overlay",
   "_透明": "_alpha",
   "透明背景：跳過頁底色與紙張，出 RGBA PNG（給剪輯疊層用）":
     "Transparent background: skip the page color and paper, export RGBA PNG (for editing overlays)",

@@ -328,7 +328,8 @@ async function loadAssets(
   const entries = [...assetNames(p)];
   previewVariants.clear(); c5Last.clear(); bakeSrcSent.clear();
   bakePending.clear(); bakeInflight.clear(); bakeHealed.clear(); bakeEpoch++;   // 換專案：舊烤圖全作廢
-  _bakeWorker?.postMessage({ type: "reset" });              // 工人那頭的來源像素一起放（~百MB 級）
+  _bakeWorkers.quick?.postMessage({ type: "reset" });        // 工人那頭的來源像素一起放（~百MB 級）
+  _bakeWorkers.full?.postMessage({ type: "reset" });
   const raw = new Map<string, HTMLImageElement>();
   await Promise.all([...new Set(entries.map(([, e]) => e.file))].map((file) => new Promise<void>((done) => {
     const img = new Image();
@@ -999,7 +1000,12 @@ const previewVariants = new Set<string>();
 // 來源像素每檔寄一次、之後只寄 sig；latest-wins 丟中間值；回來 putImageData 換變體。
 // 不走 OffscreenCanvas 顯示畫布——worker 的 commit 到 placeholder 是非同步的，
 // 匯出與整頁快取要「同步讀到剛烤好的內容」，位圖必須落在主執行緒自己的畫布上。
-let _bakeWorker: Worker | null = null;
+// 兩條車道（2026-09-05）：quick（720 拖曳預覽）與 full（2560 全清）各一隻 worker。
+// 開檔會替每張 c5 圖排一次 full（一張 438ms），拖曳中的 quick 排在同一隻工人後面＝
+// 「開檔幾秒內拖滑桿不跟手」（第二批卡頓）。分開之後 quick 永遠只等自己那條的上一格（~140ms）。
+// skey 本來就帶尺寸（`檔|720`／`檔|2560`），來源像素各寄各的，帳（inflight／pending）不必分。
+const _bakeWorkers: { quick: Worker | null; full: Worker | null } = { quick: null, full: null };
+const laneOf = (skey: string): "quick" | "full" => (skey.endsWith("|2560") ? "full" : "quick");
 const bakeSrcSent = new Set<string>();
 const bakePending = new Map<string, { sig: string; tier: "quick" | "full" }>();
 const bakeInflight = new Set<string>();
@@ -1020,8 +1026,8 @@ function sendBakeSrc(skey: string, img: HTMLImageElement, size: number): void {
   cx.drawImage(img, 0, 0, c.width, c.height);
   const d = cx.getImageData(0, 0, c.width, c.height);
   c.remove();
-  bakeWorker().postMessage({ type: "bakesrc", skey, w: d.width, h: d.height, buf: d.data.buffer },
-                           [d.data.buffer]);
+  bakeWorker(laneOf(skey)).postMessage({ type: "bakesrc", skey, w: d.width, h: d.height, buf: d.data.buffer },
+                                       [d.data.buffer]);
   bakeSrcSent.add(skey);
 }
 
@@ -1034,11 +1040,12 @@ function bakeC5(f: string, img: HTMLImageElement, tier: "quick" | "full", sig: s
   if (!bakeSrcSent.has(skey)) sendBakeSrc(skey, img, size);
   if (bakeInflight.has(skey)) { bakePending.set(skey, { sig, tier }); return; }   // latest-wins
   bakeInflight.add(skey);
-  bakeWorker().postMessage({ type: "bake", skey, sig, seq: bakeEpoch, tier });
+  bakeWorker(tier).postMessage({ type: "bake", skey, sig, seq: bakeEpoch, tier });
 }
 
-function bakeWorker(): Worker {
-  if (_bakeWorker) return _bakeWorker;
+function bakeWorker(lane: "quick" | "full"): Worker {
+  const had = _bakeWorkers[lane];
+  if (had) return had;
   const w = new Worker(new URL("./filterworker.ts", import.meta.url), { type: "module" });
   // 調整尾巴可以掛在 a1／b1 這些吃查找表的濾鏡後面（"a1~…"），工人沒材質會炸——c5 本來不用
   w.postMessage({ type: "assets", assets: filterAssets });
@@ -1110,10 +1117,15 @@ function bakeWorker(): Worker {
   w.onerror = (ev) => {
     console.warn("c5 烤圖 worker 掛了，重建", ev.message ?? ev);
     try { w.terminate(); } catch { /* 已經死了 */ }
-    if (_bakeWorker === w) _bakeWorker = null;
-    bakeInflight.clear(); bakePending.clear(); bakeHealed.clear(); bakeSrcSent.clear();
+    if (_bakeWorkers[lane] === w) _bakeWorkers[lane] = null;
+    // 只清這條車道的帳（skey 帶尺寸，認得出來）；另一條照跑
+    const mine = (k: string): boolean => laneOf(k) === lane;
+    for (const k of [...bakeInflight]) if (mine(k)) bakeInflight.delete(k);
+    for (const k of [...bakePending.keys()]) if (mine(k)) bakePending.delete(k);
+    for (const k of [...bakeSrcSent]) if (mine(k)) bakeSrcSent.delete(k);
+    bakeHealed.clear();
   };
-  _bakeWorker = w;
+  _bakeWorkers[lane] = w;
   return w;
 }
 
@@ -1530,9 +1542,12 @@ function exportOpts() {
   return {
     images: assets.variants, mattes: assets.variants, models, placeholderForMissingMedia: true, scale,
     transparent: true,
+    // 塗鴉也留（2026-09-05）：手畫的箭頭／圈註跟字幕一樣是疊層材料。小高回報「塗鴉有時不顯示在
+    // 匯出預覽」，headless 重演整條渲染路（perftest.ts）只有這一條會藏塗鴉——透明一開、
+    // 「只留文字」預設是開的（還記在本機），塗鴉就跟照片一起被藏掉。
     onlyBlockIds: exportPng.textOnly && current
       ? new Set(current.blocks
-          .filter((b) => b.content.type === "text" || b.content.type === "textFlow")
+          .filter((b) => b.content.type === "text" || b.content.type === "textFlow" || b.content.type === "doodle")
           .map((b) => b.id))
       : undefined,
   };
@@ -2330,7 +2345,7 @@ const alphaBtn = $<HTMLButtonElement>("#alphaBtn");
 const textOnlyBtn = $<HTMLButtonElement>("#textOnlyBtn");
 const scaleBtn = $<HTMLButtonElement>("#scaleBtn");
 alphaBtn.textContent = __("透明");
-textOnlyBtn.textContent = __("只留文字");
+textOnlyBtn.textContent = __("只留文字塗鴉");
 
 function syncPngOpts(): void {
   alphaBtn.classList.toggle("on", exportPng.alpha);

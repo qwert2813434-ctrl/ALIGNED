@@ -1131,6 +1131,24 @@ async function run(): Promise<void> {
       distributeGroup(two, "horizontal");
       check("群組：兩個不做分布（沒有東西可以分）", near(two[1].frame.x, 400), `x=${two[1].frame.x}`);
     }
+    {
+      // 旋轉 90° 的三段（小高「橫躺齊行」）：等距分布要看**旋轉後的外接框**（2026-09-05）
+      const mk = (id: string, x: number, w: number, h: number): Block => ({
+        id, frame: { x, y: 100, w, h }, rotation: 90, zIndex: 0, locked: false, opacity: 1,
+        content: { type: "shape", shape: { kind: "rectangle" } as never },
+      });
+      // 轉 90° 後畫面上的寬＝frame.h：三段 h 分別 100／300／100，畫面寬 100／300／100
+      const bs = [mk("r1", 0, 20, 100), mk("r2", 200, 20, 300), mk("r3", 700, 20, 100)];
+      distributeGroup(bs, "horizontal");
+      const rb = (b: Block) => rotatedBounds(b.frame, b.rotation);
+      const g1 = rb(bs[1]).x - (rb(bs[0]).x + rb(bs[0]).w);
+      const g2 = rb(bs[2]).x - (rb(bs[1]).x + rb(bs[1]).w);
+      check("等距分布：轉 90° 的段用旋轉外接框算間隙", Math.abs(g1 - g2) < 0.01, `g1=${g1.toFixed(2)} g2=${g2.toFixed(2)}`);
+      check("等距分布：頭尾不動", bs[0].frame.x === 0 && bs[2].frame.x === 700);
+      alignGroup(bs, "top");
+      const tops = bs.map((b) => rb(b).y);
+      check("對齊頂：轉 90° 的段用旋轉外接框對齊", Math.abs(tops[0] - tops[1]) < 0.01 && Math.abs(tops[1] - tops[2]) < 0.01, tops.map((v) => v.toFixed(1)).join());
+    }
 
     // (d) 框選：空白處拖曳選出範圍內的元件
     {

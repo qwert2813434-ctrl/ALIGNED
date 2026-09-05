@@ -3,9 +3,16 @@
 // 兩條與 iOS 一致的規則：
 // - **對齊的基準是選取集合自己的外框**（不是頁面）——「把這幾個東西對齊」講的是彼此。
 // - **分布是等距（邊到邊的間隙相等），兩端不動**，所以至少要三個才有意義。
-// 旋轉在 v1 忽略（用各自的 frame，不用旋轉外接框），與 iOS 現況相同。
+// 旋轉（2026-09-05 起）：一律用**旋轉後的外接框**算，再把差值平移到 frame 上——
+// 小高的「橫躺齊行」專案九段轉 90° 的文字按「等距分布 水平」怎麼都分不均，就是 v1
+// 拿未旋轉的 frame（轉 90° 後 frame 的 w 其實是畫面上的高）在算。沒轉的外接框＝frame，
+// 舊行為一個 px 不動。iOS EditorViewModel+Group 同修。
 
 import { renumberZ, type Block, type Project, type Rect } from "./schema";
+import { rotatedBounds } from "./geometry";
+
+/** 這個 block 在畫面上真正佔的框（旋轉後的軸對齊外接框；沒轉＝frame）。 */
+const box = (b: Block): Rect => (b.rotation ? rotatedBounds(b.frame, b.rotation) : b.frame);
 
 export type GroupAlign = "left" | "hCenter" | "right" | "top" | "vCenter" | "bottom";
 export type GroupAxis = "horizontal" | "vertical";
@@ -15,27 +22,30 @@ export function boundingBox(blocks: Block[]): Rect | null {
   if (!blocks.length) return null;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const b of blocks) {
-    x0 = Math.min(x0, b.frame.x); y0 = Math.min(y0, b.frame.y);
-    x1 = Math.max(x1, b.frame.x + b.frame.w); y1 = Math.max(y1, b.frame.y + b.frame.h);
+    const f = box(b);
+    x0 = Math.min(x0, f.x); y0 = Math.min(y0, f.y);
+    x1 = Math.max(x1, f.x + f.w); y1 = Math.max(y1, f.y + f.h);
   }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
 /** 對齊到集合外框的某一邊／中線。鎖定的略過。 */
 export function alignGroup(blocks: Block[], edge: GroupAlign): void {
-  const box = boundingBox(blocks);
-  if (!box || blocks.length < 2) return;
+  const bbox = boundingBox(blocks);
+  if (!bbox || blocks.length < 2) return;
   for (const b of blocks) {
     if (b.locked) continue;
-    const f = b.frame;
+    const f = box(b);   // 旋轉後的外接框；算出它該去哪，再把差值平移到 frame
+    let nx = f.x, ny = f.y;
     switch (edge) {
-      case "left":    f.x = box.x; break;
-      case "hCenter": f.x = box.x + box.w / 2 - f.w / 2; break;
-      case "right":   f.x = box.x + box.w - f.w; break;
-      case "top":     f.y = box.y; break;
-      case "vCenter": f.y = box.y + box.h / 2 - f.h / 2; break;
-      case "bottom":  f.y = box.y + box.h - f.h; break;
+      case "left":    nx = bbox.x; break;
+      case "hCenter": nx = bbox.x + bbox.w / 2 - f.w / 2; break;
+      case "right":   nx = bbox.x + bbox.w - f.w; break;
+      case "top":     ny = bbox.y; break;
+      case "vCenter": ny = bbox.y + bbox.h / 2 - f.h / 2; break;
+      case "bottom":  ny = bbox.y + bbox.h - f.h; break;
     }
+    b.frame.x += nx - f.x; b.frame.y += ny - f.y;
   }
 }
 
@@ -48,18 +58,19 @@ export function distributeGroup(blocks: Block[], axis: GroupAxis): void {
   const horiz = axis === "horizontal";
   const lead = (f: Rect) => (horiz ? f.x : f.y);
   const size = (f: Rect) => (horiz ? f.w : f.h);
-  const sorted = [...blocks].sort((a, b) => lead(a.frame) - lead(b.frame));
+  const sorted = [...blocks].sort((a, b) => lead(box(a)) - lead(box(b)));
 
-  const first = sorted[0].frame, last = sorted[sorted.length - 1].frame;
+  const first = box(sorted[0]), last = box(sorted[sorted.length - 1]);
   const span = lead(last) + size(last) - lead(first);
-  const total = sorted.reduce((sum, b) => sum + size(b.frame), 0);
+  const total = sorted.reduce((sum, b) => sum + size(box(b)), 0);
   const gap = (span - total) / (sorted.length - 1);
 
   let cursor = lead(first) + size(first) + gap;
   for (let i = 1; i < sorted.length - 1; i++) {
-    const f = sorted[i].frame;
+    const f = box(sorted[i]);
     if (!sorted[i].locked) {
-      if (horiz) f.x = cursor; else f.y = cursor;
+      // 外接框該落在 cursor；差值平移到 frame（沒轉＝直接就是 frame.x／y）
+      if (horiz) sorted[i].frame.x += cursor - f.x; else sorted[i].frame.y += cursor - f.y;
     }
     cursor += size(f) + gap;
   }
