@@ -355,6 +355,32 @@
   /* 小顆色票（文字／圖形／塗鴉／頁面背景的顏色列，2026-09-05）：圓形 26px，選中＝墨色環 */
   .texsw.swsm { width: 26px; height: 26px; border-radius: 50%; }
   .texsw.swsm.on { border-color: transparent; box-shadow: 0 0 0 2px var(--chrome), 0 0 0 3.5px var(--ink); }
+  /* 顏色鈕（陰影色／底色／外框色／貼紙邊／孔版油墨）：點開自家選色面板 */
+  .cchip { width: 34px; height: 22px; padding: 0; border: 1px solid rgba(0,0,0,.18); border-radius: 5px; cursor: pointer; }
+  /* 數字欄＋拉桿一組（2026-09-05） */
+  #inspector .ns { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+  #inspector .ns input[type=range] { flex: 1; min-width: 40px; }
+  #inspector .ns input[type=number] { width: 54px; flex: none; }
+  /* 自家選色面板（colorpop.ts）：色票／深淺／標準色／灰階＋任何顏色 */
+  #colorpop { position: fixed; z-index: 30; width: 264px; padding: 10px 10px 9px;
+              background: color-mix(in srgb, var(--card) 97%, transparent); border: 1px solid var(--line);
+              border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.22); backdrop-filter: blur(12px); }
+  #colorpop .cp-h { font-size: 10.5px; letter-spacing: .12em; color: var(--ink2); margin: 7px 0 4px; }
+  #colorpop .cp-h:first-child { margin-top: 0; }
+  #colorpop .cp-row { display: flex; flex-wrap: wrap; gap: 4px; }
+  #colorpop .cp-grid { display: grid; gap: 3px; }
+  #colorpop .cp-sw { width: 20px; height: 20px; border-radius: 5px; padding: 0; cursor: pointer;
+                     border: 1px solid rgba(0,0,0,.14); }
+  #colorpop .cp-grid .cp-sw { width: 100%; border-radius: 4px; }
+  #colorpop .cp-sw.on { box-shadow: 0 0 0 2px var(--chrome), 0 0 0 3.5px var(--ink); }
+  #colorpop .cp-foot { display: flex; gap: 8px; align-items: center; margin-top: 9px; }
+  #colorpop .cp-hex { width: 86px; font: inherit; font-size: 12px; font-variant-numeric: tabular-nums;
+                      border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px;
+                      background: var(--card); color: var(--ink); }
+  #colorpop .cp-any { position: relative; font-size: 12px; color: var(--ink2); cursor: pointer;
+                      padding: 2px 8px; border: 1px dashed var(--line); border-radius: 6px; }
+  #colorpop .cp-any:hover { color: var(--ink); }
+  #colorpop .cp-any input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
   /* 色票／材質票要換行。檢視器只有 252px 寬，扣掉左右內距與 52px 的欄名剩約 168px＝
      一排放得下四顆；不換行的話整排會溢出面板，**最後那顆自訂顏色點不到**
      （2026-09-01 小高回報）。容器自己 flex-wrap，欄名還是留在左邊那一欄。 */

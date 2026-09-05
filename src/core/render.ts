@@ -404,6 +404,8 @@ export interface StageOverlay {
   marquee?: Rect;
   /** 把專案裡的使用者參考線藏起來（只是看不到，不會刪掉）。 */
   hideProjectGuides?: boolean;
+  /** 參考線產生器的預覽（虛線、淡一階）——「按下生成會長出什麼」畫在整個版面上，不只縮圖。 */
+  previewGuides?: { x: number[]; y: number[] };
   /** 手把（專案座標，旋轉後的真實位置），固定螢幕尺寸。
    *  無 bar＝圓點（角，等比縮放）；bar＝長條（邊，裁切）——兩種角色不同，長相就要不同。 */
   handles?: { x: number; y: number; bar?: "v" | "h" }[];
@@ -467,6 +469,22 @@ export function renderStage(
     ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(stageW, gy); ctx.stroke();
   }
   ctx.restore();
+  if (overlay.previewGuides && (overlay.previewGuides.x.length || overlay.previewGuides.y.length)) {
+    const pg = overlay.previewGuides;
+    ctx.save();
+    ctx.strokeStyle = "rgba(38,153,255,0.55)";
+    ctx.lineWidth = px;
+    ctx.setLineDash([6 * px, 4 * px]);
+    for (const gx of pg.x) {
+      for (let i = 0; i < project.pageCount; i++) {
+        if (opts.viewRect && !intersects(pageRect(project, i), opts.viewRect)) continue;
+        const x = i * project.canvasWidth + gx;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, project.pageHeight); ctx.stroke();
+      }
+    }
+    for (const gy of pg.y) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(stageW, gy); ctx.stroke(); }
+    ctx.restore();
+  }
 
   for (const g of overlay.guides ?? []) {
     ctx.save();

@@ -18,6 +18,7 @@ import { ANIM_DUR, ANIM_DUR_MAX, ANIM_HOLD, ANIM_HOLD_MAX, ANIM_STAGE2_DUR, ANIM
 import { GUIDE_PRESETS, MODULAR_COMBOS, defaultParams, generateGuides, replaceBatch } from "./core/guidegen";
 import type { GuideGenParams, GuidePreset } from "./core/guidegen";
 import { PALETTE, PAPERS } from "./palette";
+import { openColorPop } from "./colorpop";
 
 /** 產生器每個專案「上次生成的那批」——重生成時只換這批，手動線不動。
  *  存記憶體就好：關掉 App 後舊批就當手動線看待，頂多多按一次刪除。 */
@@ -181,6 +182,8 @@ export interface InspectorHooks {
   guides: {
     hidden: () => boolean;
     toggleHidden: () => void;
+    /** 產生器預覽（虛線畫在整個版面）；null＝清掉。 */
+    preview?: (g: { x: number[]; y: number[] } | null) => void;   // 可選：自測的假 hooks 沒有
     add: (axis: "x" | "y") => void;
     remove: (axis: "x" | "y", index: number) => void;
     /** 鎖住＝畫布上滑鼠碰不到參考線（線還在、吸附照舊）。 */
@@ -230,6 +233,8 @@ export class Inspector {
   /** 工具列的 icon 開關。回傳目前狀態，讓殼層去點亮按鈕。 */
   setPanel(p: SidePanel): SidePanel {
     this.panel = this.panel === p ? "none" : p;
+    // 面板換掉／收起＝版面上的產生器預覽跟著清（只有參考線面板開著才畫）
+    if (this.panel !== "guides") this.hooks.guides.preview?.(null);
     this.rebuild();
     this.el.scrollTop = 0;   // 換面板＝換內容，從頭看
     return this.panel;
@@ -767,9 +772,12 @@ export class Inspector {
     const save = (patch: Partial<Stored>): void => {
       localStorage.setItem(GEN_STORE, JSON.stringify({ preset, over, ...patch }));
     };
-    const setOver = (k: keyof GuideGenParams, v: number | string): void => {
+    const curParams = (): GuideGenParams => ({ ...defaultParams(W, H), ...over });
+    // 拉桿拖動中只更新版面預覽與縮圖（不重建面板——重建會把正在拖的拉桿拆掉）；放手才重建
+    const setOver = (k: keyof GuideGenParams, v: number | string, live = false): void => {
       (over as Record<string, number | string>)[k] = v;
       save({ over });
+      if (live) { showPreview(preset); refreshThumb(); return; }
       this.rebuild();
     };
 
@@ -783,6 +791,17 @@ export class Inspector {
     const cur = document.createElement("span");
     cur.textContent = labels[preset];
     this.row(gs, __("產生器")).append(cur);
+    // 版面預覽（2026-09-05 小高：「不能只在縮圖上，要在整個版面上預覽」）：選中那組一直以虛線
+    // 畫在畫布上，滑過別顆＝暫時換成那組，移開回來；拉桿拖動時預覽跟著動。按「生成」才落成真線。
+    const gen = (k: GuidePreset): { x: number[]; y: number[] } =>
+      generateGuides(k, k === preset ? curParams() : defaultParams(W, H), W, H);
+    const showPreview = (k: GuidePreset): void => this.hooks.guides.preview?.(gen(k));
+    let selThumb: SVGSVGElement | null = null;
+    const refreshThumb = (): void => {
+      if (!selThumb) return;
+      const fresh = guideThumb(preset, curParams(), W, H);
+      selThumb.replaceWith(fresh); selThumb = fresh;
+    };
     const grid = document.createElement("div");
     grid.className = "gpgrid";
     for (const k of GUIDE_PRESETS) {
@@ -792,14 +811,32 @@ export class Inspector {
       b.title = labels[k];
       const tag = document.createElement("span");
       tag.textContent = labels[k];
-      b.append(guideThumb(k, k === preset ? params : defaultParams(W, H), W, H), tag);
+      const th = guideThumb(k, k === preset ? params : defaultParams(W, H), W, H);
+      if (k === preset) selThumb = th;
+      b.append(th, tag);
       b.addEventListener("click", () => { save({ preset: k }); this.rebuild(); });
+      b.addEventListener("mouseenter", () => showPreview(k));
+      b.addEventListener("mouseleave", () => showPreview(preset));
       grid.append(b);
     }
     gs.append(grid);
+    showPreview(preset);
 
     const numRow = (label: string, key: keyof GuideGenParams, opts: { min: number; max: number; step: number }): void => {
-      this.row(gs, label).append(this.num(params[key] as number, opts, (v) => setOver(key, v)));
+      this.row(gs, label).append(this.numSlider(params[key] as number, opts,
+        (v) => setOver(key, v, true), (v) => setOver(key, v)));
+    };
+    // 欄數是主拉桿（2026-09-05 小高：「一個總拉桿一次調多個欄位」）：拉欄數時溝寬等比跟著
+    //（溝寬÷欄寬不變），鎖比例的模組格列數本來就自動算——拉一下就是整組等比縮放。
+    const colsRow = (): void => {
+      const base = { cols: params.cols, gutter: params.gutter };
+      const applyCols = (v: number, live: boolean): void => {
+        (over as Record<string, number | string>).gutter = Math.round(base.gutter * base.cols / Math.max(v, 1));
+        setOver("cols", v, live);
+      };
+      const r = this.row(gs, __("欄數"));
+      r.title = __("溝寬會等比跟著；要單獨調溝寬用下一列");
+      r.append(this.numSlider(params.cols, { min: 1, max: 12, step: 1 }, (v) => applyCols(v, true), (v) => applyCols(v, false)));
     };
     if (preset === "igsafe" && H / W < 1.6) {
       this.row(gs, __("格狀預覽")).append(this.select(
@@ -811,7 +848,7 @@ export class Inspector {
       numRow(__("邊距"), "margin", { min: 0, max: Math.round(W / 3), step: 1 });
     }
     if (preset === "columns" || preset === "modular") {
-      numRow(__("欄數"), "cols", { min: 1, max: 12, step: 1 });
+      colsRow();
       numRow(__("溝寬"), "gutter", { min: 0, max: Math.round(W / 4), step: 1 });
     }
     if (preset === "modular") {
@@ -1262,7 +1299,7 @@ export class Inspector {
       (v) => { t.shadowStyle = v || undefined; this.rebuild(); this.emit(); },
     ));
     if (t.shadowStyle) {
-      this.row(fx, __("陰影色")).append(this.color(t.shadowColorHex ?? "000000", (hex) => {
+      this.row(fx, __("陰影色")).append(this.colorChip(t.shadowColorHex ?? "000000", (hex) => {
         t.shadowColorHex = hex; this.emit();
       }));
     }
@@ -1273,7 +1310,7 @@ export class Inspector {
       this.emit();
     }));
     if (t.backgroundColorHex != null) {
-      bgOn.append(this.color(t.backgroundColorHex, (hex) => { t.backgroundColorHex = hex; this.emit(); }));
+      bgOn.append(this.colorChip(t.backgroundColorHex, (hex) => { t.backgroundColorHex = hex; this.emit(); }));
     }
   }
 
@@ -1287,7 +1324,9 @@ export class Inspector {
     this.row(s, __("顏色")).append(this.swatches(sh.colorHex, (hex) => { sh.colorHex = hex; this.emit(); }));
     if (sh.kind === "rectangle") {
       this.row(s, __("圓角")).append(
-        this.num(sh.cornerRadius ?? 0, { min: 0, max: 200, step: 1 }, (v) => { sh.cornerRadius = v; this.emit(); }),
+        // 數值＋拉桿（2026-09-05 小高：「拉圓角要看得到數值，不然每次拉的不一樣大」）
+        this.numSlider(sh.cornerRadius ?? 0, { min: 0, max: 200, step: 1 },
+          (v) => { sh.cornerRadius = v; this.emit(); }, (v) => { sh.cornerRadius = v; this.emit(); }),
       );
     }
     if (sh.kind === "line") {
@@ -1477,12 +1516,14 @@ export class Inspector {
     if (m.maskShape === "rectangle") {
       // 存的是「短邊一半」的分數
       this.row(s, __("圓角")).append(
-        this.range(m.maskCornerRadius ?? 0, 0, 1, 0.01, (v) => { m.maskCornerRadius = v; this.emit(); }),
+        // 0–100（％短邊）顯示數值；存的仍是 0…1 分數
+        this.numSlider(Math.round((m.maskCornerRadius ?? 0) * 100), { min: 0, max: 100, step: 1 },
+          (v) => { m.maskCornerRadius = v / 100; this.emit(); }, (v) => { m.maskCornerRadius = v / 100; this.emit(); }),
       );
     }
     // 外框要「寬＋色」同時存在才會渲染——單獨動任一個都自動補上另一個的預設，
     // 不然使用者調了外框寬、畫面毫無反應（色票顯示白色但其實沒存過，2026-08-08 實案）
-    this.row(s, __("外框色")).append(this.color(m.strokeHex ?? "FFFFFF", (hex) => {
+    this.row(s, __("外框色")).append(this.colorChip(m.strokeHex ?? "FFFFFF", (hex) => {
       m.strokeHex = hex;
       if (!m.strokeWidth) { m.strokeWidth = 0.01; this.rebuild(); }
       this.emit();
@@ -1650,11 +1691,10 @@ export class Inspector {
     // 接著改第二支會拿舊陣列覆寫回去＝第一支的新顏色被吃掉（面板顯示新的、圖是舊的）。
     p.inks.forEach((ink, i) => {
       const r = this.row(s, i === 0 ? __("油墨") : "");
-      const ic = this.color(ink, (hex) => {
+      const ic = this.colorChip(ink, (hex) => {
         const inks = [...risoOf(m).inks]; inks[i] = hex;
         m.risoInks = inks; live();
-      });
-      ic.addEventListener("change", commit);   // 選色器收起＝全清重烤
+      }, commit);   // 選定＝全清重烤
       r.append(ic);
       if (p.inks.length > 1) {
         r.append(this.btn("×", () => {
@@ -1669,8 +1709,7 @@ export class Inspector {
         this.rebuild(); commit();
       }));
     }
-    const pc = this.color(p.paper, (hex) => { m.risoPaper = hex; live(); });
-    pc.addEventListener("change", commit);
+    const pc = this.colorChip(p.paper, (hex) => { m.risoPaper = hex; live(); }, commit);
     this.row(s, __("紙色")).append(pc);
     const slider = (label: string, val: number, min: number, max: number, st: number,
                     set: (v: number) => void): void => {
@@ -1708,7 +1747,7 @@ export class Inspector {
     edgeRow.append(this.range(m.matteEdgeWidth ?? 0.02, 0.004, 0.06, 0.002, (v) => {
       m.matteEdgeWidth = v; this.emit();
     }));
-    edgeRow.append(this.color(m.matteEdgeHex ?? "FFFFFF", (hexv) => {
+    edgeRow.append(this.colorChip(m.matteEdgeHex ?? "FFFFFF", (hexv) => {
       m.matteEdgeHex = hexv; this.emit();
     }));
     edgeRow.append(this.btn(__("移除"), () => {
@@ -1781,6 +1820,30 @@ export class Inspector {
     return r;
   }
 
+  /** 數字欄＋拉桿一組（2026-09-05 小高：「填空按上下鍵太死板，要拉桿」）。
+   *  拉桿拖動＝live（呼叫端決定要不要落 undo、不重建面板）；放手或欄位改值＝commit。 */
+  private numSlider(value: number, opts: { min: number; max: number; step: number },
+                    live: (v: number) => void, commit: (v: number) => void): HTMLSpanElement {
+    const wrap = document.createElement("span");
+    wrap.className = "ns";
+    const r = document.createElement("input");
+    r.type = "range"; r.min = String(opts.min); r.max = String(opts.max); r.step = String(opts.step);
+    r.value = String(value);
+    const n = document.createElement("input");
+    n.type = "number"; n.min = r.min; n.max = r.max; n.step = r.step;
+    n.value = String(Math.round(value * 100) / 100);
+    r.addEventListener("input", () => { n.value = r.value; live(Number(r.value)); });
+    r.addEventListener("change", () => commit(Number(r.value)));
+    n.addEventListener("change", () => {
+      const v = Number(n.value);
+      if (!Number.isFinite(v)) return;
+      const c = Math.min(opts.max, Math.max(opts.min, v));
+      n.value = String(c); r.value = String(c); commit(c);
+    });
+    wrap.append(r, n);
+    return wrap;
+  }
+
   private num(value: number, opts: { min?: number; max?: number; step?: number; disabled?: boolean; mixed?: boolean },
               set: (v: number) => void): HTMLInputElement {
     const i = document.createElement("input");
@@ -1814,6 +1877,23 @@ export class Inspector {
     return i;
   }
 
+  /** 顏色鈕：一顆顯示目前色的小方塊，點開是我們自己的選色面板（colorpop.ts）——
+   *  色票／深淺／標準色／灰階／任何顏色。取代直接露 WebKit 的原生色格（2026-09-05 小高：
+   *  「跳出來的預設色票一大群……希望裡面是標準色和我們配色的深淺」）。
+   *  done＝選定後要做的收尾（孔版的 commit 全清重烤）。 */
+  private colorChip(cur: string, set: (hexNoHash: string) => void, done?: () => void): HTMLButtonElement {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cchip";
+    b.title = `#${cur}`;
+    b.style.background = `#${cur}`;
+    b.addEventListener("click", () => openColorPop(b, cur, {
+      live: (hex) => { b.style.background = `#${hex}`; set(hex); },
+      pick: (hex) => { b.style.background = `#${hex}`; b.title = `#${hex}`; cur = hex; set(hex); done?.(); },
+    }));
+    return b;
+  }
+
   /** 色票列（2026-09-05 小高定案「傳統色」）：共用色票＋自訂（原生選色器透明疊在虛線那顆上）。
    *  取代以前直接露一顆 <input type=color>——那顆點開是 WebKit 的螢光色格，跟 App 的色沒關係。
    *  `cur` 對得上就亮那顆；自訂那顆帶目前色，點開就從目前色出發。 */
@@ -1833,12 +1913,16 @@ export class Inspector {
       n.onclick = () => { set(hex); mark(n); };
       grid.append(n);
     }
-    const pick = document.createElement("label");
-    pick.className = "texsw swsm plain dashed swpick";
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "texsw swsm plain dashed";
     pick.title = __("自訂顏色…");
     pick.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" '
       + 'stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
-    pick.append(this.color(cur, (hex) => { set(hex); mark(null); }));
+    pick.addEventListener("click", () => openColorPop(pick, cur, {
+      live: (hex) => { set(hex); mark(null); },
+      pick: (hex) => { cur = hex; set(hex); mark(null); },
+    }));
     grid.append(pick);
     return grid;
   }

@@ -1375,6 +1375,7 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
   guides: {
     hidden: () => editor.guidesHidden,
     toggleHidden: () => { editor.guidesHidden = !editor.guidesHidden; editor.refresh(); },
+    preview: (g) => { editor.previewGuides = g; editor.refresh(); },
     presets: {
       filled: () => { const all = guidePresets(); return Array.from({ length: 9 }, (_, i) => String(i + 1) in all); },
       apply: (slot) => applyGuidePreset(slot),

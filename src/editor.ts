@@ -144,6 +144,8 @@ export class Editor {
   onDoodleMode?: (on: boolean) => void;
   /** 參考線的顯示開關（只是看不看得到，不會刪掉）。 */
   guidesHidden = false;
+  /** 參考線產生器的預覽（虛線）——不是專案資料，換專案就清。 */
+  previewGuides: { x: number[]; y: number[] } | null = null;
   private dirty = true;
   private images?: Map<string, CanvasImageSource>;
   private videos?: Map<string, CanvasImageSource>;
@@ -229,7 +231,7 @@ export class Editor {
     this.images = images;
     this.selected = null;
     this.multi.clear();       // 換專案沒清＝上一份的 id 會殘留（自測抓到）
-    this.guides = []; this.badges = [];
+    this.guides = []; this.badges = []; this.previewGuides = null;
     // 存檔裡的文字 frame 可能只是估值（範本尤其明顯），iOS 端載入後也會重算。
     // 不做這步，選取框就會鬆一圈、吸附也會對到不存在的邊。
     autoFitText(this.ctx, p);
@@ -1775,6 +1777,7 @@ export class Editor {
         filters: this.filters, skipBlockId: this.editing?.id, paperGPU: true,
         viewRect: this.visibleRect(), ...animOpts }, {
       hideProjectGuides: this.guidesHidden,
+      previewGuides: this.previewGuides ?? undefined,
       // 多選時多畫一圈群組外框——手把長在它的右下角，沒有框就看不出那顆在管什麼
       selection: [
         ...this.selectionBlocks().map((b) => rotatedBounds(b.frame, b.rotation)),
