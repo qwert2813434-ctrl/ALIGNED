@@ -352,6 +352,9 @@
   .texsw.plain { background: transparent; color: var(--ink2); }
   .texsw.plain:hover { color: var(--ink); }
   .texsw.dashed { border-style: dashed; }
+  /* 小顆色票（文字／圖形／塗鴉／頁面背景的顏色列，2026-09-05）：圓形 26px，選中＝墨色環 */
+  .texsw.swsm { width: 26px; height: 26px; border-radius: 50%; }
+  .texsw.swsm.on { border-color: transparent; box-shadow: 0 0 0 2px var(--chrome), 0 0 0 3.5px var(--ink); }
   /* 色票／材質票要換行。檢視器只有 252px 寬，扣掉左右內距與 52px 的欄名剩約 168px＝
      一排放得下四顆；不換行的話整排會溢出面板，**最後那顆自訂顏色點不到**
      （2026-09-01 小高回報）。容器自己 flex-wrap，欄名還是留在左邊那一欄。 */

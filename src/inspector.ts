@@ -17,6 +17,7 @@ import { paperScope, snugTextWidth , attachedCanvas } from "./core/render";
 import { ANIM_DUR, ANIM_DUR_MAX, ANIM_HOLD, ANIM_HOLD_MAX, ANIM_STAGE2_DUR, ANIM_STAGE2_SCALE, ANIM_STAGGER, ANIM_STAGGER_MAX, CAROUSEL_INTERVAL, MODEL_SECS_PER_TURN, MODEL_SPIN_DUR, MODEL_TURNS, defaultDur, type AnimDir, type AnimKind, type Stage2 } from "./core/anim";
 import { GUIDE_PRESETS, MODULAR_COMBOS, defaultParams, generateGuides, replaceBatch } from "./core/guidegen";
 import type { GuideGenParams, GuidePreset } from "./core/guidegen";
+import { PALETTE, PAPERS } from "./palette";
 
 /** 產生器每個專案「上次生成的那批」——重生成時只換這批，手動線不動。
  *  存記憶體就好：關掉 App 後舊批就當手動線看待，頂多多按一次刪除。 */
@@ -356,7 +357,7 @@ export class Inspector {
     }
 
     const colorRow = this.row(s, __("顏色"));
-    colorRow.append(this.color(pen.color, (v) => {
+    colorRow.append(this.swatches(pen.color, (v) => {
       dk?.setPen({ color: v, eraser: false });
       if (live) applyEach((st) => { st.color = v; });
     }));
@@ -574,7 +575,7 @@ export class Inspector {
       }
       alignRow.append(alignBox);
 
-      this.row(ts, __("顏色")).append(this.color(
+      this.row(ts, __("顏色")).append(this.swatches(
         same((t) => t.colorHex ?? "000000") ?? texts[0].colorHex ?? "000000",
         (hexNoHash) => applyAll((t) => {
           t.colorHex = hexNoHash;
@@ -654,10 +655,11 @@ export class Inspector {
     const i = this.hooks.layers.currentPage();
     const bgSec = this.section(__("頁面背景"));
     this.row(bgSec, __f("第 {n} 頁", { n: i + 1 })).append(
-      this.color(p.pageBackgroundHex?.[String(i)] ?? "FFFFFF", (hexNoHash) => {
+      // 紙色六顆＋自訂（2026-09-05）：以前只有一顆原生選色器，點開是 WebKit 的螢光色格
+      this.swatches(p.pageBackgroundHex?.[String(i)] ?? "FFFFFF", (hexNoHash) => {
         p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [String(i)]: hexNoHash };
         this.emit();
-      }),
+      }, PAPERS),
     );
     // 一鍵把這一頁的底色刷到全部頁——輪播通常整本同一個底色，一頁一頁點是折磨
     this.row(bgSec, "").append(this.btn(__("全部頁套用"), () => {
@@ -1208,7 +1210,7 @@ export class Inspector {
         this.emit(true);
       }));
     }
-    this.row(s, __("顏色")).append(this.color(t.colorHex ?? "000000", (hex) => {
+    this.row(s, __("顏色")).append(this.swatches(t.colorHex ?? "000000", (hex) => {
       t.colorHex = hex;
       t.inkColor = undefined;   // 渲染以 run 屬性優先，改色要把它清掉才吃 colorHex
       this.emit(true);
@@ -1282,7 +1284,7 @@ export class Inspector {
       sh.kind,
       (v) => { sh.kind = v as ShapeBlock["kind"]; this.rebuild(); this.emit(); },
     ));
-    this.row(s, __("顏色")).append(this.color(sh.colorHex, (hex) => { sh.colorHex = hex; this.emit(); }));
+    this.row(s, __("顏色")).append(this.swatches(sh.colorHex, (hex) => { sh.colorHex = hex; this.emit(); }));
     if (sh.kind === "rectangle") {
       this.row(s, __("圓角")).append(
         this.num(sh.cornerRadius ?? 0, { min: 0, max: 200, step: 1 }, (v) => { sh.cornerRadius = v; this.emit(); }),
@@ -1425,7 +1427,7 @@ export class Inspector {
           colorRow.querySelectorAll("button").forEach((n) => { (n as HTMLButtonElement).disabled = true; });
           void this.hooks.fillColor!(b, hex).finally(() => this.rebuild());
         };
-        for (const hex of ["FFFFFF", "000000", "FF4D84", "F5C518", "2EC4B6", "3A86FF"]) {
+        for (const hex of PALETTE) {
           const n = document.createElement("button");
           n.className = "texsw";
           n.title = `#${hex}`;
@@ -1810,6 +1812,35 @@ export class Inspector {
     i.value = String(value);
     i.addEventListener("input", () => set(Number(i.value)));
     return i;
+  }
+
+  /** 色票列（2026-09-05 小高定案「傳統色」）：共用色票＋自訂（原生選色器透明疊在虛線那顆上）。
+   *  取代以前直接露一顆 <input type=color>——那顆點開是 WebKit 的螢光色格，跟 App 的色沒關係。
+   *  `cur` 對得上就亮那顆；自訂那顆帶目前色，點開就從目前色出發。 */
+  private swatches(cur: string, set: (hexNoHash: string) => void, list: readonly string[] = PALETTE): HTMLDivElement {
+    const grid = document.createElement("div");
+    grid.className = "swgrid";
+    const curU = cur.toUpperCase();
+    const mark = (on: HTMLElement | null): void => {
+      grid.querySelectorAll(".swsm").forEach((k) => k.classList.toggle("on", k === on));
+    };
+    for (const hex of list) {
+      const n = document.createElement("button");
+      n.type = "button";
+      n.className = "texsw swsm" + (hex === curU ? " on" : "");
+      n.title = `#${hex}`;
+      n.style.background = `#${hex}`;
+      n.onclick = () => { set(hex); mark(n); };
+      grid.append(n);
+    }
+    const pick = document.createElement("label");
+    pick.className = "texsw swsm plain dashed swpick";
+    pick.title = __("自訂顏色…");
+    pick.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" '
+      + 'stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+    pick.append(this.color(cur, (hex) => { set(hex); mark(null); }));
+    grid.append(pick);
+    return grid;
   }
 
   private color(hexNoHash: string, set: (hexNoHash: string) => void): HTMLInputElement {

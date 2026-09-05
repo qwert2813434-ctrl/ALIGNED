@@ -4,6 +4,7 @@
 // （localStorage；紙張與紋路搬進專案檔是 P3 檔案欄位定稿的事）。
 // 鐵則：試畫畫布不跟主題（匯出成品不受外殼配色影響）——紙色固定 #FBF8F0。
 import { __ } from "./i18n";
+import { PALETTE } from "./palette";
 import { getUIPrefs, setUIPref } from "./uiprefs";
 import {
   BRUSHES, BRUSH_ORDER, SOFT_DEFAULTS, drawDoodle, getSoftPrefs, setSoftPrefs,
@@ -74,7 +75,7 @@ const DEMOS: Record<string, (color: string) => PStroke[]> = {
   },
 };
 
-const SWATCHES = ["1A1A1A", "D23B2A", "2F7CF6", "F5C518", "2EC4B6", "FF4D84"];
+const SWATCHES: readonly string[] = PALETTE;   // 共用色票（2026-09-05 傳統色）
 
 /** 拉桿定義（只開軟鉛筆；標籤／範圍照 mock，預設＝SOFT_DEFAULTS）。 */
 interface Ctl { key: keyof SoftPrefs; label: string; min: number; max: number; step: number; grp: string;
