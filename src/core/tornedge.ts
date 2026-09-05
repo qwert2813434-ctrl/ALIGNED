@@ -29,6 +29,23 @@ export interface TornParams {
 export const TORN_STYLES = ["riso", "torn", "tear", "feather"] as const;
 export const TORN_DEFAULTS = { amt: 0.055, deform: 0.5, rough: 0.5, seed: 7, sides: 15 };
 
+/** 旋轉後「畫布方向」↔「物件自己的邊」換算（2026-09-05 小高定案：檔案永遠存物件邊，只在面板換算，
+ *  舊專案渲染一個 px 不動）。索引 0上 1右 2下 3左（順時針＝位元序）。
+ *  角度取最接近的 90°：floor((deg+45)/90)，45 算成 90；負角先 +4 再取餘（JS 的 % 對負數回負數，
+ *  −90 會撕錯邊）。iOS TornEdge.quarterTurns／localSide 同一張表，改一邊必改另一邊。 */
+export function tornQuarterTurns(rotation: number): number {
+  const k = Math.floor((rotation + 45) / 90);
+  return ((k % 4) + 4) % 4;
+}
+export function tornLocalSide(canvasIdx: number, rotation: number): number {
+  return ((canvasIdx - tornQuarterTurns(rotation)) % 4 + 4) % 4;
+}
+export function tornCanvasSides(localMask: number, rotation: number): number {
+  let out = 0;
+  for (let l = 0; l < 4; l++) if (localMask & (1 << l)) out |= 1 << ((l + tornQuarterTurns(rotation)) % 4);
+  return out;
+}
+
 /** media 欄位 → 參數；沒開撕紙邊回 null（absent＝舊專案零變動）。 */
 export function tornOf(m: {
   tornStyle?: string; tornSides?: number; tornAmt?: number; tornDeform?: number;

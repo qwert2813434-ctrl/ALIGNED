@@ -10,7 +10,7 @@ import { renderAllPages } from "./core/export";
 import { autoFitText, maskAndStrokeCanvases, renderCounters, renderPageCanvas, renderStage, snugTextWidth, textPrintLines } from "./core/render";
 import { doodleCounters, drawDoodle, drawDoodleUncached, type DoodleBlock } from "./core/doodle";
 import { applyRiso, filterSig, parseRisoSig, RISO_DEFAULTS } from "./core/filters";
-import { tornCanvases, tornOf } from "./core/tornedge";
+import { tornCanvases, tornOf, tornCanvasSides, tornLocalSide } from "./core/tornedge";
 import { decodeProject, encodeProject, moveBlocks, reconcileOrder } from "./core/schema";
 import { Inspector } from "./inspector";
 import { PageStrip } from "./pagestrip";
@@ -33,6 +33,14 @@ function check(name: string, ok: boolean, detail = ""): void {
   document.title = `#${results.length} ${name}`;   // 卡住時，標題就是最後跑完的案例
 }
 const near = (a: number, b: number, eps = 0.01) => Math.abs(a - b) < eps;
+
+// 撕紙邊「畫布方向↔物件邊」換算（2026-09-05）：兩端同一張表，釘死 45°、負角取餘
+{
+  const t = (deg: number, c: number, l: number): void =>
+    check(`撕紙邊換算 ${deg}°：畫布${"上右下左"[c]}＝物件${"上右下左"[l]}`, tornLocalSide(c, deg) === l, `得到 ${tornLocalSide(c, deg)}`);
+  t(0, 0, 0); t(90, 1, 0); t(180, 0, 2); t(-90, 2, 3); t(270, 2, 3); t(45, 1, 0); t(44, 1, 1); t(135, 0, 2); t(360, 3, 3);
+  check("撕紙邊換算：位元遮罩轉回畫布（−90°，物件下＝畫布右）", tornCanvasSides(4, -90) === 2, `得到 ${tornCanvasSides(4, -90)}`);
+}
 
 function block(id: string, frame: Rect, rotation = 0): Block {
   return {

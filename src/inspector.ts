@@ -9,7 +9,7 @@ import { additiveClick } from "./platform";
 import type { Block, MediaBlock, ModelBlock, Project, ShapeBlock, TextAlign, TextBlock } from "./core/schema";
 import { FONT_CHOICES, WEIGHT_LABELS, fontCatalog } from "./core/fonts";
 import { FILTER_KEYS, FILTER_LABELS , risoOf, RISO_PRESETS } from "./core/filters";
-import { TORN_DEFAULTS } from "./core/tornedge";
+import { TORN_DEFAULTS, tornLocalSide } from "./core/tornedge";
 import { alignToPage } from "./core/group";
 import { pageRect } from "./core/geometry";
 import type { GroupAlign, GroupAxis } from "./core/group";
@@ -1815,9 +1815,13 @@ export class Inspector {
     ));
     if (!m.tornStyle) return;
     const sides = m.tornSides ?? TORN_DEFAULTS.sides;
+    // 上右下左＝「畫布方向」（2026-09-05 小高定案）：物件轉了 90°，點「下」還是撕畫面上的下邊。
+    // 檔案裡存的仍是物件自己的邊——只在這裡換算，舊專案渲染一個 px 不動。
+    const rot = this.block?.rotation ?? 0;
     const sr = this.row(s, __("邊"));
-    ([[__("上"), 1], [__("右"), 2], [__("下"), 4], [__("左"), 8]] as [string, number][])
-      .forEach(([name, bit]) => {
+    ([[__("上"), 0], [__("右"), 1], [__("下"), 2], [__("左"), 3]] as [string, number][])
+      .forEach(([name, canvasIdx]) => {
+        const bit = 1 << tornLocalSide(canvasIdx, rot);
         const lbl = document.createElement("label");
         lbl.append(this.check((sides & bit) !== 0, (on) => {
           m.tornSides = on ? (m.tornSides ?? TORN_DEFAULTS.sides) | bit
