@@ -23,6 +23,33 @@ import type { GuideGenParams, GuidePreset } from "./core/guidegen";
 const GEN_BATCH = new Map<string, { x: number[]; y: number[] }>();
 const GEN_STORE = "align.guidegen";
 
+/** 參考線預設的縮圖：generateGuides 的結果縮進 52×52 的框裡畫成 SVG，頁面比例照畫布。
+ *  線對到半格（1px 不糊）、貼邊的往內收半格才看得到。 */
+function guideThumb(preset: GuidePreset, p: GuideGenParams, W: number, H: number): SVGSVGElement {
+  const NS = "http://www.w3.org/2000/svg";
+  const s = Math.min(52 / W, 52 / H);
+  const w = Math.max(8, Math.round(W * s)), h = Math.max(8, Math.round(H * s));
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("width", String(w)); svg.setAttribute("height", String(h));
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  const pg = document.createElementNS(NS, "rect");
+  pg.setAttribute("class", "pg");
+  pg.setAttribute("x", "0.5"); pg.setAttribute("y", "0.5");
+  pg.setAttribute("width", String(w - 1)); pg.setAttribute("height", String(h - 1));
+  svg.append(pg);
+  const snap = (v: number, max: number): number => Math.min(max - 0.5, Math.max(0.5, Math.round(v * s) + 0.5));
+  const line = (x1: number, y1: number, x2: number, y2: number): void => {
+    const l = document.createElementNS(NS, "line");
+    l.setAttribute("x1", String(x1)); l.setAttribute("y1", String(y1));
+    l.setAttribute("x2", String(x2)); l.setAttribute("y2", String(y2));
+    svg.append(l);
+  };
+  const g = generateGuides(preset, p, W, H);
+  for (const x of g.x) line(snap(x, w), 0, snap(x, w), h);
+  for (const y of g.y) line(0, snap(y, h), w, snap(y, h));
+  return svg;
+}
+
 /** 貼字寬要量字——共用一個量測 ctx（字型都在 document 層，量得到匯入字型）。 */
 let MEASURE: CanvasRenderingContext2D | null = null;
 const measureCtx = (): CanvasRenderingContext2D =>
@@ -748,10 +775,26 @@ export class Inspector {
       igsafe: __("IG 安全區"), margins: __("邊界框"), columns: __("欄格"),
       modular: __("模組網格"), baseline: __("基線網格"), thirds: __("三分法"), golden: __("黃金分割"),
     };
-    this.row(gs, __("產生器")).append(this.select(
-      GUIDE_PRESETS.map((k) => [k, labels[k]] as [string, string]), preset,
-      (v) => { save({ preset: v as GuidePreset }); this.rebuild(); },
-    ));
+    // 產生器改成看得到的選單（2026-09-05 小高：「選預設時看得到預設」）：每顆縮圖＝那個預設
+    // 在**目前畫布比例**下真的長出來的線——同一支 generateGuides、同一組參數，不是示意圖。
+    // 選中的那顆吃使用者調過的參數（改欄數縮圖跟著變），其他顆用出廠值。
+    const cur = document.createElement("span");
+    cur.textContent = labels[preset];
+    this.row(gs, __("產生器")).append(cur);
+    const grid = document.createElement("div");
+    grid.className = "gpgrid";
+    for (const k of GUIDE_PRESETS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "gp" + (k === preset ? " on" : "");
+      b.title = labels[k];
+      const tag = document.createElement("span");
+      tag.textContent = labels[k];
+      b.append(guideThumb(k, k === preset ? params : defaultParams(W, H), W, H), tag);
+      b.addEventListener("click", () => { save({ preset: k }); this.rebuild(); });
+      grid.append(b);
+    }
+    gs.append(grid);
 
     const numRow = (label: string, key: keyof GuideGenParams, opts: { min: number; max: number; step: number }): void => {
       this.row(gs, label).append(this.num(params[key] as number, opts, (v) => setOver(key, v)));

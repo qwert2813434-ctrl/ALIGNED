@@ -1660,6 +1660,29 @@ $<HTMLSelectElement>("#snap").addEventListener("change", (e) => {
   editor.snapStrength = (e.target as HTMLSelectElement).value as SnapStrength;
 });
 
+// 「檔案」選單（2026-09-05 小高：工具列收納）：新專案／開啟／存檔／匯出範本／打包 五顆收成一顆。
+// 原本的按鈕留在 DOM 裡（#fileHidden，display:none）——綁定、快捷鍵、導覽一條都不動，
+// 選單項只是替它們按一下。匯出 PNG 是最常按的，留在外面。
+$<HTMLButtonElement>("#fileBtn").addEventListener("click", (e) => {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  const press = (id: string) => () => $<HTMLButtonElement>(id).click();
+  const mi = (d: string): string =>
+    `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  openMenu([
+    { label: __("新專案"), key: keys("⌘N"), run: press("#newproj"),
+      icon: mi('<path d="M11.5 3.5H5.8A1.3 1.3 0 004.5 4.8v10.4a1.3 1.3 0 001.3 1.3h8.4a1.3 1.3 0 001.3-1.3V7.5z"/><path d="M11.5 3.5v4h4"/>') },
+    { label: __("開啟…"), key: keys("⌘O"), run: press("#open"),
+      icon: mi('<path d="M3 14.5V5.5A1.5 1.5 0 014.5 4h3.2L9.4 6h6.1A1.5 1.5 0 0117 7.5v1"/><path d="M3 14.5L4.6 9.2A1.5 1.5 0 016 8.1h10.9a1 1 0 01.96 1.28l-1.36 4.55a1.5 1.5 0 01-1.44 1.07H3z"/>') },
+    { label: __("存檔"), key: keys("⌘S"), run: press("#save"),
+      icon: mi('<path d="M4.5 5.8A1.3 1.3 0 015.8 4.5h7.4l2.3 2.3v7.4a1.3 1.3 0 01-1.3 1.3H5.8a1.3 1.3 0 01-1.3-1.3z"/><path d="M7.2 4.5v3.1h4.6V4.5"/><path d="M7 15.5v-3.8a.6.6 0 01.6-.6h4.8a.6.6 0 01.6.6v3.8"/>') },
+    "-",
+    { label: __("匯出範本（不含素材）"), run: press("#exporttpl"),
+      icon: mi('<rect x="3.5" y="4" width="13" height="12" rx="1.6"/><path d="M3.5 8h13"/><path d="M8 16V8"/>') },
+    { label: __("打包 .alignproj（含素材，iPad 可開）"), run: press("#exportpack"),
+      icon: mi('<path d="M3.5 7.5l6.5-3 6.5 3v7l-6.5 3-6.5-3z"/><path d="M3.5 7.5l6.5 3 6.5-3"/><path d="M10 10.5v6"/>') },
+  ], { x: r.left, y: r.bottom + 8 });
+});
+
 // ── 右鍵選單 ──────────────────────────────────────────────────────────
 // 桌面的第一直覺。項目只放「在這個物件上會想做的事」，其餘留給檢視器。
 
@@ -1760,6 +1783,11 @@ editor.onContextMenu = (b, at) => {
     const many = sel.length > 1;
     items.push({ label: __("拷貝"), key: keys("⌘C"), run: () => copySelection() });
     items.push({ label: __("複製一份"), key: keys("⌘D"), run: () => duplicateSelection() });
+    // 調整框內畫面（2026-09-05 小高：右鍵也要能進裁切調整）：跟雙擊同一條路，只給有素材的
+    // 圖片／影片。排在複製後面、文字工具前面——這是對一張圖最常做的事。
+    if (sel.length === 1 && (b.content.type === "image" || b.content.type === "video") && b.content.media.assetFileName) {
+      items.push({ label: __("調整框內畫面"), key: __("雙擊"), run: () => { editor.enterContentMode(b); } });
+    }
     // 大小寫（2026-09-05 第一批 #1）：排英文標題常要試三種形狀（SHE BOUGHT／she bought／She bought），
     // 之前只能重打。改完照檢視器改文字那條路：重貼字盒→重畫→縮圖→undo 一步。
     const textSel = sel.filter((k) => k.content.type === "text" || k.content.type === "textFlow");

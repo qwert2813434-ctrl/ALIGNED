@@ -1213,10 +1213,7 @@ export class Editor {
       // 空欄位框＝範本的填圖欄位，雙擊直接選檔（iOS 的「點欄位挑照片」對應到桌面）
       if (!b.content.media.assetFileName) { this.onFillSlot?.(b); return; }
       // 有素材的：雙擊進「搬照片」模式——框不動，動的是框裡的畫面
-      this.contentId = b.id;
-      this.select(b.id);
-      this.onContentMode?.(true);
-      this.dirty = true;
+      this.enterContentMode(b);
     }
   };
 
@@ -1341,6 +1338,18 @@ export class Editor {
     if (snap15) deg = Math.round(deg / 15) * 15;
     b.rotation = Math.round(deg * 10) / 10;
     this.dirty = true;
+  }
+
+  /** 進「搬照片」模式（雙擊與右鍵共用入口，2026-09-05）：框不動，動的是框裡的畫面。
+   *  只收有素材的圖片／影片；空欄位走選檔那條路，不在這裡。 */
+  enterContentMode(b: Block): boolean {
+    if (b.content.type !== "image" && b.content.type !== "video") return false;
+    if (!b.content.media.assetFileName) return false;
+    this.contentId = b.id;
+    this.select(b.id);
+    this.onContentMode?.(true);
+    this.dirty = true;
+    return true;
   }
 
   /** 離開內容平移模式。 */
