@@ -291,7 +291,8 @@ export class Inspector {
       if (project) this.projectPanel(project);
       return;
     }
-    this.common(block);
+    // 歸類（2026-09-05 小高：「版面收納：位置／外觀／調整」）：先是這種元件自己的內容區段，
+    // 後面固定四組可收合群組——位置／外觀／調整／出場，開合狀態各自記住。
     switch (block.content.type) {
       case "text": case "textFlow": this.text(block.content.text); break;
       case "shape": this.shape(block.content.shape); break;
@@ -299,6 +300,11 @@ export class Inspector {
       case "model": this.model3d(block, block.content.model); break;
       case "doodle": this.doodlePanel(block, block.content.doodle); break;
     }
+    this.positionGroup(block);
+    if (block.content.type === "image" || block.content.type === "video") this.mediaLook(block, block.content.media);
+    else if (block.content.type === "text" || block.content.type === "textFlow") this.textLook(block.content.text);
+    this.adjustGroup(block);
+    this.animGroup(block);
   }
 
   /**
@@ -308,7 +314,7 @@ export class Inspector {
    */
   private doodlePanel(b: Block | null, d: DoodleBlock | null): void {
     const dk = this.hooks.doodle;
-    const s = this.section(__("塗鴉"));
+    const s = this.section(__("塗鴉"), "content", true);
     const active = !!dk?.active();
     const pen = dk?.pen() ?? { brush: "pen" as BrushKind, color: "1A1A1A", width: 12, eraser: false };
 
@@ -451,7 +457,7 @@ export class Inspector {
   /** 3D 物件：展示方式與速率。它在專案裡永遠是活的物件，匯出那一刻才烤成影格。
    *  ②快轉煞停的圈數 0.5 步進（半圈也行）、終點停在「角度」那一面（2026-08-16 定案）。 */
   private model3d(b: Block, m: ModelBlock): void {
-    const s = this.section(__("3D 物件"));
+    const s = this.section(__("3D 物件"), "content", true);
     const play = (): void => this.hooks.playAnim?.(b);
     this.row(s, __("展示方式")).append(this.select(
       [["", __("靜止")], ["spin", __("慢慢轉圈")], ["spinStop", __("快轉煞停")]],
@@ -1048,8 +1054,9 @@ export class Inspector {
     );
   }
 
-  private common(b: Block): void {
-    const s = this.section(__("位置與圖層"));
+  /** 位置群組：位置／頁面對齊／尺寸／縮放／旋轉／鎖定／圖層（預設展開）。 */
+  private positionGroup(b: Block): void {
+    const s = this.section(__("位置"), "pos", true);
     const pos = this.row(s, __("位置"));
     pos.append(
       this.num(b.frame.x, { step: 1 }, (v) => { b.frame.x = v; this.emit(); }),
@@ -1079,16 +1086,12 @@ export class Inspector {
       this.numSlider(b.rotation, { min: -180, max: 180, step: 1 },
         (v) => { b.rotation = v; this.emit(); }, (v) => { b.rotation = v; this.emit(); }),
     );
-    this.row(s, __("不透明")).append(
-      this.range(b.opacity, 0, 1, 0.05, (v) => { b.opacity = v; this.emit(); }),
-    );
     this.row(s, __("鎖定")).append(this.check(b.locked, (on) => {
       // 鎖定的元件點不到、拖不動、不長手把、群組對齊也略過（引擎本來就吃這個欄位）
       b.locked = on;
       this.rebuild();
       this.emit();
     }));
-    this.animRow(s, b);
     // 三顆都做成純 icon：帶文字的版本中文剛好塞不下、英文更長，換行之後排成三行很醜
     //（小高 2026-09-01 回報）。圖示與選取浮動晶片**共用同一組**（src/icons.ts），
     // 同一個動作在畫布上跟面板裡長一樣；人話留在 title／aria-label。
@@ -1104,6 +1107,22 @@ export class Inspector {
       wide(this.iconBtn(chipIcon(CHIP.back, 15), __("移到最後"), () => this.hooks.reorder(b, "back"))),
       danger,
     );
+  }
+
+  /** 調整群組（預設收起）：不透明＋圖片／影片的曝光／亮度／對比／飽和／色溫（同 iOS「調整」）。 */
+  private adjustGroup(b: Block): void {
+    const s = this.section(__("調整"), "adjust", false);
+    this.row(s, __("不透明")).append(
+      this.numSlider(Math.round(b.opacity * 100), { min: 0, max: 100, step: 1 },
+        (v) => { b.opacity = v / 100; this.emit(); }, (v) => { b.opacity = v / 100; this.emit(); }),
+    );
+    if (b.content.type === "image" || b.content.type === "video") this.adjustRows(s, b, b.content.media);
+  }
+
+  /** 出場群組（預設收起）。 */
+  private animGroup(b: Block): void {
+    const s = this.section(__("出場"), "anim", false);
+    this.animRow(s, b);
   }
 
   /**
@@ -1193,7 +1212,7 @@ export class Inspector {
   }
 
   private text(t: TextBlock): void {
-    const s = this.section(__("文字"));
+    const s = this.section(__("文字"), "content", true);
     const ta = document.createElement("textarea");
     ta.rows = 3;
     ta.value = t.text;
@@ -1279,7 +1298,7 @@ export class Inspector {
     }));
 
     // ── 長文框：固定容器（會裁切、吃文繞圖），與貼字盒是兩種語意 ──
-    const bs = this.section(__("長文框"));
+    const bs = this.section(__("長文框"), "body", true);
     this.row(bs, __("長文框")).append(this.check(t.isBodyFrame === true, (on) => {
       if (on) {
         // 打開＝這個框從此由使用者定尺寸。先用目前的貼字盒當起點，
@@ -1316,8 +1335,12 @@ export class Inspector {
       ));
     }
 
+  }
+
+  /** 文字的外觀群組（預設收起）：陰影／底色——渲染層特效，只是畫上去、不影響量測與貼字盒。 */
+  private textLook(t: TextBlock): void {
     // ── 渲染層特效：只是畫上去，不影響量測與貼字盒 ──
-    const fx = this.section(__("特效"));
+    const fx = this.section(__("外觀"), "look", false);
     this.row(fx, __("陰影")).append(this.select(
       [["", __("無")], ["soft", __("柔和")], ["strong", __("明顯")]],
       t.shadowStyle ?? "",
@@ -1340,7 +1363,7 @@ export class Inspector {
   }
 
   private shape(sh: ShapeBlock): void {
-    const s = this.section(__("形狀"));
+    const s = this.section(__("形狀"), "content", true);
     this.row(s, __("類型")).append(this.select(
       [["rectangle", __("矩形")], ["ellipse", __("圓形")], ["line", __("線條")]],
       sh.kind,
@@ -1364,7 +1387,7 @@ export class Inspector {
   }
 
   private media(b: Block, m: MediaBlock): void {
-    const s = this.section(b.content.type === "video" ? __("影片") : __("圖片"));
+    const s = this.section(b.content.type === "video" ? __("影片") : __("圖片"), "content", true);
     const pick = this.btn(m.assetFileName ? __("更換圖片／影片…") : __("選擇圖片／影片…"),
                           () => this.hooks.fillMedia(b));
     this.row(s, __("素材")).append(pick);
@@ -1414,7 +1437,6 @@ export class Inspector {
       },
     ));
     if (m.filterKey === "c5") this.risoRows(s, b, m);
-    this.adjustRows(s, b, m);
     // 去背——與「遮罩」是兩件事：遮罩是幾何形狀，去背是照片內容的主體輪廓。
     // 兩者可以並存（先被形狀裁、再被去背裁），所以分成兩列不合併。
     if (this.hooks.makeMatte && m.assetFileName) {
@@ -1529,6 +1551,34 @@ export class Inspector {
         ));
       }
     }
+    if (m.assetFileName) {
+      // 拉直：轉的是**內容**不是 block（與 iOS 裁切畫面的那個角度同一個欄位）
+      this.row(s, __("拉直")).append(
+        this.numSlider(m.rotationDegrees ?? 0, { min: -45, max: 45, step: 0.5 }, (v) => {
+          m.rotationDegrees = v !== 0 ? v : undefined;
+          this.emit();
+        }, (v) => {
+          m.rotationDegrees = v !== 0 ? v : undefined;
+          this.emit();
+        }),
+      );
+      // 裁切比例：改的是 block 的框（照片不動、裁切區跟著），與八點裁切同一套語意
+      this.row(s, __("裁切比例")).append(this.select(
+        [["", __("自由")], ["1:1", "1:1"], ["4:5", "4:5"], ["3:4", "3:4"], ["16:9", "16:9"], ["9:16", "9:16"]],
+        "",
+        (v) => {
+          if (!v) return;
+          const [rw, rh] = v.split(":").map(Number);
+          this.applyCropRatio(b, m, rw / rh);
+        },
+      ));
+    }
+    this.wrapControls(s, () => m);
+  }
+
+  /** 外觀群組（預設收起）：遮罩／圓角／外框／貼紙邊／撕紙邊／陰影——同 iOS「外觀」面板。 */
+  private mediaLook(b: Block, m: MediaBlock): void {
+    const s = this.section(__("外觀"), "look", false);
     this.row(s, __("遮罩")).append(this.select(
       [["", __("無")], ["rectangle", __("圓角矩形")], ["ellipse", __("橢圓")]],
       m.maskShape ?? "",
@@ -1569,29 +1619,6 @@ export class Inspector {
     this.stickerRows(s, m);
     this.tornRows(s, b, m);
     this.shadowRows(s, m);
-    if (m.assetFileName) {
-      // 拉直：轉的是**內容**不是 block（與 iOS 裁切畫面的那個角度同一個欄位）
-      this.row(s, __("拉直")).append(
-        this.numSlider(m.rotationDegrees ?? 0, { min: -45, max: 45, step: 0.5 }, (v) => {
-          m.rotationDegrees = v !== 0 ? v : undefined;
-          this.emit();
-        }, (v) => {
-          m.rotationDegrees = v !== 0 ? v : undefined;
-          this.emit();
-        }),
-      );
-      // 裁切比例：改的是 block 的框（照片不動、裁切區跟著），與八點裁切同一套語意
-      this.row(s, __("裁切比例")).append(this.select(
-        [["", __("自由")], ["1:1", "1:1"], ["4:5", "4:5"], ["3:4", "3:4"], ["16:9", "16:9"], ["9:16", "9:16"]],
-        "",
-        (v) => {
-          if (!v) return;
-          const [rw, rh] = v.split(":").map(Number);
-          this.applyCropRatio(b, m, rw / rh);
-        },
-      ));
-    }
-    this.wrapControls(s, () => m);
   }
 
   /**
@@ -1658,11 +1685,31 @@ export class Inspector {
 
   private emit(retext = false): void { this.hooks.onChange(retext ? { retext: true } : undefined); }
 
-  private section(titleText: string): HTMLElement {
+  /** 區段。給 `key`＝可收合群組（點標題開合，開合狀態每組各自記在 localStorage，
+   *  重建面板／換選取都保留；`openByDefault` 只在沒記錄時用）；沒 key＝專案／圖層面板
+   *  那種不收合的標題。回傳**內容容器**，列都掛在裡面——呼叫端一個字都不用改。
+   *  2026-09-05 小高：「Mac 版面收納：位置／外觀／調整，歸類」。 */
+  private section(titleText: string, key?: string, openByDefault = true): HTMLElement {
+    const sec = document.createElement("div");
+    sec.className = "sec";
     const h = document.createElement("h3");
     h.textContent = titleText;
-    this.el.append(h);
-    return this.el;
+    const body = document.createElement("div");
+    body.className = "secbody";
+    sec.append(h, body);
+    this.el.append(sec);
+    if (key) {
+      sec.classList.add("fold");
+      let open = openByDefault;
+      try { const v = localStorage.getItem(`aligned.sec.${key}`); if (v != null) open = v === "1"; } catch { /* 無 storage 就用預設 */ }
+      sec.classList.toggle("closed", !open);
+      h.title = __("點一下收合／展開");
+      h.addEventListener("click", () => {
+        const closed = sec.classList.toggle("closed");
+        try { localStorage.setItem(`aligned.sec.${key}`, closed ? "0" : "1"); } catch { /* 同上 */ }
+      });
+    }
+    return body;
   }
 
 

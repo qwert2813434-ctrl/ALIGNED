@@ -115,7 +115,16 @@
   #inspector h3 { font-size: 11px; letter-spacing: .2em; color: var(--ink2);
                   margin: 20px 2px 4px; font-weight: 600; padding-top: 14px;
                   border-top: 1px solid color-mix(in srgb, var(--ink) 9%, transparent); }
-  #inspector h3:first-of-type { border-top: none; padding-top: 0; margin-top: 12px; }
+  /* 區段都包在 .sec 裡（2026-09-05 歸類）：第一個區段、以及釘在上面那格（.pin）之後的第一個不畫髮絲線 */
+  #inspector .sec:first-child h3, #inspector .pin + .sec h3 { border-top: none; padding-top: 0; margin-top: 12px; }
+  /* 可收合群組：標題前一個小三角，收起時內容整段不顯示；開合狀態各自記住（inspector.section） */
+  #inspector .sec.fold h3 { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 7px; }
+  #inspector .sec.fold h3:hover { color: var(--ink); }
+  #inspector .sec.fold h3::before { content: ""; width: 0; height: 0; flex: none; opacity: .65;
+                                    border-left: 4px solid currentColor; border-top: 3.5px solid transparent;
+                                    border-bottom: 3.5px solid transparent; transform: rotate(90deg); transition: transform .12s; }
+  #inspector .sec.fold.closed h3::before { transform: rotate(0deg); }
+  #inspector .sec.closed .secbody { display: none; }
   /* 換行不是裝飾：面板只有 252px，塞不下的那一列以前是**直接被裁掉**，
      最後一顆按鈕（例：填顏色的自訂顏色）點不到（2026-09-01 小高回報）。 */
   #inspector .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }

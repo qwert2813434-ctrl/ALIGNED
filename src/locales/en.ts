@@ -724,4 +724,8 @@ export const en: Record<string, string> = {
   "橫移": "Offset X",
   "縱移": "Offset Y",
   "影色": "Shadow color",
+  "外觀": "Look",
+  "調整": "Adjust",
+  "出場": "Entrance",
+  "點一下收合／展開": "Click to collapse / expand",
 };
