@@ -1621,6 +1621,19 @@ function lineMetrics(ctx: CanvasRenderingContext2D, t: TextBlock, size: number, 
  * **這就是「外緣吸附」能對到真實字身的原因**，不是細節。
  * canvas 的 actualBoundingBox* 就是墨跡邊界，fontBoundingBox* 是排版邊界，相減即是。
  */
+/**
+ * 一行左右的墨跡邊界（第一批 #2）：bl＝第一個字身離行首原點多遠（可負），ir＝最後一個字身的右緣。
+ * actualBoundingBoxLeft 以原點為準向左為正，所以左空氣＝ −actualBoundingBoxLeft。
+ * 尾隨 letterSpacing 不在墨跡裡，ir 天生不含它（lineWidth 那條扣法在這裡不需要）。
+ */
+function inkSides(ctx: CanvasRenderingContext2D, line: string): { bl: number; ir: number } {
+  if (!line) return { bl: 0, ir: 0 };
+  const m = ctx.measureText(line);
+  return { bl: -m.actualBoundingBoxLeft, ir: m.actualBoundingBoxRight };
+}
+/** 貼字寬要不要扣左右墨跡：旗標在、而且是自動貼字寬（手動寬度的斷行不能動）。 */
+function inkTrimX(t: TextBlock): boolean { return t.inkX === true && t.manualWidth == null; }
+
 function inkInsets(ctx: CanvasRenderingContext2D, first: string, last: string, lineHeightMultiple: number) {
   const a = ctx.measureText(first || "字");
   const b = ctx.measureText(last || "字");
@@ -1663,7 +1676,15 @@ export function naturalTextSize(
   const lines = t.manualWidth != null ? wrap(ctx, t.text, t.manualWidth, kern) : t.text.split("\n");
   const { lineH, paraGap } = lineMetrics(ctx, t, size, lines[0] ?? "");
   const ink = inkInsets(ctx, lines[0] ?? "", lines[lines.length - 1] ?? "", t.lineHeightMultiple ?? 1);
-  const measuredW = Math.max(...lines.map((l) => lineWidth(ctx, l, kern)), 0);
+  let measuredW = Math.max(...lines.map((l) => lineWidth(ctx, l, kern)), 0);
+  if (inkTrimX(t) && lines.some((l) => l)) {
+    // 左右貼墨跡：靠左＝整塊最左字身到最右字身；置中／靠右＝各行自己的墨寬取最寬
+    //（drawHorizontal 逐行鏡射同一套，量測與繪製不可能分家）
+    const sides = lines.map((l) => inkSides(ctx, l));
+    measuredW = (t.alignment ?? "leading") === "leading"
+      ? Math.max(...sides.map((s) => s.ir)) - Math.min(...sides.map((s) => s.bl))
+      : Math.max(...sides.map((s) => s.ir - s.bl));
+  }
   const measuredH = lines.length * lineH + Math.max(0, lines.length - 1) * paraGap;
   ctx.restore();
 
@@ -1720,6 +1741,7 @@ export function snugTextWidth(
     ctx.restore();
     t.manualWidth = undefined;
   }
+  t.inkX = true;   // 按過「貼字寬」＝要的就是貼墨跡（第一批 #2；只在自動貼字寬時生效）
 
   const oldW = b.frame.w;
   const nat = naturalTextSize(ctx, t, canvasWidth, pageHeight);
@@ -1820,13 +1842,23 @@ function drawHorizontal(
   if (t.verticalAlignment === "middle") y = (h - blockH) / 2;
   else if (t.verticalAlignment === "bottom") y = h - blockH;
 
+  // 左右貼墨跡（第一批 #2）：框左緣＝最左字身、右緣＝最右字身，字要往回推左空氣才貼得上
+  const trimX = inkTrimX(t);
+  const minBl = trimX ? Math.min(...lines.map((l) => inkSides(ctx, l).bl)) : 0;
   for (const line of lines) {
     const lm = ctx.measureText(line || "字");
     const baseline = y + lm.actualBoundingBoxAscent; // 墨跡上緣貼齊 → 等同 iOS 的貼字盒
     const lw = lineWidth(ctx, line, kern);
     let x = 0;
-    if (t.alignment === "center") x = (w - lw) / 2;
-    else if (t.alignment === "trailing") x = w - lw;
+    if (trimX) {
+      const { bl, ir } = inkSides(ctx, line);
+      if (t.alignment === "center") x = w / 2 - (bl + (ir - bl) / 2);
+      else if (t.alignment === "trailing") x = w - ir;
+      else x = -minBl;
+    } else {
+      if (t.alignment === "center") x = (w - lw) / 2;
+      else if (t.alignment === "trailing") x = w - lw;
+    }
     if (line) ctx.fillText(line, x, baseline);
     y += lineH + paraGap;
   }

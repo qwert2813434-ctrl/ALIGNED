@@ -5,7 +5,7 @@ import { uiDark } from "./platform";
 import { __ } from "./i18n";
 import {
   type StoreFont, fetchCatalog, getCatalog, getInstalled, storefront,
-  downloadStoreFont, removeStoreFont,
+  downloadStoreFont, removeStoreFont, installedRev,
 } from "./core/fontstore";
 
 const CATS: [string, string][] = [
@@ -77,21 +77,25 @@ function row(f: StoreFont, base: string, dark: boolean, isInstalled: boolean, on
   info.querySelector(".fs-label")!.textContent = f.label;
   const act = document.createElement("button");
   act.className = "fs-act";
-  const setState = (state: "get" | "busy" | "done"): void => {
+  const setState = (state: "get" | "busy" | "done" | "update"): void => {
     act.dataset.state = state;
-    act.textContent = state === "get" ? __("下載") : state === "busy" ? "…" : __("已安裝");
+    act.textContent = state === "get" ? __("下載") : state === "busy" ? "…"
+      : state === "update" ? __("更新") : __("已安裝");
   };
-  setState(isInstalled ? "done" : "get");
+  // 有新版（catalog rev 比安裝紀錄新）＝「更新」；點了強制重抓（第一批 #6）
+  const hasUpdate = isInstalled && (f.rev ?? 0) > installedRev(f.family);
+  setState(hasUpdate ? "update" : isInstalled ? "done" : "get");
   act.addEventListener("click", () => {
     if (act.dataset.state === "busy") return;
     if (act.dataset.state === "done") {
       void removeStoreFont(f).then(() => { setState("get"); onChanged(); });
       return;
     }
+    const force = act.dataset.state === "update";
     setState("busy");
-    downloadStoreFont(f, (p) => { act.textContent = `${Math.round(p * 100)}%`; })
+    downloadStoreFont(f, (p) => { act.textContent = `${Math.round(p * 100)}%`; }, force)
       .then(() => { setState("done"); onChanged(); })
-      .catch(() => setState("get"));
+      .catch(() => setState(force ? "update" : "get"));
   });
   el.append(img, info, act);
   return el;

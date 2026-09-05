@@ -11,6 +11,9 @@ export interface StoreWeight { weight: number; ps: string; file: string; bytes: 
 export interface StoreFont {
   family: string; label: string; cat: string;
   license: string; bytes: number; preview: string; weights: StoreWeight[];
+  /** 修訂號（2026-09-05 第一批 #6，解「發佈即凍結」）：字檔改過 catalog 把 rev 加一，
+   *  已安裝那一版 rev 較小＝商店顯示「更新」可重抓。缺＝0（舊 catalog／舊安裝紀錄）。 */
+  rev?: number;
 }
 export interface StoreCatalog {
   version: number; baseURL: string; attribution: string; fonts: StoreFont[];
@@ -24,6 +27,14 @@ let catalog: StoreCatalog | null = null;
 const installedMeta = new Map<string, StoreFont>();
 
 export function getInstalled(): ReadonlySet<string> { return new Set(installedMeta.keys()); }
+/** 已安裝那一版的 rev（沒裝／舊紀錄＝0）。 */
+export function installedRev(family: string): number { return installedMeta.get(family)?.rev ?? 0; }
+/** 已安裝但 catalog 的 rev 比較新＝可更新。 */
+export function updatable(): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const f of catalog?.fonts ?? []) if (installedMeta.has(f.family) && (f.rev ?? 0) > installedRev(f.family)) out.add(f.family);
+  return out;
+}
 export function getCatalog(): StoreCatalog | null { return catalog; }
 export function storefront(): StoreFont[] {
   return (catalog?.fonts ?? []).filter((f) => !BUNDLED.has(f.family));
@@ -102,8 +113,12 @@ export async function restoreStoreFonts(): Promise<void> {
   }
 }
 
-export async function downloadStoreFont(f: StoreFont, onProgress?: (p: number) => void): Promise<void> {
-  if (installedMeta.has(f.family) || !catalog) return;
+export async function downloadStoreFont(f: StoreFont, onProgress?: (p: number) => void, force = false): Promise<void> {
+  if (!catalog) return;
+  if (installedMeta.has(f.family)) {
+    if (!force) return;
+    await removeStoreFont(f);   // 更新＝先卸舊字（document.fonts 同名 face 不會被新檔覆蓋）
+  }
   let got = 0;
   for (const w of f.weights) {
     const buf = await (await fetch(catalog.baseURL + w.file)).arrayBuffer();

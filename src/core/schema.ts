@@ -25,6 +25,10 @@ export interface TextBlock {
   inkColor?: string;       // 從 run 屬性取出的 CSS 色（見 runColor 的說明，優先於 colorHex）
   alignment: TextAlign;
   manualWidth?: number;    // 未設＝貼字寬（單列不換行，可自由跨頁）
+  /** 貼字寬左右也扣墨跡（2026-09-05 第一批 #2）。只有新建的文字與按過「貼字寬」的才帶——
+   *  版面穩定鐵則「舊值走舊碼」：沒這個旗標的舊文字，框寬照舊含左右字身空氣，一個 px 都不動。
+   *  只在 manualWidth 未設（自動貼字寬）時生效；手動寬度的斷行不能因此改變。 */
+  inkX?: true;
   manualHeight?: number;   // 橫排幾乎廢棄；直排時語意變成「欄高」
   verticalAlignment?: VAlign;
   isBodyFrame?: boolean;   // true＝長文框（固定容器、會裁切、吃文繞圖）

@@ -932,6 +932,14 @@ export class Editor {
                             frames, page, stage, this.snapStrength, others);
         arr[index] = r.snapped ? r.value : Math.round(raw);
         this.guides = r.guides;
+        // 離兩側邊界多遠（2026-09-05 第一批 #3）：兩顆藥丸各站在線的兩側空檔正中，
+        // 垂直線＝離頁左／頁右，水平線＝離頁頂／頁底。走等距徽章那套畫法，放手即清（up 會清 badges）。
+        const v = arr[index];
+        this.badges = axis === "x"
+          ? [{ x: page.x + v / 2, y: at.y, value: Math.round(v) },
+             { x: page.x + v + (p.canvasWidth - v) / 2, y: at.y, value: Math.round(p.canvasWidth - v) }]
+          : [{ x: at.x, y: v / 2, value: Math.round(v) },
+             { x: at.x, y: v + (p.pageHeight - v) / 2, value: Math.round(p.pageHeight - v) }];
         this.dirty = true;
       }
       return;

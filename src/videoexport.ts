@@ -204,9 +204,11 @@ export async function buildAnimFrames(
  */
 export async function buildPageSpec(
   project: Project, index: number, dir: string, output: string,
-  opts: { fps: number; mute: boolean }, deps: BuildDeps,
+  opts: { fps: number; mute: boolean; scale?: number }, deps: BuildDeps,
 ): Promise<VideoPageSpec | null> {
   const page = pageRect(project, index);
+  // 倍率（第一批 #7）：still 圖層由 deps.renderOpts.scale 烤；影片圖層的位置尺寸與頁尺寸這裡乘
+  const S = opts.scale ?? 1;
   const onPage = project.blocks
     .filter((b) => b.frame.x < page.x + page.w && page.x < b.frame.x + b.frame.w
                 && b.frame.y < page.y + page.h && page.y < b.frame.y + b.frame.h)
@@ -242,12 +244,12 @@ export async function buildPageSpec(
     const b = onPage[idx];
     if (b.content.type !== "video") continue;
     const m = b.content.media;
-    const w = roundEven(b.frame.w), h = roundEven(b.frame.h);
+    const w = roundEven(b.frame.w * S), h = roundEven(b.frame.h * S);
     const { mask, stroke } = maskAndStrokeCanvases(m, w, h);
     const layer: VideoLayerSpec = {
       type: "video",
       path: deps.assetPath(m.assetFileName),
-      x: b.frame.x - page.x, y: b.frame.y - page.y, w, h,
+      x: (b.frame.x - page.x) * S, y: (b.frame.y - page.y) * S, w, h,
       crop: { ...m.cropRect },
       filter: filterSig(m),   // c5＝代號＋參數（alignvideo 端解析）
     };
@@ -265,7 +267,7 @@ export async function buildPageSpec(
   await still(prev, onPage.length, false);
 
   return {
-    output, pageWidth: page.w, pageHeight: page.h,
+    output, pageWidth: page.w * S, pageHeight: page.h * S,
     fps: opts.fps, mute: opts.mute, paper: project.paperKey, layers,
   };
 }

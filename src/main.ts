@@ -1760,6 +1760,26 @@ editor.onContextMenu = (b, at) => {
     const many = sel.length > 1;
     items.push({ label: __("拷貝"), key: keys("⌘C"), run: () => copySelection() });
     items.push({ label: __("複製一份"), key: keys("⌘D"), run: () => duplicateSelection() });
+    // 大小寫（2026-09-05 第一批 #1）：排英文標題常要試三種形狀（SHE BOUGHT／she bought／She bought），
+    // 之前只能重打。改完照檢視器改文字那條路：重貼字盒→重畫→縮圖→undo 一步。
+    const textSel = sel.filter((k) => k.content.type === "text" || k.content.type === "textFlow");
+    if (textSel.length) {
+      const recase = (fn: (s: string) => string): void => {
+        for (const k of textSel) if (k.content.type === "text" || k.content.type === "textFlow") k.content.text.text = fn(k.content.text.text);
+        if (current) autoFitText(measureCtx, current);
+        editor.refresh(); scheduleThumbs(); commit("recase");
+      };
+      const sentence = (s: string): string =>
+        s.split("\n").map((line) => {
+          const i = line.search(/\S/);
+          return i < 0 ? line : line.slice(0, i) + line.charAt(i).toUpperCase() + line.slice(i + 1).toLowerCase();
+        }).join("\n");
+      items.push({ label: __("大小寫"), sub: [
+        { label: __("全大寫"), run: () => recase((s) => s.toUpperCase()) },
+        { label: __("全小寫"), run: () => recase((s) => s.toLowerCase()) },
+        { label: __("首字大寫"), run: () => recase(sentence) },
+      ] });
+    }
     if (others.length) {
       items.push({ label: many ? __("複製到其他頁") : __("複製到第…頁"),
                    sub: others.map((i) => ({ label: __f("第 {n} 頁", { n: i + 1 }), run: () => toPage(sel, i, true) })) });
@@ -2440,10 +2460,13 @@ async function exportAnimPage(index: number, dest: string): Promise<void> {
   const title = $<HTMLSpanElement>("#sheetSub");
   const base = title.textContent ?? "";
   flushC5Bakes();   // 理由同 buildShots
+  // 2×（2026-09-05 第一批 #7）：之前只有 PNG 吃倍率，動畫頁／影片頁一律 1×。
+  // 逐格影格照 exportOpts 的倍率烤、規格的頁尺寸跟著乘，alignvideo 就會出 2× 的 mp4。
+  const scale = exportPng.scale2x ? 2 : 1;
   const { count } = await buildAnimFrames(current, index, dir, { fps }, {
     saveJpg: (path, data) => invoke("save_png", { path, data }),
     videoUrl: videoUrl ?? null,
-    renderOpts: renderOpts(),
+    renderOpts: { ...renderOpts(), scale },
     onProgress: (done, total) => {
       if (done % 15 === 0 || done === total) {
         title.textContent = __f("{base}　動畫影格 {done}/{total}…", { base, done, total });
@@ -2451,7 +2474,7 @@ async function exportAnimPage(index: number, dest: string): Promise<void> {
     },
   });
   const page = pageRect(current, index);
-  const spec = { output: dest, pageWidth: page.w, pageHeight: page.h,
+  const spec = { output: dest, pageWidth: page.w * scale, pageHeight: page.h * scale,
                  fps, mute: true, layers: [], frames: dir, frameCount: count };
   await invoke("save_text", { path: `${dir}/spec.json`, contents: JSON.stringify(spec) });
   await invoke("export_video", { spec: `${dir}/spec.json` });
@@ -2464,11 +2487,12 @@ async function exportVideoPage(index: number, dest: string): Promise<void> {
   const dir = await invoke<string>("make_temp_dir");
   const assetDir = origin.kind === "alignproj" ? `${origin.root}/assets`
     : origin.kind === "json" ? `${origin.path.replace(/\/[^/]*$/, "")}/assets` : "";
+  const scale = exportPng.scale2x ? 2 : 1;   // 2× 同 exportAnimPage（第一批 #7）
   const spec = await buildPageSpec(current, index, dir, dest,
-    { fps: Number($<HTMLSelectElement>("#fps").value) || 30, mute: muted }, {
+    { fps: Number($<HTMLSelectElement>("#fps").value) || 30, mute: muted, scale }, {
       savePng: (path, data) => invoke("save_png", { path, data }),
       assetPath: (f) => `${assetDir}/${f}`,
-      renderOpts: renderOpts(),
+      renderOpts: { ...renderOpts(), scale },
     });
   if (!spec) return;
   await invoke("save_text", { path: `${dir}/spec.json`, contents: JSON.stringify(spec) });
@@ -2740,7 +2764,7 @@ async function addBlock(kind: string): Promise<void> {
     case "text":
       // 預留字與 iOS 同款；黑字放白頁看得見，深色頁自己改——與 iOS 同預設
       b = baseBlock({ type: "text", text: { text: __("雙擊編輯文字"), alignment: "center",
-        fontSize: Math.round(cw * 0.045), colorHex: "000000", fontWeightValue: 3 } }, 10, 10);
+        fontSize: Math.round(cw * 0.045), colorHex: "000000", fontWeightValue: 3, inkX: true } }, 10, 10);
       break;
     case "rectangle": case "ellipse":
       b = baseBlock({ type: "shape", shape: { kind, colorHex: "3A3A3A" } }, cw * 0.3, cw * 0.3);
