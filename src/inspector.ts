@@ -17,7 +17,7 @@ import { paperScope, snugTextWidth , attachedCanvas } from "./core/render";
 import { ANIM_DUR, ANIM_DUR_MAX, ANIM_HOLD, ANIM_HOLD_MAX, ANIM_STAGE2_DUR, ANIM_STAGE2_SCALE, ANIM_STAGGER, ANIM_STAGGER_MAX, CAROUSEL_INTERVAL, MODEL_SECS_PER_TURN, MODEL_SPIN_DUR, MODEL_TURNS, defaultDur, type AnimDir, type AnimKind, type Stage2 } from "./core/anim";
 import { GUIDE_PRESETS, MODULAR_COMBOS, defaultParams, generateGuides, replaceBatch } from "./core/guidegen";
 import type { GuideGenParams, GuidePreset } from "./core/guidegen";
-import { PAPERS, QUICK } from "./palette";
+import { QUICK, QUICK_PAPERS } from "./palette";
 import { openColorPop } from "./colorpop";
 
 /** 產生器每個專案「上次生成的那批」——重生成時只換這批，手動線不動。
@@ -673,7 +673,7 @@ export class Inspector {
       this.swatches(p.pageBackgroundHex?.[String(i)] ?? "FFFFFF", (hexNoHash) => {
         p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [String(i)]: hexNoHash };
         this.emit();
-      }, PAPERS),
+      }, QUICK_PAPERS),
     );
     // 一鍵把這一頁的底色刷到全部頁——輪播通常整本同一個底色，一頁一頁點是折磨
     this.row(bgSec, "").append(this.btn(__("全部頁套用"), () => {

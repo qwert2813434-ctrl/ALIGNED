@@ -37,13 +37,21 @@ export function openColorPop(anchor: HTMLElement, cur: string,
   el.id = "colorpop";
   const norm = (h: string): string => h.replace(/^#/, "").toUpperCase().slice(0, 6);
   let current = norm(cur);
+  // 選了不關（2026-09-05 小高：挑色常要連續比對）；點外面／Esc 才關。選中環跟著走、hex 欄同步。
+  const setCurrent = (hex: string): void => {
+    current = hex;
+    el.querySelectorAll<HTMLElement>(".cp-sw").forEach((k) => k.classList.toggle("on", k.dataset.hex === hex));
+    const hi = el.querySelector<HTMLInputElement>(".cp-hex");
+    if (hi) hi.value = `#${hex}`;
+  };
   const sw = (hex: string): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "cp-sw" + (hex === current ? " on" : "");
+    b.dataset.hex = hex;
     b.style.background = `#${hex}`;
     b.title = `#${hex}`;
-    b.addEventListener("click", () => { on.pick(hex); closeColorPop(); });
+    b.addEventListener("click", () => { on.pick(hex); setCurrent(hex); });
     return b;
   };
   const head = (title: string): void => {
@@ -68,13 +76,13 @@ export function openColorPop(anchor: HTMLElement, cur: string,
   hexIn.type = "text"; hexIn.className = "cp-hex"; hexIn.spellcheck = false; hexIn.value = `#${current}`;
   hexIn.addEventListener("change", () => {
     const v = norm(hexIn.value);
-    if (/^[0-9A-F]{6}$/.test(v)) { on.pick(v); closeColorPop(); } else hexIn.value = `#${current}`;
+    if (/^[0-9A-F]{6}$/.test(v)) { on.pick(v); setCurrent(v); } else hexIn.value = `#${current}`;
   });
   const any = document.createElement("label"); any.className = "cp-any"; any.textContent = __("任何顏色…");
   const native = document.createElement("input");
   native.type = "color"; native.value = `#${current}`;
   native.addEventListener("input", () => { current = norm(native.value); hexIn.value = `#${current}`; on.live?.(current); });
-  native.addEventListener("change", () => { on.pick(norm(native.value)); closeColorPop(); });
+  native.addEventListener("change", () => { on.pick(norm(native.value)); setCurrent(norm(native.value)); });
   any.append(native);
   foot.append(hexIn, any);
   el.append(foot);
