@@ -14,7 +14,7 @@ import { openFontStore } from "./fontstoreui";
 import { initSoftPrefs, openBrushPrefs } from "./brushprefs";
 import { getUIPrefs, onUIPrefsChanged } from "./uiprefs";
 import { CHIP, chipIcon } from "./icons";
-import { applyFilter, filterSig, loadFilterAssets, type FilterAssets } from "./core/filters";
+import { applyFilter, filterSig, loadFilterAssets, type FilterAssets, isParamSig } from "./core/filters";
 import type { SnapStrength } from "./core/align";
 import { Editor } from "./editor";
 import { renderAllPages, toBlob, type ExportedPage } from "./core/export";
@@ -305,7 +305,7 @@ function matteCanvas(img: HTMLImageElement, inverted?: boolean): HTMLCanvasEleme
  *  上解析度綽綽有餘，放大畫也看不出差。`maxSide` 給參數拖曳的低清即烤用。 */
 function filteredCanvas(img: HTMLImageElement, filter: string, fx: FilterAssets,
                         maxSide?: number): HTMLCanvasElement {
-  const cap = maxSide ?? (filter.startsWith("c5") ? 2560 : Infinity);
+  const cap = maxSide ?? (isParamSig(filter) ? 2560 : Infinity);   // 調整尾巴同帽：拖桿逐格重烤，2560 夠 IG
   const sc = Math.min(1, cap / Math.max(img.naturalWidth, img.naturalHeight));
   const c = document.createElement("canvas");
   c.width = Math.max(1, Math.round(img.naturalWidth * sc));
@@ -345,7 +345,7 @@ async function loadAssets(
     if (!img) continue;
     // c5 開檔只烤 900（全清一張 438ms，一本專案好幾張＝開檔凍結好幾秒）；
     // 標成低清，show() 末尾排 worker 補全清版，匯出前 flushC5Bakes 也會同步補齊
-    const c5 = filter?.startsWith("c5");
+    const c5 = isParamSig(filter);   // c5 孔版、或掛了調整尾巴：都是「會拖滑桿換鍵」的重身份
     variants.set(key, matte ? matteCanvas(img, inverted)
                             : filter ? filteredCanvas(img, filter, fx, c5 ? 900 : undefined) : img);
     if (c5) previewVariants.add(key);
@@ -427,7 +427,7 @@ function applySnapshot(s: string): void {
   // 渲染端查不到變體不會自己補，這裡是唯一的補烤點（審查 blocking 的另一半）
   for (const b of current.blocks) {
     if (b.content.type !== "image" && b.content.type !== "video") continue;
-    if (filterSig(b.content.media)?.startsWith("c5")) {
+    if (isParamSig(filterSig(b.content.media))) {
       void ensureVariantFor(b).then(() => editor.refresh());
     }
   }
@@ -1040,6 +1040,8 @@ function bakeC5(f: string, img: HTMLImageElement, tier: "quick" | "full", sig: s
 function bakeWorker(): Worker {
   if (_bakeWorker) return _bakeWorker;
   const w = new Worker(new URL("./filterworker.ts", import.meta.url), { type: "module" });
+  // 調整尾巴可以掛在 a1／b1 這些吃查找表的濾鏡後面（"a1~…"），工人沒材質會炸——c5 本來不用
+  w.postMessage({ type: "assets", assets: filterAssets });
   w.onmessage = (e: MessageEvent<{ needsrc?: string; bake?: string; sig: string; seq: number;
                                    tier: "quick" | "full"; w: number; h: number; buf: ArrayBuffer }>) => {
     const r = e.data;
@@ -1120,7 +1122,7 @@ function bakeWorker(): Worker {
 function sweepC5(f: string, keep: string): void {
   const used = c5KeysInUse();
   for (const k of [...assets.variants.keys()]) {
-    if (k.startsWith(`${f}|c5`) && k !== keep && !used.has(k)) {
+    if (k.startsWith(`${f}|`) && isParamSig(k.slice(f.length + 1)) && k !== keep && !used.has(k)) {
       assets.variants.delete(k); previewVariants.delete(k);
     }
   }
@@ -1137,7 +1139,7 @@ function c5KeysInUse(): Set<string> {
     const om = ob.content.media;
     if (!om.assetFileName) continue;
     const osig = filterSig(om);
-    if (!osig?.startsWith("c5")) continue;
+    if (!isParamSig(osig)) continue;
     const ofile = ob.content.type === "video" ? `${om.assetFileName}.poster.jpg` : om.assetFileName;
     for (const ff of [ofile, ...(om.carouselAssets ?? [])]) used.add(`${ff}|${osig}`);
   }
@@ -1151,8 +1153,8 @@ function flushC5Bakes(): void {
   bakePending.clear(); bakeInflight.clear(); bakeHealed.clear();
   const used = c5KeysInUse();
   for (const key of [...previewVariants]) {
-    const i = key.indexOf("|c5");
-    if (i < 0) continue;
+    const i = key.lastIndexOf("|");
+    if (i < 0 || !isParamSig(key.slice(i + 1))) continue;
     previewVariants.delete(key);
     const f = key.slice(0, i);
     if (!used.has(key)) { assets.variants.delete(key); continue; }   // 孤兒鍵（block 已刪／換濾鏡）：刪掉，別替它凍 438ms
@@ -1162,7 +1164,7 @@ function flushC5Bakes(): void {
   // c5Last 只是拖曳中的頂替圖——沒有任何 c5 鍵還在用這個檔＝畫布可以放了
   for (const f of [...c5Last.keys()]) {
     let alive = false;
-    for (const k of used) if (k.startsWith(`${f}|c5`)) { alive = true; break; }
+    for (const k of used) if (k.startsWith(`${f}|`) && isParamSig(k.slice(f.length + 1))) { alive = true; break; }
     if (!alive) c5Last.delete(f);
   }
 }
@@ -1178,7 +1180,7 @@ async function ensureVariantFor(b: Block, preview = false): Promise<void> {
     const key = f + (sig ? `|${sig}` : "");
     const img = assets.raw.get(f);
     if (!img) { continue; }
-    if (sig?.startsWith("c5")) {
+    if (sig && isParamSig(sig)) {   // c5 孔版或調整尾巴：拖桿逐格換鍵，走低清即烤＋worker 全清
       sweepC5(f, key);
       if (!assets.variants.has(key)) {
         const last = preview ? c5Last.get(f) : undefined;
@@ -1505,7 +1507,7 @@ function show(p: Project, a?: LoadedAssets, videoSrc?: (file: string) => string)
   // 開檔只烤了 900 低清（見 loadAssets），這裡排 worker 補全清版
   for (const b of p.blocks) {
     if (b.content.type !== "image" && b.content.type !== "video") continue;
-    if (filterSig(b.content.media)?.startsWith("c5")) void ensureVariantFor(b);
+    if (isParamSig(filterSig(b.content.media))) void ensureVariantFor(b);
   }
 }
 

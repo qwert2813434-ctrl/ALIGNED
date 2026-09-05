@@ -1017,18 +1017,79 @@ function stickerEdge(
 function drawWithEdge(
   ctx: CanvasRenderingContext2D, m: MediaBlock,
   stage: HTMLCanvasElement, w: number, h: number, edgeKey: string | null,
+  shadowKey: string | null = null,
 ): void {
-  if (!edgeKey) { ctx.drawImage(stage, 0, 0, w, h); return; }
+  if (!edgeKey) {
+    if (shadowKey) drawShadow(ctx, m, stage, null, 0, w, h, shadowKey);
+    ctx.drawImage(stage, 0, 0, w, h);
+    return;
+  }
   const bake = edgeBakeSize(w, h);
   const r = (m.matteEdgeWidth ?? 0) * Math.min(bake.w, bake.h);   // 短邊分數制，同 strokeWidth
   const stk = stickerEdge(stage, bake.w, bake.h, r, hex(m.matteEdgeHex, "FFFFFF"),
                           m.matteEdgeBevel ?? 0, edgeKey);
   const pad = Math.ceil(r) + 2;                                   // 同 stickerEdge 內的算式
   const px = pad * (w / bake.w), py = pad * (h / bake.h);
+  // 影子照**貼紙邊**的輪廓落（邊是圖的膨脹，剪影涵蓋圖本身）——只落一次，不會邊一層圖一層疊成雙影
+  if (shadowKey) drawShadow(ctx, m, stage, stk.edge, pad, w, h, shadowKey);
   ctx.drawImage(stk.edge, -px, -py, w + px * 2, h + py * 2);
   ctx.drawImage(stage, 0, 0, w, h);
   // 浮雕是整張貼紙的厚度，不是白邊自己的——所以蓋在照片**上面**
   if (stk.bevel) ctx.drawImage(stk.bevel, -px, -py, w + px * 2, h + py * 2);
+}
+
+// ── 陰影（2026-09-05，外觀面板）──────────────────────────────────────────
+// 沿**最終 alpha** 落影：形狀遮罩／去背／撕紙邊／貼紙邊的輪廓都跟著。做法＝把剪影（stage，
+// 或有貼紙邊時是邊那張）帶 canvas 陰影畫進一張離屏，再 destination-out 把剪影本身挖掉，
+// 只留影子。烤好的影子進 LRU（鍵＝內容指紋＋裝置尺寸），每幀只是一次 drawImage——
+// canvas 的 shadowBlur 是 CPU 模糊，每幀重做拖曳會卡。
+// 偏移在物件本地座標（畫在旋轉後的 ctx 上），物件轉了影子跟著轉（iOS `.shadow` 同）。
+const _shadowCache = new Map<string, { c: HTMLCanvasElement; pad: number; sw: number; sh: number }>();
+
+/** 陰影參數（absent 補預設；iOS MediaBlock.shadowParams 同值）。blur／dx／dy＝短邊分數。 */
+export function shadowOf(m: MediaBlock): { opacity: number; blur: number; dx: number; dy: number; hex: string } | null {
+  const opacity = m.shadowOpacity ?? 0;
+  if (!(opacity > 0)) return null;
+  return { opacity: Math.min(1, opacity), blur: m.shadowBlur ?? 0.05,
+           dx: m.shadowDx ?? 0.02, dy: m.shadowDy ?? 0.03, hex: hex(m.shadowHex, "000000") };
+}
+
+function drawShadow(
+  ctx: CanvasRenderingContext2D, m: MediaBlock,
+  stage: HTMLCanvasElement, edge: HTMLCanvasElement | null, edgePad: number,
+  w: number, h: number, key: string,
+): void {
+  const p = shadowOf(m);
+  if (!p) return;
+  let hit = _shadowCache.get(key);
+  if (hit) { _shadowCache.delete(key); _shadowCache.set(key, hit); }
+  else {
+    // 剪影來源的畫素尺寸：stage 是裝置畫素、edge 是正規化烤圖尺寸——都對應 w×h 頁座標
+    const src = edge ?? stage;
+    const srcW = edge ? src.width - edgePad * 2 : src.width;   // 邊那張帶 pad，扣掉才是框
+    const srcH = edge ? src.height - edgePad * 2 : src.height;
+    const k = srcW / w;                                         // 頁座標 → 剪影畫素
+    const minSide = Math.min(w, h);
+    const blur = p.blur * minSide * k, dx = p.dx * minSide * k, dy = p.dy * minSide * k;
+    const pad = Math.ceil(blur * 2 + Math.max(Math.abs(dx), Math.abs(dy))) + edgePad + 2;
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(srcW + pad * 2)); c.height = Math.max(1, Math.round(srcH + pad * 2));
+    const g = c.getContext("2d")!;
+    const ch = (i: number) => parseInt(p.hex.slice(i, i + 2), 16);
+    g.shadowColor = `rgba(${ch(1)},${ch(3)},${ch(5)},${p.opacity})`;
+    g.shadowBlur = blur * 2;      // canvas 的 shadowBlur 是兩倍標準差；iOS radius＝標準差
+    g.shadowOffsetX = dx; g.shadowOffsetY = dy;
+    const ox = pad - edgePad, oy = pad - edgePad;   // 邊那張自帶 pad，貼回去要退回框的原點
+    g.drawImage(src, edge ? ox : pad, edge ? oy : pad);
+    g.shadowColor = "transparent";
+    g.globalCompositeOperation = "destination-out";   // 挖掉剪影本身，只留影子
+    g.drawImage(src, edge ? ox : pad, edge ? oy : pad);
+    hit = { c, pad, sw: srcW, sh: srcH };
+    if (_shadowCache.size >= 12) _shadowCache.delete(_shadowCache.keys().next().value as string);
+    _shadowCache.set(key, hit);
+  }
+  const px = hit.pad * (w / hit.sw), py = hit.pad * (h / hit.sh);
+  ctx.drawImage(hit.c, -px, -py, w + px * 2, h + py * 2);
 }
 
 /** 效能計數器。每幀由讀的人歸零——渲染核心只管加。全是整數 ++，可以永遠開著。 */
@@ -1113,10 +1174,13 @@ function drawMedia(
   // 鑰匙＝內容指紋＋裝置尺寸。指紋涵蓋整塊 block 的 JSON，所以新增外觀欄位
   // 不必回來改這裡（見 blockSig 的檔頭）。
   const key = img && !live && !tooBig ? `${blockSig(b, opts)}|${SW}|${SH}` : null;
+  // 陰影：剪影（遮罩／去背／撕邊／貼紙邊）對影片也是靜的，所以鍵不看 live——影片逐幀只多一次 drawImage
+  const shadowOn = !!img && !!shadowOf(m);
+  const shadowKey = shadowOn ? `shadow|${blockSig(b, opts)}|${SW}|${SH}` : null;
   const hit = key ? cutCacheGet(key) : undefined;
   if (hit && (!edgeOn || _edgeCache.has(edgeKey!))) {
     renderCounters.cutHit++;
-    drawWithEdge(ctx, m, hit, w, h, edgeKey);
+    drawWithEdge(ctx, m, hit, w, h, edgeKey, shadowKey);
     if (!tornOf(m)) drawFrameStroke(ctx, m, w, h);   // 撕紙邊＝邊取代框（同下方主路）
     return;
   }
@@ -1124,9 +1188,10 @@ function drawMedia(
 
   // 沒遮罩又不進快取（影片即時影格、極端縮放、圖還沒載到）＝走原本那條直接畫的路，
   // 逐位不變。其餘都畫進離屏 stage：進快取的自己一張，不進的用共用那張。
+  // 陰影也要走 stage：直接畫的路是 clip 再畫，影子會被 clip 切掉。
   const torn = tornOf(m);
   let stage: HTMLCanvasElement | null = null;
-  if (matte || key || torn || edgeOn) {
+  if (matte || key || torn || edgeOn || shadowOn) {
     if (key) {
       stage = document.createElement("canvas");
       stage.width = SW; stage.height = SH;
@@ -1249,7 +1314,7 @@ function drawMedia(
       sg.restore();
     }
     if (key) cutCacheSet(key, stage);
-    drawWithEdge(ctx, m, stage, w, h, edgeKey);
+    drawWithEdge(ctx, m, stage, w, h, edgeKey, shadowKey);
   }
 
   // 撕紙邊開著＝邊取代框，矩形描邊不畫（畫了會浮在被撕掉的缺口上）

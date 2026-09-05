@@ -1414,6 +1414,7 @@ export class Inspector {
       },
     ));
     if (m.filterKey === "c5") this.risoRows(s, b, m);
+    this.adjustRows(s, b, m);
     // 去背——與「遮罩」是兩件事：遮罩是幾何形狀，去背是照片內容的主體輪廓。
     // 兩者可以並存（先被形狀裁、再被去背裁），所以分成兩列不合併。
     if (this.hooks.makeMatte && m.assetFileName) {
@@ -1567,6 +1568,7 @@ export class Inspector {
     );
     this.stickerRows(s, m);
     this.tornRows(s, b, m);
+    this.shadowRows(s, m);
     if (m.assetFileName) {
       // 拉直：轉的是**內容**不是 block（與 iOS 裁切畫面的那個角度同一個欄位）
       this.row(s, __("拉直")).append(
@@ -1794,6 +1796,55 @@ export class Inspector {
         m.matteEdgeBevel = v > 0 ? v : undefined; this.emit();
       }),
     );
+  }
+
+  /** 調整（2026-09-05，小高：「不透明度工具加上幾個基礎功能改名為調整」；iOS 那顆工具改名，
+   *  Mac 這邊不透明留在位置與圖層，五支拉桿掛在濾鏡下面）。存 −1…1、面板顯示 −100…100；
+   *  身份併進 filterSig，所以跟 c5 一樣走「拖動低清即烤、放手全清」（ensureVariant preview）。 */
+  private adjustRows(s: HTMLElement, b: Block, m: MediaBlock): void {
+    if (!m.assetFileName) return;
+    const live = () => { void this.hooks.ensureVariant(b, true).then(() => this.emit()); };
+    const commit = () => { void this.hooks.ensureVariant(b).then(() => this.emit()); };
+    type K = "adjExposure" | "adjBrightness" | "adjContrast" | "adjSaturation" | "adjTemperature";
+    const rows: [K, string][] = [
+      ["adjExposure", __("曝光")], ["adjBrightness", __("亮度")], ["adjContrast", __("對比")],
+      ["adjSaturation", __("飽和")], ["adjTemperature", __("色溫")],
+    ];
+    const set = (k: K, v: number): void => {
+      const n = Math.max(-1, Math.min(1, Math.round(v) / 100));
+      m[k] = n ? n : undefined;   // 0＝absent，舊專案零變動、鍵不掛尾巴
+    };
+    for (const [k, label] of rows) {
+      this.row(s, label).append(this.numSlider(Math.round((m[k] ?? 0) * 100), { min: -100, max: 100, step: 1 },
+        (v) => { set(k, v); live(); }, (v) => { set(k, v); commit(); }));
+    }
+    if (rows.some(([k]) => m[k] != null)) {
+      this.row(s, "").append(this.btn(__("重設調整"), () => {
+        for (const [k] of rows) m[k] = undefined;
+        this.rebuild(); commit();
+      }));
+    }
+  }
+
+  /** 陰影（2026-09-05 小高：「外觀多一個陰影工具，撕紙邊就隨輪廓陰影」）。沿最終 alpha 落影，
+   *  render.ts drawShadow；欄位 absent＝關。blur／dx／dy 短邊分數，面板顯示 ×100。 */
+  private shadowRows(s: HTMLElement, m: MediaBlock): void {
+    const on = (m.shadowOpacity ?? 0) > 0;
+    this.row(s, __("陰影")).append(this.check(on, (v) => {
+      if (v) { m.shadowOpacity = m.shadowOpacity || 0.35; }
+      else { m.shadowOpacity = undefined; m.shadowBlur = undefined; m.shadowDx = undefined; m.shadowDy = undefined; m.shadowHex = undefined; }
+      this.rebuild(); this.emit();
+    }));
+    if (!on) return;
+    const sl = (label: string, val: number, min: number, max: number, set: (v: number) => void): void => {
+      this.row(s, label).append(this.numSlider(Math.round(val * 100), { min, max, step: 1 },
+        (v) => { set(v / 100); this.emit(); }, (v) => { set(v / 100); this.emit(); }));
+    };
+    sl(__("強度"), m.shadowOpacity ?? 0.35, 1, 100, (v) => { m.shadowOpacity = Math.max(0.01, v); });
+    sl(__("模糊"), m.shadowBlur ?? 0.05, 0, 30, (v) => { m.shadowBlur = v; });
+    sl(__("橫移"), m.shadowDx ?? 0.02, -30, 30, (v) => { m.shadowDx = v; });
+    sl(__("縱移"), m.shadowDy ?? 0.03, -30, 30, (v) => { m.shadowDy = v; });
+    this.row(s, __("影色")).append(this.colorChip(m.shadowHex ?? "000000", (hx) => { m.shadowHex = hx; this.emit(); }));
   }
 
   /** 撕紙邊（2026-08-31，工具間濾鏡工坊同款邊緣系統）。只動 block 欄位不動變體——

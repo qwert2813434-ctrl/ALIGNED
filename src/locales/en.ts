@@ -712,4 +712,16 @@ export const en: Record<string, string> = {
   "BiRefNet 模型已裝好": "BiRefNet model installed",
   "BiRefNet 模型已移除": "BiRefNet model removed",
   "模型下載失敗：{msg}": "Model download failed: {msg}",
+  // 調整＋陰影（2026-09-05 質感減法：不透明度→調整、外觀加陰影）
+  "曝光": "Exposure",
+  "亮度": "Brightness",
+  "對比": "Contrast",
+  "飽和": "Saturation",
+  "色溫": "Temperature",
+  "重設調整": "Reset adjustments",
+  "強度": "Strength",
+  "模糊": "Blur",
+  "橫移": "Offset X",
+  "縱移": "Offset Y",
+  "影色": "Shadow color",
 };

@@ -232,10 +232,14 @@ function dotScreen(d: Uint8ClampedArray, w: number, h: number, table: Uint8Array
  *   空間效果，不縮同倍率的話，放大回畫面上顆粒會比輸出大一大圈——這正是
  *   「預覽跟輸出差很大」的主因之一。LUT／曲線類跟解析度無關，不用動。
  */
-export function applyFilter(key: string | null | undefined, img: ImageData, a: FilterAssets,
+export function applyFilter(sig: string | null | undefined, img: ImageData, a: FilterAssets,
                             scale = 1): void {
-  if (!key) return;
+  if (!sig) return;
   const d = img.data, w = img.width, h = img.height;
+  // 調整（2026-09-05）先於濾鏡：`~` 尾巴＝曝光／亮度／對比／飽和／色溫，先校正再上味道
+  const { base: key, adj } = splitSig(sig);
+  if (adj) applyAdjust(d, adj);
+  if (!key) return;
   // c5 孔版：唯一帶參數的濾鏡。身份字串＝"c5" 或 "c5:序列化參數"（見 filterSig），
   // 參數就藏在 key 裡，所以 worker／匯出這些只傳字串的管線一個都不用改。
   if (key === "c5" || key.startsWith("c5:")) { applyRiso(d, w, h, parseRisoSig(key)); return; }
@@ -364,10 +368,79 @@ export function risoOf(m: { risoInks?: string[]; risoPaper?: string; risoPitch?:
  * 普通濾鏡＝代號本身（既有鍵逐位不變）；c5＝代號＋canonical 參數序列化——
  * **參數變了鍵就變**，不同參數不會共用同一份快取（審查點名的靜靜畫錯）。
  */
-export function filterSig(m: { filterKey?: string } & Parameters<typeof risoOf>[0]): string | undefined {
-  if (m.filterKey !== "c5") return m.filterKey || undefined;
-  const p = risoOf(m);
-  return `c5:${p.inks.join(",")};${p.paper};${p.pitch};${p.hard};${p.reg};${p.dens};${p.grain}`;
+export function filterSig(m: { filterKey?: string } & Parameters<typeof risoOf>[0] & AdjustFields): string | undefined {
+  let base = m.filterKey || "";
+  if (m.filterKey === "c5") {
+    const p = risoOf(m);
+    base = `c5:${p.inks.join(",")};${p.paper};${p.pitch};${p.hard};${p.reg};${p.dens};${p.grain}`;
+  }
+  // 調整（2026-09-05）：有動就掛 `~e,b,c,s,t` 尾巴——沒濾鏡也能只有尾巴（"~…"）。
+  // 全 0／absent 不掛＝既有鍵逐位不變（舊專案的變體鍵一個字都不動）。
+  const a = adjustOf(m);
+  const sig = base + (a ? adjustSig(a) : "");
+  return sig || undefined;
+}
+
+// ── 調整（2026-09-05，「不透明度」工具擴成「調整」）─────────────────────────
+// 五支拉桿存 −1…1，套在濾鏡之前。數學兩端同一套（iOS FilterEngine.Adjust 烤成 32³ CIColorCube）：
+//   色溫 t：R×(1+0.18t)、B×(1−0.18t)（＋暖 −冷）
+//   曝光 e：×2^(2e／2.2)（2e＝EV；在 gamma 空間乘等於在線性空間乘 2^EV）
+//   亮度 b：＋0.25b
+//   對比 c：(v−0.5)×(c≥0 ? 1+c : 1+0.6c)＋0.5
+//   飽和 s：lum＋(v−lum)×(1+s)，lum＝Rec.709 權重
+export interface Adjust { e: number; b: number; c: number; s: number; t: number }
+export interface AdjustFields {
+  adjExposure?: number; adjBrightness?: number; adjContrast?: number;
+  adjSaturation?: number; adjTemperature?: number;
+}
+const adjNum = (v: number | undefined): number => {
+  const n = Math.round((v ?? 0) * 100) / 100;   // 兩位小數＝鍵 canonical，拖桿一格一鍵
+  return Number.isFinite(n) ? Math.max(-1, Math.min(1, n)) : 0;
+};
+const adjLive = (a: Adjust): boolean => !!(a.e || a.b || a.c || a.s || a.t);
+export function adjustOf(m: AdjustFields): Adjust | null {
+  const a = { e: adjNum(m.adjExposure), b: adjNum(m.adjBrightness), c: adjNum(m.adjContrast),
+              s: adjNum(m.adjSaturation), t: adjNum(m.adjTemperature) };
+  return adjLive(a) ? a : null;
+}
+export const adjustSig = (a: Adjust): string => `~${a.e},${a.b},${a.c},${a.s},${a.t}`;
+/** 濾鏡身份字串拆成「濾鏡代號（c5 含參數）」＋「調整」。沒有 `~`＝原樣。 */
+export function splitSig(sig: string): { base: string; adj: Adjust | null } {
+  const i = sig.indexOf("~");
+  if (i < 0) return { base: sig, adj: null };
+  const v = sig.slice(i + 1).split(",").map((x) => adjNum(parseFloat(x)));
+  const a = { e: v[0] ?? 0, b: v[1] ?? 0, c: v[2] ?? 0, s: v[3] ?? 0, t: v[4] ?? 0 };
+  return { base: sig.slice(0, i), adj: adjLive(a) ? a : null };
+}
+/** 帶參數的濾鏡身份（c5 孔版、或掛了調整尾巴）＝拖滑桿會逐格換鍵，
+ *  得走 900 低清即烤＋worker 全清那條路（main.ts），不能每格同步烤全解析度。 */
+export const isParamSig = (sig: string | null | undefined): boolean =>
+  !!sig && (sig.startsWith("c5") || sig.includes("~"));
+
+/** 就地套調整。三張 256 查找表（色溫是逐通道增益，所以 R／G／B 各一張）＋飽和逐像素混。 */
+export function applyAdjust(d: Uint8ClampedArray, a: Adjust): void {
+  const ev = Math.pow(2, (2 * a.e) / 2.2);
+  const br = 0.25 * a.b;
+  const cf = a.c >= 0 ? 1 + a.c : 1 + 0.6 * a.c;
+  const lut = (gain: number): Uint8Array => {
+    const t = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) {
+      let v = (i / 255) * gain * ev + br;
+      v = (v - 0.5) * cf + 0.5;
+      t[i] = Math.round(Math.max(0, Math.min(1, v)) * 255);
+    }
+    return t;
+  };
+  const lr = lut(1 + 0.18 * a.t), lg = lut(1), lb = lut(1 - 0.18 * a.t);
+  const sf = 1 + a.s;
+  for (let i = 0; i < d.length; i += 4) {
+    let r: number = lr[d[i]], g: number = lg[d[i + 1]], b: number = lb[d[i + 2]];
+    if (a.s) {
+      const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      r = l + (r - l) * sf; g = l + (g - l) * sf; b = l + (b - l) * sf;
+    }
+    d[i] = r; d[i + 1] = g; d[i + 2] = b;   // Uint8ClampedArray 自己夾 0–255 並四捨五入
+  }
 }
 
 export function parseRisoSig(key: string): RisoParams {

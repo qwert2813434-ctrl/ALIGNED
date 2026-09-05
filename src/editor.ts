@@ -537,7 +537,7 @@ export class Editor {
    * 旋轉過的元件也能拉——把指標換算回 block 的未旋轉座標系算尺寸，
    * 再從錨點反推 frame（照 iOS 那條「錨在看得見的角上」的補償路徑）。
    */
-  private resizeTo(at: { x: number; y: number }): void {
+  private resizeTo(at: { x: number; y: number }, center = false): void {
     const p = this.project;
     const s = this.sizing;
     if (!p || !s) return;
@@ -548,8 +548,14 @@ export class Editor {
     const n = CORNER_XY[s.key as Corner];
     const sx = n.x === 1 ? 1 : -1, sy = n.y === 1 ? 1 : -1;
 
+    // ⇧＝以中心縮放（2026-09-05 小高：「按 Shift 的時候能夠居中縮放」，跟手機雙指縮物件同語意）：
+    // 錨換成 block 中心（旋轉繞中心，所以中心不用轉），指標到中心的本地向量只有**半個**尺寸。
+    // 每一步都從起手框重算，拖到一半按下／放開 ⇧ 只是換錨，不會累積誤差。
+    const cx0 = f0.x + f0.w / 2, cy0 = f0.y + f0.h / 2;
+    const ax0 = center ? cx0 : s.anchor.x, ay0 = center ? cy0 : s.anchor.y;
+    const half = center ? 2 : 1;
     const r = (-b.rotation * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r);
-    const vx = at.x - s.anchor.x, vy = at.y - s.anchor.y;
+    const vx = at.x - ax0, vy = at.y - ay0;
     const ux = vx * c - vy * sn, uy = vx * sn + vy * c;
 
     const minSize = p.canvasWidth * 0.05;   // iOS 同值
@@ -559,22 +565,22 @@ export class Editor {
     if (lock) {
       // 投影到原對角線＝最貼近指標的等比解。iOS 只吃橫向位移（手指），
       // 桌面是滑鼠，往哪個方向拖都得跟手，所以改用投影。
-      const dx = sx * f0.w, dy = sy * f0.h;
+      const dx = (sx * f0.w) / half, dy = (sy * f0.h) / half;
       const k = (ux * dx + uy * dy) / (dx * dx + dy * dy);
       w = Math.max(f0.w * k, minSize);
       h = w * aspect;
     } else {
-      w = Math.max(sx * ux, minSize);
-      h = Math.max(sy * uy, minSize);
+      w = Math.max(sx * ux * half, minSize);
+      h = Math.max(sy * uy * half, minSize);
     }
 
     // 吸附只在未旋轉時給：旋轉後「正在動的邊」不是軸對齊的，咬軸對齊的參考線沒意義
     this.guides = [];
     if (!b.rotation && this.snapStrength !== "none") {
       const others = this.snapTargets(p, (_, i) => i === idx);
-      const home = pageRect(p, pageIndexForX(p, s.anchor.x + (sx * w) / 2));
+      const home = pageRect(p, pageIndexForX(p, center ? cx0 : s.anchor.x + (sx * w) / 2));
       const stage = stageBounds(p);
-      const edgeX = s.anchor.x + sx * w, edgeY = s.anchor.y + sy * h;
+      const edgeX = ax0 + (sx * w) / half, edgeY = ay0 + (sy * h) / half;
       const ex = snapResizingEdge(edgeX, "vertical", others, home, stage, this.snapStrength, p.guidesX ?? []);
       const ey = snapResizingEdge(edgeY, "horizontal", others, home, stage, this.snapStrength, p.guidesY ?? []);
       if (lock) {
@@ -582,17 +588,22 @@ export class Editor {
         const dxs = ex.snapped ? Math.abs(ex.value - edgeX) : Infinity;
         const dys = ey.snapped ? Math.abs(ey.value - edgeY) : Infinity;
         if (ex.snapped && dxs <= dys) {
-          w = Math.max(sx * (ex.value - s.anchor.x), minSize); h = w * aspect; this.guides = ex.guides;
+          w = Math.max(sx * (ex.value - ax0) * half, minSize); h = w * aspect; this.guides = ex.guides;
         } else if (ey.snapped) {
-          h = Math.max(sy * (ey.value - s.anchor.y), minSize); w = h / aspect; this.guides = ey.guides;
+          h = Math.max(sy * (ey.value - ay0) * half, minSize); w = h / aspect; this.guides = ey.guides;
         }
       } else {
-        if (ex.snapped) w = Math.max(sx * (ex.value - s.anchor.x), minSize);
-        if (ey.snapped) h = Math.max(sy * (ey.value - s.anchor.y), minSize);
+        if (ex.snapped) w = Math.max(sx * (ex.value - ax0) * half, minSize);
+        if (ey.snapped) h = Math.max(sy * (ey.value - ay0) * half, minSize);
         this.guides = [...ex.guides, ...ey.guides];
       }
     }
 
+    if (center) {
+      b.frame = { x: cx0 - w / 2, y: cy0 - h / 2, w, h };
+      this.dirty = true;
+      return;
+    }
     // 錨點反推：錨那一角在畫面上不能動，所以中心要跟著新尺寸走
     const rr = (b.rotation * Math.PI) / 180, cc = Math.cos(rr), ss = Math.sin(rr);
     const ax = (0.5 - n.x) * w, ay = (0.5 - n.y) * h;   // 錨角相對中心的本地向量
@@ -694,44 +705,49 @@ export class Editor {
    * 文字的字級、手動寬高、點制字距／行距都乘同一個倍率——**框變大字沒變大**
    * 是最容易漏掉的那半（em 制的字距與行高不用動，它們吃已經縮過的 fontSize）。
    */
-  private groupResizeTo(at: { x: number; y: number }): void {
+  private groupResizeTo(at: { x: number; y: number }, center = false): void {
     const p = this.project, s = this.groupSizing;
     if (!p || !s) return;
     const box = s.box;
     const minBox = p.canvasWidth * 0.05;   // iOS 同值
     const aspect = box.h / box.w;
+    // ⇧＝以群組中心縮放（同單選 resizeTo）：錨換成外框中心，指標到中心只有半個對角線
+    const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+    const ox = center ? cx : box.x, oy = center ? cy : box.y;
+    const half = center ? 2 : 1;
 
     // 投影到起手對角線＝最貼近指標的等比解（與單選等比角同一手法；
     // iOS 只吃橫向位移是因為那是手指，滑鼠得往哪拖都跟手）
-    const k = ((at.x - box.x) * box.w + (at.y - box.y) * box.h) / (box.w * box.w + box.h * box.h);
+    const k = (((at.x - ox) * box.w + (at.y - oy) * box.h) * half) / (box.w * box.w + box.h * box.h);
     let w = Math.max(box.w * k, minBox);
 
     // 吸附：等比鎖死＝右緣與下緣不能各吸各的，讓它們比距離、近的贏（同單選）
     this.guides = [];
     if (this.snapStrength !== "none") {
       const others = this.snapTargets(p, (b) => this.multi.has(b.id));
-      const home = pageRect(p, pageIndexForX(p, box.x + w / 2));
+      const home = pageRect(p, pageIndexForX(p, center ? cx : box.x + w / 2));
       const stage = stageBounds(p);
-      const edgeX = box.x + w, edgeY = box.y + w * aspect;
+      const edgeX = ox + w / half, edgeY = oy + (w * aspect) / half;
       const ex = snapResizingEdge(edgeX, "vertical", others, home, stage, this.snapStrength, p.guidesX ?? []);
       const ey = snapResizingEdge(edgeY, "horizontal", others, home, stage, this.snapStrength, p.guidesY ?? []);
       const dxs = ex.snapped ? Math.abs(ex.value - edgeX) : Infinity;
       const dys = ey.snapped && aspect > 0 ? Math.abs(ey.value - edgeY) : Infinity;
       if (ex.snapped && dxs <= dys) {
-        w = Math.max(ex.value - box.x, minBox); this.guides = ex.guides;
+        w = Math.max((ex.value - ox) * half, minBox); this.guides = ex.guides;
       } else if (dys < Infinity) {
-        w = Math.max((ey.value - box.y) / aspect, minBox); this.guides = ey.guides;
+        w = Math.max(((ey.value - oy) / aspect) * half, minBox); this.guides = ey.guides;
       }
     }
 
     const f = w / box.w;
+    const nx = center ? cx - w / 2 : box.x, ny = center ? cy - (w * aspect) / 2 : box.y;   // 新外框左上
     const defaultSize = p.canvasWidth * 0.045;   // TextBlock.fontSize 未設時的值
     for (const b of p.blocks) {
       const start = s.frames.get(b.id);
       if (!start) continue;
       b.frame = {
-        x: box.x + (start.x - box.x) * f,
-        y: box.y + (start.y - box.y) * f,
+        x: nx + (start.x - box.x) * f,
+        y: ny + (start.y - box.y) * f,
         w: start.w * f,
         h: start.h * f,
       };
@@ -948,11 +964,11 @@ export class Editor {
     }
     if (this.content) { this.panContent(this.at(e)); return; }
     if (this.rotating) { this.rotateTo(this.at(e), e.shiftKey); return; }
-    if (this.groupSizing) { this.groupResizeTo(this.at(e)); return; }
+    if (this.groupSizing) { this.groupResizeTo(this.at(e), e.shiftKey); return; }
     if (this.textSizing) { this.textResizeTo(this.at(e)); return; }
     if (this.sizing) {
       const at = this.at(e);
-      if (isEdge(this.sizing.key)) this.cropTo(at); else this.resizeTo(at);
+      if (isEdge(this.sizing.key)) this.cropTo(at); else this.resizeTo(at, e.shiftKey);   // ⇧＝居中縮放
       return;
     }
     if (this.marquee) {

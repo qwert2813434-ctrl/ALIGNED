@@ -11,7 +11,7 @@ import type { Block, Project } from "./core/schema";
 import { ANIM_STAGGER, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import { pageRect } from "./core/geometry";
 import { applyFilter , filterSig } from "./core/filters";
-import { maskAndStrokeCanvases, renderPageCanvas, type RenderOptions } from "./core/render";
+import { maskAndStrokeCanvases, renderPageCanvas, shadowOf, type RenderOptions } from "./core/render";
 import { toBlob } from "./core/export";
 import { hiddenHost } from "./videopool";
 
@@ -256,6 +256,38 @@ export async function buildPageSpec(
     if (mask) {
       layer.mask = `${dir}/mask-${file++}.png`;
       await deps.savePng(layer.mask, await pngBase64(mask));
+    }
+    // 陰影（2026-09-05）：影片的剪影（遮罩∩撕邊）是靜的，影子烤成整頁透明 still 墊在影片底下——
+    // alignvideo 只認 still／video 兩種圖層，這樣一張 PNG 就把事情做完，合成器零改動。
+    const sh = shadowOf(m);
+    if (sh) {
+      const pw = Math.round(page.w * S), ph = Math.round(page.h * S);
+      const sc = document.createElement("canvas");
+      sc.width = pw; sc.height = ph;
+      const g = sc.getContext("2d")!;
+      const x0 = (b.frame.x - page.x) * S, y0 = (b.frame.y - page.y) * S;
+      const minSide = Math.min(w, h);
+      const ch = (i: number) => parseInt(sh.hex.slice(i, i + 2), 16);
+      // 剪影：有遮罩畫遮罩（白＝留），沒有就是整個框
+      const sil = document.createElement("canvas");
+      sil.width = w; sil.height = h;
+      const sg = sil.getContext("2d")!;
+      if (mask) sg.drawImage(mask, 0, 0, w, h);
+      else { sg.fillStyle = "#fff"; sg.fillRect(0, 0, w, h); }
+      g.save();
+      g.translate(x0 + w / 2, y0 + h / 2);
+      if (b.rotation) g.rotate((b.rotation * Math.PI) / 180);   // 偏移在物件本地座標（同畫布）
+      g.shadowColor = `rgba(${ch(1)},${ch(3)},${ch(5)},${sh.opacity})`;
+      g.shadowBlur = sh.blur * minSide * 2;
+      g.shadowOffsetX = sh.dx * minSide; g.shadowOffsetY = sh.dy * minSide;
+      g.drawImage(sil, -w / 2, -h / 2);
+      g.shadowColor = "transparent";
+      g.globalCompositeOperation = "destination-out";
+      g.drawImage(sil, -w / 2, -h / 2);
+      g.restore();
+      const path = `${dir}/shadow-${file++}.png`;
+      await deps.savePng(path, await pngBase64(sc));
+      layers.push({ type: "still", path });
     }
     if (stroke) {
       layer.stroke = `${dir}/stroke-${file++}.png`;

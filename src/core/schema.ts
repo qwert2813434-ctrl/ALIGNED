@@ -102,6 +102,23 @@ export interface MediaBlock {
   tornDeform?: number;        // 0–1 輪廓波幅，0.5＝基準
   tornRough?: number;         // 0–1 波長與對比，0.5＝基準
   tornSeed?: number;          // 換一個邊
+  /** 調整（2026-09-05，「不透明度」工具擴成「調整」）：五支拉桿，存 −1…1（曝光＝×2 EV）。
+   *  absent／0＝不動（舊專案零變動）。套在濾鏡**之前**（先校正曝光色溫，再上濾鏡的味道），
+   *  身份併進 filterSig 的 `~e,b,c,s,t` 尾巴，變體／切圖／影片快取自動換鍵。
+   *  ⚠️ 動這組欄位＝動 project.json：三平台同發（iOS Block.swift 同名欄位）。 */
+  adjExposure?: number;
+  adjBrightness?: number;
+  adjContrast?: number;
+  adjSaturation?: number;
+  adjTemperature?: number;
+  /** 陰影（2026-09-05，外觀面板）：沿**最終 alpha** 落影——形狀遮罩／去背／撕紙邊／貼紙邊的
+   *  輪廓都跟著。shadowOpacity absent／0＝關；blur／dx／dy＝短邊分數（同 strokeWidth 制度），
+   *  偏移在物件本地座標（物件轉了影子跟著轉，iOS `.shadow` 同）；hex 不帶 #。⚠️ 三平台同發。 */
+  shadowOpacity?: number;
+  shadowBlur?: number;
+  shadowDx?: number;
+  shadowDy?: number;
+  shadowHex?: string;
 }
 
 export interface ShapeBlock {

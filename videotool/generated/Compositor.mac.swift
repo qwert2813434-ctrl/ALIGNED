@@ -4,7 +4,8 @@ import Foundation
 
 enum CompositeLayer {
     case still(CGImage)
-    case video(trackID: CMPersistentTrackID, origin: CGPoint, mask: CGImage?, stroke: CGImage?, filterKey: String?)
+    case video(trackID: CMPersistentTrackID, origin: CGPoint, mask: CGImage?, stroke: CGImage?, filterKey: String?,
+               shadow: CGImage?, shadowPad: CGFloat)
 }
 
 /// AVFoundation instantiates the compositor itself, so parameters ride on this
@@ -62,8 +63,15 @@ final class PageOverlayCompositor: NSObject, AVVideoCompositing {
                 switch layer {
                 case .still(let cg):
                     composite = CIImage(cgImage: cg).composited(over: composite)
-                case .video(let trackID, let origin, let mask, let stroke, let filterKey):
+                case .video(let trackID, let origin, let mask, let stroke, let filterKey, let shadow, let shadowPad):
                     if let pb = request.sourceFrame(byTrackID: trackID) {
+                        // 陰影（2026-09-05）：烤好的影子（比框大一圈 pad）先墊下去，再疊影片——
+                        // 影子在框外的部分不會被 mask 裁掉，跟畫布上一樣
+                        if let shadow {
+                            let sh = CIImage(cgImage: shadow).transformed(by: CGAffineTransform(
+                                translationX: origin.x - shadowPad, y: origin.y - shadowPad))
+                            composite = sh.composited(over: composite)
+                        }
                         var frame = CIImage(cvPixelBuffer: pb)
                         // 濾鏡 (Stage 2) — same FilterEngine chain as the canvas
                         // preview's AVVideoComposition, applied in the clip's own

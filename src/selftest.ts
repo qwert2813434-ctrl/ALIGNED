@@ -9,7 +9,7 @@ import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema"
 import { renderAllPages } from "./core/export";
 import { autoFitText, maskAndStrokeCanvases, renderCounters, renderPageCanvas, renderStage, snugTextWidth, textPrintLines } from "./core/render";
 import { doodleCounters, drawDoodle, drawDoodleUncached, type DoodleBlock } from "./core/doodle";
-import { applyRiso, filterSig, parseRisoSig, RISO_DEFAULTS } from "./core/filters";
+import { applyRiso, filterSig, parseRisoSig, RISO_DEFAULTS, splitSig, applyAdjust, isParamSig } from "./core/filters";
 import { tornCanvases, tornOf, tornCanvasSides, tornLocalSide } from "./core/tornedge";
 import { decodeProject, encodeProject, moveBlocks, reconcileOrder } from "./core/schema";
 import { Inspector } from "./inspector";
@@ -2508,6 +2508,30 @@ async function run(): Promise<void> {
     const g = mk().getContext("2d")!; g.globalAlpha = 0.5;
     drawDoodle(g, dood, 128, 128);
     check("塗鴉快取：會動的與半透明的不進快取", doodleCounters.hit + doodleCounters.miss === 0, `hit+miss=${doodleCounters.hit + doodleCounters.miss}`);
+  }
+
+  // ── 調整（2026-09-05：不透明度→調整；身份掛 ~ 尾巴、濾鏡之前套用）────────
+  {
+    const base: MediaBlock = { assetFileName: "a.jpg", cropRect: { x: 0, y: 0, w: 1, h: 1 } };
+    check("adjust：全 0／absent 不掛尾巴（舊鍵零變動）", filterSig({ ...base, filterKey: "a1", adjExposure: 0 }) === "a1");
+    check("adjust：沒濾鏡也能只有尾巴", filterSig({ ...base, adjExposure: 0.5 }) === "~0.5,0,0,0,0", String(filterSig({ ...base, adjExposure: 0.5 })));
+    const both = filterSig({ ...base, filterKey: "a1", adjTemperature: -0.25 })!;
+    check("adjust：濾鏡＋尾巴", both === "a1~0,0,0,0,-0.25", both);
+    const sp = splitSig(both);
+    check("adjust：splitSig 拆回代號＋參數", sp.base === "a1" && sp.adj?.t === -0.25 && sp.adj.e === 0, JSON.stringify(sp));
+    check("adjust：c5 帶尾巴仍認得 c5", splitSig("c5:1;2;3;4;5;6;7~0.1,0,0,0,0").base === "c5:1;2;3;4;5;6;7");
+    check("adjust：isParamSig 認 c5 與尾巴、不認 a1", isParamSig("c5") && isParamSig("~0.1,0,0,0,0") && isParamSig("a1~0,0.2,0,0,0") && !isParamSig("a1") && !isParamSig(undefined));
+    check("adjust：兩位小數 canonical＋夾 −1…1", filterSig({ ...base, adjContrast: 1.234, adjSaturation: -7 }) === "~0,0,1,-1,0", String(filterSig({ ...base, adjContrast: 1.234, adjSaturation: -7 })));
+    // 逐像素：中性不動；曝光＋亮；色溫＋＝R 升 B 降；飽和 −1＝灰
+    const px = new Uint8ClampedArray([100, 150, 200, 255]);
+    const d0 = px.slice(); applyAdjust(d0, { e: 0.5, b: 0, c: 0, s: 0, t: 0 });
+    check("adjust：曝光＋1EV 三通道都變亮", d0[0] > 100 && d0[1] > 150 && d0[2] > 200, Array.from(d0).join());
+    const d1 = px.slice(); applyAdjust(d1, { e: 0, b: 0, c: 0, s: 0, t: 1 });
+    check("adjust：色溫＋＝R 升 B 降 G 不動", d1[0] > 100 && d1[2] < 200 && d1[1] === 150, Array.from(d1).join());
+    const d2 = px.slice(); applyAdjust(d2, { e: 0, b: 0, c: 0, s: -1, t: 0 });
+    check("adjust：飽和 −1＝三通道相等（灰）", d2[0] === d2[1] && d2[1] === d2[2], Array.from(d2).join());
+    const d3 = px.slice(); applyAdjust(d3, { e: 0, b: 0, c: 1, s: 0, t: 0 });
+    check("adjust：對比＋＝離 128 更遠", d3[0] < 100 && d3[2] > 200, Array.from(d3).join());
   }
 
   // ── c5 孔版濾鏡＋撕紙邊（2026-08-31）──────────────────────────────────

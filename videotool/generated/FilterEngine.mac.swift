@@ -123,11 +123,95 @@ enum FilterEngine {
     /// 一律裁回輸入 extent（Bloom 會把 extent 撐大，不裁回去合成座標就歪）。
     /// 純函式、無共享狀態 — 兩個呼叫端都在背景執行緒，執行緒安全。
     static func applyCI(_ key: String?, to input: CIImage) -> CIImage {
-        if let key, key.hasPrefix("c5") {
-            return risoCI(RisoParams.parse(key), input: input).cropped(to: input.extent)
+        let (base, adj) = splitSig(key)
+        var img = input
+        if let adj { img = adjustCI(adj, input: img) }   // 調整先於濾鏡（同 apply）
+        if let base, base.hasPrefix("c5") {
+            return risoCI(RisoParams.parse(base), input: img).cropped(to: input.extent)
         }
-        guard let key, let filter = MediaFilter(rawValue: key) else { return input }
-        return render(filter, input: input, ext: input.extent).cropped(to: input.extent)
+        guard let base, let filter = MediaFilter(rawValue: base) else { return img.cropped(to: input.extent) }
+        return render(filter, input: img, ext: input.extent).cropped(to: input.extent)
+    }
+
+    // MARK: - 調整（2026-09-05，「不透明度」工具擴成「調整」）
+    // 五支拉桿存 −1…1，套在濾鏡之前。數學與 Mac filters.ts applyAdjust 同一套：
+    //   色溫 t：R×(1+0.18t)、B×(1−0.18t)（＋暖 −冷）／曝光 e：×2^(2e／2.2)／亮度 b：＋0.25b
+    //   對比 c：(v−0.5)×(c≥0 ? 1+c : 1+0.6c)＋0.5／飽和 s：lum＋(v−lum)×(1+s)
+    // 這裡烤成 32³ CIColorCube（GPU、影片逐格也不痛），鍵＝sig 快取；工作色彩空間 sRGB（ctx 同）
+    // 所以是 gamma 空間的數值運算，跟 Mac 的 8 位元查表對得上。
+    struct Adjust: Equatable {
+        var e = 0.0, b = 0.0, c = 0.0, s = 0.0, t = 0.0
+        /// 兩位小數＝鍵 canonical（拖桿一格一鍵），夾 −1…1
+        static func clampRound(_ v: Double) -> Double {
+            let n = (v * 100).rounded() / 100
+            return n.isFinite ? max(-1, min(1, n)) : 0
+        }
+        var isNeutral: Bool { e == 0 && b == 0 && c == 0 && s == 0 && t == 0 }
+        /// "~e,b,c,s,t"——掛在濾鏡代號後面（沒濾鏡也可以只有尾巴）
+        var sig: String { "~" + [e, b, c, s, t].map { String(format: "%g", $0) }.joined(separator: ",") }
+        static func parse(_ tail: Substring) -> Adjust? {
+            let v = tail.split(separator: ",", omittingEmptySubsequences: false).map { clampRound(Double($0) ?? 0) }
+            var a = Adjust()
+            if v.count > 0 { a.e = v[0] }; if v.count > 1 { a.b = v[1] }; if v.count > 2 { a.c = v[2] }
+            if v.count > 3 { a.s = v[3] }; if v.count > 4 { a.t = v[4] }
+            return a.isNeutral ? nil : a
+        }
+    }
+
+    /// 濾鏡身份字串拆成「濾鏡代號（c5 含參數）」＋「調整」。沒有 `~`＝原樣；空字串當 nil。
+    static func splitSig(_ key: String?) -> (base: String?, adj: Adjust?) {
+        guard let key, !key.isEmpty else { return (nil, nil) }
+        guard let i = key.firstIndex(of: "~") else { return (key, nil) }
+        let base = String(key[..<i])
+        return (base.isEmpty ? nil : base, Adjust.parse(key[key.index(after: i)...]))
+    }
+
+    /// 這個身份字串會不會真的改變畫面（有濾鏡代號、或有調整）——各快取入口的守門條件。
+    static func isRenderable(_ key: String?) -> Bool {
+        let (base, adj) = splitSig(key)
+        if adj != nil { return true }
+        guard let base else { return false }
+        return base.hasPrefix("c5") || MediaFilter(rawValue: base) != nil
+    }
+
+    private static var cubeCache: [String: Data] = [:]
+    private static let cubeLock = NSLock()   // 主緒與影片 compositor 背景緒都會進來（同 paperLock 教訓）
+
+    static func adjustCI(_ a: Adjust, input: CIImage) -> CIImage {
+        let dim = 32
+        let key = a.sig
+        cubeLock.lock(); var data = cubeCache[key]; cubeLock.unlock()
+        if data == nil {
+            let ev = pow(2.0, (2 * a.e) / 2.2), br = 0.25 * a.b
+            let cf = a.c >= 0 ? 1 + a.c : 1 + 0.6 * a.c
+            let gr = 1 + 0.18 * a.t, gb = 1 - 0.18 * a.t, sf = 1 + a.s
+            @inline(__always) func tone(_ v: Double, _ gain: Double) -> Double {
+                let x = (v * gain * ev + br - 0.5) * cf + 0.5
+                return max(0, min(1, x))
+            }
+            var buf = [Float](repeating: 0, count: dim * dim * dim * 4)
+            var i = 0
+            for bz in 0..<dim { for gy in 0..<dim { for rx in 0..<dim {   // 藍最慢、紅最快（CIColorCube 佈局）
+                var r = tone(Double(rx) / Double(dim - 1), gr)
+                var g = tone(Double(gy) / Double(dim - 1), 1)
+                var b = tone(Double(bz) / Double(dim - 1), gb)
+                if a.s != 0 {
+                    let l = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                    r = max(0, min(1, l + (r - l) * sf)); g = max(0, min(1, l + (g - l) * sf)); b = max(0, min(1, l + (b - l) * sf))
+                }
+                buf[i] = Float(r); buf[i + 1] = Float(g); buf[i + 2] = Float(b); buf[i + 3] = 1
+                i += 4
+            } } }
+            let d = buf.withUnsafeBufferPointer { Data(buffer: $0) }
+            cubeLock.lock()
+            if cubeCache.count > 64 { cubeCache.removeAll() }   // 拖一輪滑桿幾十組，別無上限長
+            cubeCache[key] = d
+            cubeLock.unlock()
+            data = d
+        }
+        return input.applyingFilter("CIColorCube", parameters: [
+            "inputCubeDimension": dim, "inputCubeData": data!,
+        ])
     }
 
     /// 即時預覽版紙張（canvas 影片的 AVVideoComposition handler，背景緒）—
