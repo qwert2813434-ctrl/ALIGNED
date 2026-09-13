@@ -58,14 +58,16 @@ function cornerPoint(f: Rect, rotation: number, nx: number, ny: number): { x: nu
   return { x: cx + dx * c - dy * s, y: cy + dx * s + dy * c };
 }
 
-/** 拉框能改尺寸的型別。文字排除（見上）、鎖定的不給。 */
+/** 拉框能改尺寸的型別。文字排除（見上）、鎖定的不給。
+ *  3D 跟照片一樣是固定比例內容；Mac 必須能用角把手調整它在版面上的大小。 */
 function resizable(b: Block): boolean {
-  return !b.locked && (b.content.type === "image" || b.content.type === "video" || b.content.type === "shape");
+  return !b.locked && (b.content.type === "image" || b.content.type === "video"
+    || b.content.type === "shape" || b.content.type === "model");
 }
 
-/** 等比鎖定＝照片與影片（iOS：角是 aspect-locked，拉了不變形）。形狀自由拉。 */
+/** 等比鎖定＝照片、影片與 3D（iOS：角是 aspect-locked，拉了不變形）。形狀自由拉。 */
 function aspectLocked(b: Block): boolean {
-  return b.content.type === "image" || b.content.type === "video";
+  return b.content.type === "image" || b.content.type === "video" || b.content.type === "model";
 }
 
 /** 可以裁切的：未旋轉、有素材的媒體（iOS `content.isMedia && rotation == 0`）。 */

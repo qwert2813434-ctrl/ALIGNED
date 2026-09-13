@@ -465,6 +465,10 @@ async function run(): Promise<void> {
       id, frame, rotation, zIndex: 1, locked: false, opacity: 1,
       content: { type: "image", media: { assetFileName: "x.jpg", cropRect: { x: 0, y: 0, w: 1, h: 1 } } },
     });
+    const model = (id: string, frame: Rect): Block => ({
+      id, frame, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+      content: { type: "model", model: { assetFileName: "x.glb" } },
+    });
     /** 測試自己算的旋轉角座標——不從 editor 借，借了就變成自己驗自己。 */
     const cornerAt = (f: Rect, rot: number, nx: number, ny: number) => {
       const r = (rot * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
@@ -486,6 +490,15 @@ async function run(): Promise<void> {
       const f = dragHandle(p, "m", { x: 600, y: 500 }, { x: 800, y: 800 });
       // 投影：u=(600,600)、d=(400,300) → k=(600·400+600·300)/(400²+300²)=1.68
       check("手把：對角釘住＋等比鎖（照片）",
+            near(f.x, 200) && near(f.y, 200) && near(f.w, 672, 0.5) && near(f.h, 504, 0.5),
+            `${f.x.toFixed(1)},${f.y.toFixed(1)} ${f.w.toFixed(1)}×${f.h.toFixed(1)}（應為 200,200 672×504）`);
+    }
+
+    // (a2) 3D 也必須長角把手並鎖比例；iPad 原本可雙指縮放，Mac 不能漏掉同一能力。
+    {
+      const p = project([model("m3d", { x: 200, y: 200, w: 400, h: 300 })]);
+      const f = dragHandle(p, "m3d", { x: 600, y: 500 }, { x: 800, y: 800 });
+      check("手把：3D 物件可等比縮放",
             near(f.x, 200) && near(f.y, 200) && near(f.w, 672, 0.5) && near(f.h, 504, 0.5),
             `${f.x.toFixed(1)},${f.y.toFixed(1)} ${f.w.toFixed(1)}×${f.h.toFixed(1)}（應為 200,200 672×504）`);
     }

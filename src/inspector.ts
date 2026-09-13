@@ -1092,7 +1092,9 @@ export class Inspector {
     );
     this.pageAlignRow(s, () => [b]);
     const size = this.row(s, __("尺寸"));
-    const editable = b.content.type === "shape" || b.content.type === "image" || b.content.type === "video";
+    // 3D 在 iPad 可用雙指等比縮放；Mac 同樣要能從位置面板輸入尺寸或拉縮放桿。
+    const editable = b.content.type === "shape" || b.content.type === "image"
+      || b.content.type === "video" || b.content.type === "model";
     // 文字的框是貼字盒（由內容決定），這裡不給改——改字級/欄寬才是正路
     size.append(
       this.num(Math.round(b.frame.w), { step: 1, disabled: !editable }, (v) => { b.frame.w = v; this.emit(); }),
