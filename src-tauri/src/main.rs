@@ -5,9 +5,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::Emitter;
+use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 
 mod mediaserv;
 mod model;
+mod agentbridge;
 
 /// 呼叫系統的 Apple Archive 工具。
 /// Windows／Linux 沒有 `aa`，而 `.alignproj` 就是 AppleArchive/LZFSE 容器——
@@ -413,10 +416,75 @@ mod font_tests {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            // MCP 是加值能力，暫存區不可寫等 bridge 問題不能阻止 ALIGNED 本體開機。
+            if let Err(error) = agentbridge::init() { eprintln!("agent bridge 啟動失敗：{error}"); }
+
+            // Native menu is the desktop command map, not decorative OS chrome.
+            // Every custom id below is handled by the web editor through
+            // `aligned-native-menu`; standard window/app items stay native.
+            let item = |id: &str, text: &str, shortcut: Option<&str>| {
+                MenuItem::with_id(app, id, text, true, shortcut)
+            };
+            let app_menu = SubmenuBuilder::new(app, "ALIGNED")
+                .about(None).separator()
+                .item(&item("app_settings", "偏好設定…", Some("CmdOrCtrl+,"))?)
+                .separator().services().separator().hide().hide_others().separator().quit().build()?;
+            let file_menu = SubmenuBuilder::new(app, "File")
+                .item(&item("file_new", "新專案", Some("CmdOrCtrl+N"))?)
+                .item(&item("file_open", "開啟…", Some("CmdOrCtrl+O"))?)
+                .item(&item("file_home", "最近專案與資料夾", None)?)
+                .separator()
+                .item(&item("file_save", "存檔", Some("CmdOrCtrl+S"))?)
+                .separator()
+                .item(&item("file_export_png", "匯出 PNG／影片…", Some("CmdOrCtrl+E"))?)
+                .item(&item("file_export_template", "匯出範本（不含素材）…", None)?)
+                .item(&item("file_pack", "打包 .alignproj（含素材）…", None)?)
+                .separator().close_window().build()?;
+            let edit_menu = SubmenuBuilder::new(app, "Edit")
+                .item(&item("edit_undo", "復原", Some("CmdOrCtrl+Z"))?)
+                .item(&item("edit_redo", "重做", Some("CmdOrCtrl+Shift+Z"))?)
+                .separator()
+                .item(&item("edit_copy", "拷貝", Some("CmdOrCtrl+C"))?)
+                .item(&item("edit_paste", "貼上", Some("CmdOrCtrl+V"))?)
+                .item(&item("edit_duplicate", "複製一份", Some("CmdOrCtrl+D"))?)
+                .item(&item("edit_delete", "刪除", None)?)
+                .separator()
+                .item(&item("edit_select_all", "選取本頁全部", Some("CmdOrCtrl+A"))?)
+                .build()?;
+            let view_menu = SubmenuBuilder::new(app, "View")
+                .item(&item("view_zoom_in", "放大", Some("CmdOrCtrl+="))?)
+                .item(&item("view_zoom_out", "縮小", Some("CmdOrCtrl+-"))?)
+                .item(&item("view_fit", "顯示全部", Some("CmdOrCtrl+0"))?)
+                .separator()
+                .item(&item("view_guides", "顯示／隱藏參考線", Some("CmdOrCtrl+;"))?)
+                .item(&item("view_guide_panel", "參考線面板", None)?)
+                .item(&item("view_layers", "圖層面板", None)?)
+                .item(&item("view_play", "播放／暫停版面", None)?)
+                .separator().fullscreen().build()?;
+            let ai_menu = SubmenuBuilder::new(app, "AI")
+                .item(&item("ai_status", "AI 共編狀態", None)?)
+                .item(&item("ai_guide", "開啟 MCP 共編指南", None)?)
+                .build()?;
+            let window_menu = SubmenuBuilder::new(app, "Window")
+                .minimize().maximize().separator().close_window().build()?;
+            app.set_menu(MenuBuilder::new(app)
+                .items(&[&app_menu, &file_menu, &edit_menu, &view_menu, &ai_menu, &window_menu])
+                .build()?)?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            let id = event.id().0.clone();
+            if id.starts_with("app_") || id.starts_with("file_") || id.starts_with("edit_")
+                || id.starts_with("view_") || id.starts_with("ai_") {
+                let _ = app.emit("aligned-native-menu", id);
+            }
+        })
         .invoke_handler(tauri::generate_handler![load_project, save_png, save_text, pack_alignproj,
             pack_template, copy_asset, copy_asset_as,
             make_temp_dir, export_video, make_matte, media_base, trim_video,
             list_system_fonts, list_user_fonts, import_font, open_url,
+            agentbridge::agent_bridge_take, agentbridge::agent_bridge_respond,
             model::model_status, model::model_download, model::model_remove, model::model_matte,
             model::model_unload, model::model_cached])
         .run(tauri::generate_context!())

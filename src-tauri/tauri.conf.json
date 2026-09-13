@@ -1,12 +1,12 @@
 {
   "productName": "ALIGNED",
-  "version": "1.3.5",
+  "version": "1.3.6",
   "identifier": "com.arminkao.aligned.mac",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "bash videotool/build.sh && npm run build && rm -rf dist/samples/real dist/samples/_probe dist/samples/perf dist/filterref dist/assetprobe.html dist/videoprobe.html"
+    "beforeBuildCommand": "bash videotool/build.sh && npm run build && rm -rf dist/samples/real dist/samples/_probe dist/samples/_3d-reveal dist/samples/perf dist/filterref dist/assetprobe.html dist/videoprobe.html"
   },
   "app": {
     "windows": [

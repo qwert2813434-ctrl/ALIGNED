@@ -117,6 +117,7 @@ const TEXT_ALIGN_ICON: Record<TextAlign, string> = {
   leading:  svg('<path d="M3 4.5h12"/><path d="M3 9h7"/><path d="M3 13.5h10"/>'),
   center:   svg('<path d="M3 4.5h12"/><path d="M5.5 9h7"/><path d="M4 13.5h10"/>'),
   trailing: svg('<path d="M3 4.5h12"/><path d="M8 9h7"/><path d="M5 13.5h10"/>'),
+  justified: svg('<path d="M3 4.5h12"/><path d="M3 9h12"/><path d="M3 13.5h12"/>'),
 };
 
 /** 圖層列要顯示的名字。文字用內容前幾個字——那才是他認得出來的東西。 */
@@ -142,6 +143,8 @@ export interface InspectorHooks {
   reorder: (block: Block, dir: "front" | "back") => void;
   /** 播放出場動畫。給 block＝只播那一個（面板即時回饋）；不給＝整個版面。 */
   playAnim?: (block?: Block) => void;
+  /** 3D 物件直接拖曳視角；明確模式避免跟移動物件衝突。 */
+  modelOrbit?: { active: () => boolean; set: (on: boolean) => void };
   /** 開筆刷偏好設定視窗（齒輪選單同一扇；塗鴉面板的齒輪鈕）。 */
   openBrushPrefs?: () => void;
   /** 一鍵把整頁的出場順序排開（寫進專案），排完自動播一次。 */
@@ -459,6 +462,15 @@ export class Inspector {
   private model3d(b: Block, m: ModelBlock): void {
     const s = this.section(__("3D 物件"), "content", true);
     const play = (): void => this.hooks.playAnim?.(b);
+    if (this.hooks.modelOrbit) {
+      const active = this.hooks.modelOrbit.active();
+      const button = this.btn(active ? __("完成視角調整") : __("拖曳調整視角"), () => {
+        this.hooks.modelOrbit!.set(!active);
+        this.rebuild();
+      });
+      button.setAttribute("aria-pressed", String(active));
+      this.row(s, __("直接操作")).append(button);
+    }
     this.row(s, __("展示方式")).append(this.select(
       [["", __("靜止")], ["spin", __("慢慢轉圈")], ["spinStop", __("快轉煞停")]],
       m.mode ?? "",
@@ -480,9 +492,25 @@ export class Inspector {
                  (v) => { m.dur = v; this.emit(); play(); }),
       );
     }
-    this.row(s, __("角度")).append(
-      this.num(m.yaw ?? 0, { min: -360, max: 360, step: 5 },
+    this.row(s, __("左右角度")).append(
+      this.numSlider(m.yaw ?? 0, { min: -180, max: 180, step: 1 },
+               (v) => { m.yaw = v || undefined; this.emit(); },
                (v) => { m.yaw = v || undefined; this.emit(); }),
+    );
+    this.row(s, __("上下角度")).append(
+      this.numSlider(m.pitch ?? 0, { min: -75, max: 75, step: 1 },
+               (v) => { m.pitch = v || undefined; this.emit(); },
+               (v) => { m.pitch = v || undefined; this.emit(); }),
+    );
+    this.row(s, __("爆炸程度")).append(
+      this.numSlider(m.explode ?? 0, { min: 0, max: 2, step: 0.05 },
+               (v) => { m.explode = v || undefined; this.emit(); },
+               (v) => { m.explode = v || undefined; this.emit(); }),
+    );
+    this.row(s, __("實體程度")).append(
+      this.numSlider(m.opacity ?? 1, { min: 0.08, max: 1, step: 0.02 },
+               (v) => { m.opacity = v >= 0.999 ? undefined : v; this.emit(); },
+               (v) => { m.opacity = v >= 0.999 ? undefined : v; this.emit(); }),
     );
   }
 
@@ -584,7 +612,7 @@ export class Inspector {
       const alignBox = document.createElement("div");
       alignBox.className = "seg";
       const curAlign = same((t) => t.alignment);
-      const aligns: [TextAlign, string][] = [["leading", __("左")], ["center", __("中")], ["trailing", __("右")]];
+      const aligns: [TextAlign, string][] = [["leading", __("左")], ["center", __("中")], ["trailing", __("右")], ["justified", __("齊")]];
       for (const [val, label] of aligns) {
         const abtn = this.iconBtn(TEXT_ALIGN_ICON[val], label, () => {
           applyAll((t) => { t.alignment = val; });
@@ -1240,7 +1268,7 @@ export class Inspector {
     const seg = this.row(s, __("對齊"));
     const alignBox = document.createElement("div");
     alignBox.className = "seg";
-    const aligns: [TextAlign, string][] = [["leading", __("左")], ["center", __("中")], ["trailing", __("右")]];
+    const aligns: [TextAlign, string][] = [["leading", __("左")], ["center", __("中")], ["trailing", __("右")], ["justified", __("齊")]];
     for (const [val, label] of aligns) {
       const btn = this.iconBtn(TEXT_ALIGN_ICON[val], label, () => {
         t.alignment = val;
@@ -1569,6 +1597,7 @@ export class Inspector {
         (v) => {
           if (!v) return;
           const [rw, rh] = v.split(":").map(Number);
+          if (m.maskIsCircle && Math.abs(rw / rh - 1) > 0.001) m.maskIsCircle = undefined;
           this.applyCropRatio(b, m, rw / rh);
         },
       ));
@@ -1580,10 +1609,17 @@ export class Inspector {
   private mediaLook(b: Block, m: MediaBlock): void {
     const s = this.section(__("外觀"), "look", false);
     this.row(s, __("遮罩")).append(this.select(
-      [["", __("無")], ["rectangle", __("圓角矩形")], ["ellipse", __("橢圓")]],
-      m.maskShape ?? "",
+      [["", __("無")], ["rectangle", __("圓角矩形")], ["circle", __("正圓")], ["ellipse", __("橢圓")]],
+      m.maskIsCircle ? "circle" : (m.maskShape ?? ""),
       (v) => {
+        if (v === "circle") {
+          m.maskShape = "ellipse";
+          m.maskIsCircle = true;
+          this.applyCropRatio(b, m, 1);
+          return;
+        }
         m.maskShape = (v || undefined) as MediaBlock["maskShape"];
+        m.maskIsCircle = undefined;
         if (v !== "rectangle") m.maskCornerRadius = undefined;
         this.rebuild();
         this.emit();

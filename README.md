@@ -47,6 +47,20 @@ ALIGNED 的專案檔是文件化的 JSON——**任何 AI 讀完規格就能直�
 [docs/ALIGNED-AI-SPEC.md](docs/ALIGNED-AI-SPEC.md)。
 Claude／GPT 排草稿 → ALIGNED 開檔微調 → 匯出發佈，這條流程已實測（手寫 JSON 經 App 本人的解碼器驗證）。
 
+### Local MCP（Beta）
+
+repo 內附本機 MCP server，讓支援 MCP 的 AI 不必手寫 JSON，就能讀取、驗證、建立與修改
+ALIGNED 專案。它透過 stdio 在使用者電腦執行，**不連模型 API、不上傳專案，也不需要雲端伺服器**。
+
+```bash
+npm install
+npm run mcp
+```
+
+目前提供十項工具：除了檔案檢查、驗證、建立、修改與單頁預覽，也能讀取正在執行的 ALIGNED App、
+取得目前選取、直接修改畫布並共用 Undo。檔案修改預設另存副本，明確要求覆寫時會先留 `.bak`；
+即時修改則以 project ID＋revision 防止蓋掉使用者同時操作。安裝設定與能力邊界見 [mcp/README.md](mcp/README.md)。
+
 ## 自己編譯
 
 ```bash

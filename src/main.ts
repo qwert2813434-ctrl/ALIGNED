@@ -403,7 +403,7 @@ let lastTag = ""; let lastPush = 0;
 
 function snapshot(): string { return JSON.stringify(current); }
 
-function commit(tag: string): void {
+function commit(tag: string, scheduleSave = true): void {
   const now = snapshot();
   if (now === committed) return;
   if (!(tag === lastTag && Date.now() - lastPush < 900)) {
@@ -412,17 +412,17 @@ function commit(tag: string): void {
   }
   committed = now; lastTag = tag; lastPush = Date.now();
   redoStack = [];
-  updateDirty();
+  updateDirty(scheduleSave);
   tourNotify(tag);   // 導覽靠這裡知道「那個動作做到了」
 }
 
-function applySnapshot(s: string): void {
+function applySnapshot(s: string, scheduleSave = true): void {
   current = JSON.parse(s) as Project;
   committed = s; lastTag = ""; lastPush = 0;
   editor.swapProject(current);
   inspector.show(current, editor.getSelected());
   scheduleThumbs();
-  updateDirty();
+  updateDirty(scheduleSave);
   buildSelbar(); selbarFollow();   // 鎖定狀態／存在與否都可能被撤銷掉，晶片要跟著換
   // c5 變體補烤：undo 撿回來的參數，其變體可能已被 GC（沒人用就清）——
   // 渲染端查不到變體不會自己補，這裡是唯一的補烤點（審查 blocking 的另一半）
@@ -434,22 +434,22 @@ function applySnapshot(s: string): void {
   }
 }
 
-function undo(): void {
+function undo(scheduleSave = true): void {
   if (!undoStack.length) return;
   redoStack.push(committed);
-  applySnapshot(undoStack.pop()!);
+  applySnapshot(undoStack.pop()!, scheduleSave);
 }
-function redo(): void {
+function redo(scheduleSave = true): void {
   if (!redoStack.length) return;
   undoStack.push(committed);
-  applySnapshot(redoStack.pop()!);
+  applySnapshot(redoStack.pop()!, scheduleSave);
 }
 
-function updateDirty(): void {
+function updateDirty(scheduleSave = true): void {
   if (!current) return;
   const dirty = committed !== savedState;
   title.textContent = current.name + (dirty ? "　●" : "");
-  if (dirty) scheduleAutosave();   // 所有改動（commit／undo／redo）都經過這裡——自動保存掛這個漏斗
+  if (dirty && scheduleSave) scheduleAutosave();   // AI 即時試改可先停在記憶體；使用者動作維持原本自動保存
 }
 
 // ── 自動保存 ──────────────────────────────────────────────────────────
@@ -486,8 +486,18 @@ if (inApp) {
     if (!current || committed === savedState) return;   // 沒有未存的變更：直接關
     e.preventDefault();                                 // 要在任何 await 之前擋下
     clearTimeout(autosaveTimer);
-    while (autosaving) await new Promise((ok) => setTimeout(ok, 50));   // 在途的那筆先讓它寫完
-    await autosaveNow();
+    // 先留一份同步草稿：iCloud／外接碟若卡住，視窗仍必須關得掉，重開也有得救。
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(
+        { json: encodeProject(current), name: current.name, when: Date.now() }));
+    } catch { /* 儲存空間不足仍繼續走關閉；不能讓叉叉永久失效 */ }
+    // 原本無期限等 autosaving，任何一次 File Provider 不回應就永遠卡在紅叉。
+    // 最多給既有保存 1.5 秒、最後補存 2 秒；超時後以剛才的草稿保底並關閉。
+    const deadline = Date.now() + 1500;
+    while (autosaving && Date.now() < deadline) await new Promise((ok) => setTimeout(ok, 50));
+    if (!autosaving) {
+      await Promise.race([autosaveNow(), new Promise<void>((ok) => setTimeout(ok, 2000))]);
+    }
     void getCurrentWindow().destroy();
   });
 }
@@ -1339,6 +1349,10 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
   },
   ensureVariant: ensureVariantFor,
   openBrushPrefs: () => openBrushPrefs(() => editor.refresh()),
+  modelOrbit: {
+    active: () => editor.isModelOrbitEnabled(),
+    set: (on) => editor.setModelOrbitEnabled(on),
+  },
   fillMedia: (b) => { pickMediaForBlock(b).catch((x) => { meta.textContent = __f("填圖失敗：{msg}", { msg: x.message ?? x }); }); },
   addCarousel: (b) => { addCarouselImages(b).catch((x) => { meta.textContent = __f("加輪播圖失敗：{msg}", { msg: x.message ?? x }); }); },
   makeMatte: runMatte,
@@ -1538,7 +1552,7 @@ try { Object.assign(exportPng, JSON.parse(localStorage.getItem(EXPORT_PNG_KEY) ?
 /** 匯出（存檔）用的渲染選項。透明模式不套紙張——紙是背景面，疊層不該帶。 */
 function exportOpts() {
   const scale = exportPng.scale2x ? 2 : 1;
-  if (!exportPng.alpha) return { ...renderOpts(), scale };
+  if (!exportPng.alpha) return { ...renderOpts(), scale, deferStaticDoodles: false };
   return {
     images: assets.variants, mattes: assets.variants, models, placeholderForMissingMedia: true, scale,
     transparent: true,
@@ -1568,6 +1582,18 @@ function scheduleThumbs(): void {
   clearTimeout(thumbTimer);
   thumbTimer = setTimeout(() => { if (current) strip.render(current, renderOpts()); }, 300);
 }
+
+// 背景完成一塊靜態塗鴉：目前畫面換掉輪廓替身，頁條則防抖合併更新。
+// 不碰 project／undo；這只是同一內容的顯示品質升級。
+let doodleRefreshTimer: number | undefined;
+window.addEventListener("aligned:doodle-cache-ready", () => {
+  if (doodleRefreshTimer) return;
+  doodleRefreshTimer = window.setTimeout(() => {
+    doodleRefreshTimer = undefined;
+    editor.refresh();
+    scheduleThumbs();
+  }, 80);
+});
 
 async function openSample(base: string): Promise<void> {
   await autosaveNow();   // 換專案前 flush 手上的——別讓 2.5 秒 debounce 空窗吃掉最後一筆
@@ -3385,6 +3411,277 @@ function zoomProbe(): void {
   }, 3000);
 }
 
+// ── Local Agent Bridge：MCP 讀取／修改正在開啟的畫布 ───────────────────
+
+interface AgentRequest {
+  id: string;
+  method: string;
+  params?: unknown;
+}
+
+interface AgentUpdate {
+  id: string;
+  page?: number;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  rotation?: number;
+  opacity?: number;
+  text?: string;
+  color_hex?: string;
+}
+
+function agentRevision(): string {
+  // 衝突哨兵，不是安全雜湊：使用者或 AI 每改一字就要換值，FNV 足夠且便宜。
+  const s = snapshot();
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, "0");
+}
+
+function agentBlockSummary(b: Block): Record<string, unknown> {
+  const page = current ? Math.floor(b.frame.x / current.canvasWidth) + 1 : 1;
+  const localX = current ? b.frame.x - (page - 1) * current.canvasWidth : b.frame.x;
+  const content = b.content;
+  return {
+    id: b.id,
+    type: content.type,
+    page,
+    frame: { x: localX, y: b.frame.y, width: b.frame.w, height: b.frame.h },
+    rotation: b.rotation,
+    opacity: b.opacity,
+    locked: b.locked,
+    z_index: b.zIndex,
+    ...((content.type === "text" || content.type === "textFlow")
+      ? { text: content.text.text, color_hex: content.text.colorHex ?? "000000", font_size: content.text.fontSize }
+      : {}),
+    ...((content.type === "image" || content.type === "video")
+      ? { asset: content.media.assetFileName || null }
+      : {}),
+  };
+}
+
+function agentState(): Record<string, unknown> {
+  const editing = !!current && !home.classList.contains("on") && !newSheet.classList.contains("on");
+  return {
+    connected: true,
+    editing,
+    surface: home.classList.contains("on") ? "home" : newSheet.classList.contains("on") ? "new_project" : "canvas",
+    ...(current ? {
+      project: {
+        id: current.id,
+        name: current.name,
+        revision: agentRevision(),
+        dirty: committed !== savedState,
+        source: origin.kind,
+        canvas: { width: current.canvasWidth, height: current.pageHeight, pages: current.pageCount },
+      },
+      selection: editor.selectionBlocks().map(agentBlockSummary),
+      blocks: current.blocks.map(agentBlockSummary),
+    } : { project: null, selection: [], blocks: [] }),
+  };
+}
+
+const finiteAgent = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+function requireAgentContext(params: Record<string, unknown>): Project {
+  if (!current) throw new Error("ALIGNED 尚未載入專案");
+  if (home.classList.contains("on") || newSheet.classList.contains("on")) throw new Error("請先在 ALIGNED 打開要編輯的專案畫布");
+  if (params.expected_project_id !== current.id) throw new Error("ALIGNED 已切換到另一份專案；請重新讀取 App state");
+  if (params.expected_revision !== agentRevision()) throw new Error("畫布已被使用者或另一個 AI 修改；請重新讀取 App state 後再決定");
+  return current;
+}
+
+function applyAgentUpdates(params: Record<string, unknown>): Record<string, unknown> {
+  const project = requireAgentContext(params);
+  const updates = params.updates;
+  if (!Array.isArray(updates) || !updates.length) throw new Error("updates 不可為空");
+  const before = snapshot();
+  let textChanged = false;
+  try {
+    for (const raw of updates) {
+      if (!raw || typeof raw !== "object") throw new Error("update 格式無效");
+      const u = raw as AgentUpdate;
+      const block = project.blocks.find((b) => b.id === u.id);
+      if (!block) throw new Error(`找不到 block：${u.id}`);
+      if (block.locked) throw new Error(`block 已鎖定：${u.id}`);
+      const page = u.page ?? Math.floor(block.frame.x / project.canvasWidth) + 1;
+      if (!Number.isInteger(page) || page < 1 || page > project.pageCount) throw new Error(`page 必須在 1–${project.pageCount} 之間`);
+      const x = u.x ?? block.frame.x - (page - 1) * project.canvasWidth;
+      const y = u.y ?? block.frame.y;
+      const width = u.width ?? block.frame.w;
+      const height = u.height ?? block.frame.h;
+      if (![x, y, width, height].every(finiteAgent) || width <= 0 || height <= 0) throw new Error(`frame 無效：${u.id}`);
+      block.frame = { x: (page - 1) * project.canvasWidth + x, y, w: width, h: height };
+      if (u.rotation !== undefined) {
+        if (!finiteAgent(u.rotation)) throw new Error(`rotation 無效：${u.id}`);
+        block.rotation = u.rotation;
+      }
+      if (u.opacity !== undefined) {
+        if (!finiteAgent(u.opacity) || u.opacity < 0 || u.opacity > 1) throw new Error(`opacity 必須是 0–1：${u.id}`);
+        block.opacity = u.opacity;
+      }
+      if (u.text !== undefined || u.color_hex !== undefined) {
+        if (block.content.type !== "text" && block.content.type !== "textFlow") throw new Error(`block 不是文字：${u.id}`);
+        if (u.text !== undefined) block.content.text.text = u.text;
+        if (u.color_hex !== undefined) {
+          const color = u.color_hex.replace(/^#/, "").toUpperCase();
+          if (!/^[0-9A-F]{6}$/.test(color)) throw new Error(`color_hex 無效：${u.id}`);
+          block.content.text.colorHex = color;
+          block.content.text.inkColor = `#${color}`;
+        }
+        textChanged = true;
+      }
+    }
+    if (textChanged) autoFitText(measureCtx, project);
+  } catch (error) {
+    current = JSON.parse(before) as Project;
+    editor.swapProject(current);
+    throw error;
+  }
+  editor.refresh();
+  const selected = editor.selectionBlocks();
+  if (selected.length > 1) inspector.showGroup(project, selected);
+  else inspector.show(project, editor.getSelected());
+  scheduleThumbs();
+  commit("agent", false); // 先讓使用者看與 Undo；不啟動 2.5 秒自動存檔
+  buildSelbar(); selbarFollow();
+  meta.textContent = __("AI 已更新畫布（尚未自動儲存，可復原）");
+  return agentState();
+}
+
+function addAgentText(params: Record<string, unknown>): Record<string, unknown> {
+  const project = requireAgentContext(params);
+  const page = params.page;
+  const text = params.text;
+  const x = params.x; const y = params.y; const width = params.width; const height = params.height;
+  if (!Number.isInteger(page) || (page as number) < 1 || (page as number) > project.pageCount) {
+    throw new Error(`page 必須在 1–${project.pageCount} 之間`);
+  }
+  if (typeof text !== "string") throw new Error("缺少文字內容");
+  if (![x, y, width, height].every(finiteAgent) || (width as number) <= 0 || (height as number) <= 0) {
+    throw new Error("x、y、width、height 必須是有效數字，且尺寸大於 0");
+  }
+  const color = String(params.color_hex ?? "000000").replace(/^#/, "").toUpperCase();
+  if (!/^[0-9A-F]{6}$/.test(color)) throw new Error("color_hex 必須是 6 位色碼");
+  const alignment = String(params.alignment ?? "leading");
+  if (!["leading", "center", "trailing", "justified"].includes(alignment)) {
+    throw new Error("alignment 必須是 leading、center、trailing 或 justified");
+  }
+  const opacity = params.opacity === undefined ? 1 : params.opacity;
+  if (!finiteAgent(opacity) || opacity < 0 || opacity > 1) throw new Error("opacity 必須是 0–1");
+  const fontSize = params.font_size === undefined ? project.canvasWidth * 0.045 : params.font_size;
+  if (!finiteAgent(fontSize) || fontSize <= 0) throw new Error("font_size 必須大於 0");
+
+  const body = params.body_frame === true;
+  const payload: Extract<Block["content"], { type: "text" }>["text"] = {
+    text, alignment: alignment as "leading" | "center" | "trailing" | "justified",
+    fontSize, fontWeightValue: finiteAgent(params.font_weight) ? params.font_weight : 3,
+    colorHex: color, inkColor: `#${color}`, inkX: true,
+    ...(body ? { isBodyFrame: true, manualWidth: width as number, manualHeight: height as number } : {}),
+    ...(typeof params.font_name === "string" && params.font_name ? { fontName: params.font_name } : {}),
+    ...(finiteAgent(params.kerning_em) ? { kerningEm: params.kerning_em } : {}),
+    ...(finiteAgent(params.line_height_multiple) ? { lineHeightMultiple: params.line_height_multiple } : {}),
+  };
+  const zs = project.blocks.map((block) => block.zIndex);
+  const block: Block = {
+    id: newId(),
+    frame: { x: ((page as number) - 1) * project.canvasWidth + (x as number), y: y as number,
+      w: width as number, h: height as number },
+    rotation: finiteAgent(params.rotation) ? params.rotation : 0,
+    zIndex: (zs.length ? Math.max(...zs) : -1) + 1,
+    locked: false, opacity, content: { type: "text", text: payload },
+  };
+  project.blocks.push(block);
+  if (!body) autoFitText(measureCtx, project);
+  editor.refresh(); editor.select(block.id); scheduleThumbs();
+  commit("agent", false);
+  buildSelbar(); selbarFollow();
+  meta.textContent = __("AI 已加入文字（尚未自動儲存，可復原）");
+  return agentState();
+}
+
+function handleAgentRequest(request: AgentRequest): Record<string, unknown> {
+  const params = (request.params && typeof request.params === "object" ? request.params : {}) as Record<string, unknown>;
+  if (request.method === "get_state") return agentState();
+  if (request.method === "update_blocks") return applyAgentUpdates(params);
+  if (request.method === "add_text") return addAgentText(params);
+  if (request.method === "history") {
+    requireAgentContext(params);
+    if (params.action === "undo") undo(false);
+    else if (params.action === "redo") redo(false);
+    else throw new Error("action 必須是 undo 或 redo");
+    meta.textContent = params.action === "undo" ? __("已復原 AI／使用者上一步") : __("已重做下一步");
+    return agentState();
+  }
+  throw new Error(`未知 App IPC 方法：${request.method}`);
+}
+
+function startAgentBridge(): void {
+  if (!inApp) return;
+  const poll = async (): Promise<void> => {
+    let wait = 150;
+    try {
+      const request = await invoke<AgentRequest | null>("agent_bridge_take");
+      if (request) {
+        try {
+          await invoke("agent_bridge_respond", { id: request.id, result: handleAgentRequest(request), error: null });
+        } catch (error) {
+          await invoke("agent_bridge_respond", { id: request.id, result: null, error: error instanceof Error ? error.message : String(error) });
+        }
+        wait = 0;
+      }
+    } catch { wait = 1000; }
+    setTimeout(() => { void poll(); }, wait);
+  };
+  void poll();
+}
+
+function handleNativeMenu(id: string): void {
+  const press = (selector: string) => $<HTMLButtonElement>(selector).click();
+  const typing = (() => {
+    const active = document.activeElement as HTMLElement | null;
+    return !!active && (["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName) || active.isContentEditable);
+  })();
+  const actions: Record<string, () => void> = {
+    app_settings: () => press("#gearBtn"),
+    file_new: () => press("#newproj"), file_open: () => press("#open"),
+    file_home: () => press("#homeBtn"), file_save: () => press("#save"),
+    file_export_png: () => press("#export"), file_export_template: () => press("#exporttpl"),
+    file_pack: () => press("#exportpack"),
+    edit_undo: () => undo(), edit_redo: () => redo(),
+    edit_copy: () => { if (typing) document.execCommand("copy"); else copySelection(); },
+    edit_paste: () => {
+      if (typing) document.execCommand("paste");
+      else void pasteClipboard().catch((error) => { meta.textContent = __f("貼上失敗：{msg}", { msg: error.message ?? error }); });
+    },
+    edit_duplicate: () => duplicateSelection(), edit_delete: () => deleteSelected(),
+    edit_select_all: () => {
+      if (!current) return;
+      const page = pageIndexForX(current, editor.centerPoint().x);
+      editor.selectMany(current.blocks.filter((block) => !block.locked
+        && pageIndexForX(current!, block.frame.x + block.frame.w / 2) === page).map((block) => block.id));
+    },
+    view_zoom_in: () => editor.setZoom(Math.min(editor.zoom * 1.25, 4)),
+    view_zoom_out: () => editor.setZoom(Math.max(editor.zoom / 1.25, 0.02)),
+    view_fit: () => editor.fitAll(), view_guides: toggleGuidesHidden,
+    view_guide_panel: () => press("#guidesBtn"), view_layers: () => press("#layersBtn"),
+    view_play: () => press("#playBtn"),
+    ai_status: () => {
+      const state = current && !home.classList.contains("on") ? `已準備共編：${current.name}` : "MCP 已準備，請先開啟一份專案";
+      meta.textContent = __(state);
+      window.alert(`${state}\n\nAI 只能讀取目前畫布；修改前會核對專案與修訂版本，並可用復原返回。`);
+    },
+    // 指南先隨 App 內建：尚未發佈的 GitHub 分支不應成為使用者唯一入口。
+    // iPhone／iPad 的區網 MCP 已退出 iOS 1.3.2，桌面選單也不再顯示失效的連接指示。
+    ai_guide: () => {
+      window.alert("ALIGNED MCP（Beta）\n\n1. 開啟一份 ALIGNED 專案，並保持 App 執行。\n2. 在支援 MCP 的 AI Agent 加入 ALIGNED 本機 MCP server。\n3. 讓 AI 先讀取目前專案與 revision，再要求新增或修改內容。\n4. AI 的變更會進入 ALIGNED 的復原紀錄；請先預覽，再自行存檔。\n\n完整的安裝指令會隨 Mac 版正式發佈一併公開。資料只在本機傳遞，不需要 ALIGNED 雲端伺服器。");
+    },
+  };
+  actions[id]?.();
+}
+
 // ── 啟動 ──────────────────────────────────────────────────────────────
 (async () => {
   // 字型必須先載完再畫——canvas 對還沒載入的字型會靜默回落系統字型，不報錯只是全錯。
@@ -3394,6 +3691,7 @@ function zoomProbe(): void {
 
   const sample = $<HTMLSelectElement>("#sample");
   if (inApp) {
+    void listen<string>("aligned-native-menu", (event) => handleNativeMenu(event.payload));
     appVersion = await getVersion().catch(() => "");   // 齒輪選單與回報信要用
     void modelReady();   // 先問一次模型裝了沒——面板是同步重建的，不能等
     // 真實專案樣本含個人照片，不隨 App 打包（beforeBuildCommand 會剝掉）——
@@ -3492,6 +3790,7 @@ function zoomProbe(): void {
   // ?open=<絕對路徑>＝直接開該專案（真 WKWebView 環境的診斷入口，跟 ⌘O 同一條路）
   const op = q.get("open");
   if (op && inApp) await openPath(op);
+  startAgentBridge();
   // ?probe=filter＝濾鏡管線探針（真 WKWebView 診斷）：對第一個圖片與影片 block 套 a1，
   // 回報「變體有沒有生出來」「影片濾鏡影格有沒有出現」——taint／CORS 這類殼層差異只有真環境測得到
   const proj = current as Project | null;   // TS 在這裡把 current 窄化成 never（老雷），繞開

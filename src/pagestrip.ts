@@ -107,9 +107,14 @@ export class PageStrip {
 
   render(project: Project, opts: RenderOptions): void {
     this.el.replaceChildren();
+    // CSS 只顯示 64pt 高；過去卻替每頁建立 1080/1350px 畫布，等於為縮圖重烤整本。
+    // Retina 取 160px 長邊已足夠，並把它排在目前畫布之後背景處理。
+    const thumbScale = Math.min(1, 160 / Math.max(project.canvasWidth, project.pageHeight));
     for (let i = 0; i < project.pageCount; i++) {
       const fig = document.createElement("figure");
-      const c = renderPageCanvas(project, i, opts);
+      const c = renderPageCanvas(project, i, {
+        ...opts, scale: thumbScale, deferStaticDoodles: true, doodlePriority: 1,
+      });
       c.addEventListener("click", () => this.hooks.pick(i));
       c.addEventListener("contextmenu", (e) => {
         e.preventDefault();

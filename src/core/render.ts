@@ -19,7 +19,7 @@ import { filterSig } from "./filters";
 import { tornOf, tornCanvases } from "./tornedge";
 import { applyPaper, applyPaperGPU } from "./paper";
 import { animStateAt, carouselAt, maskWipeState, revealText, type BlockAnim } from "./anim";
-import { drawDoodle } from "./doodle";
+import { doodleCacheGeneration, drawDoodle } from "./doodle";
 import { freeIntervals, wrapHoles } from "./textwrap";
 
 /** 直排的預設欄距（em）。iOS：baseline 1.5em 減掉 defaultVerticalLineSpacing 0.28em。 */
@@ -61,6 +61,10 @@ export interface RenderOptions {
    *  兩路數學同式（見 paper.ts applyPaperGPU 檔頭），差別只在反鋸齒邊緣 ≤1/255 級。
    *  紙張＋影片頁的 8→60fps 就是這一顆（2026-09-01，卡頓根因＝每幀整頁 CPU 逐畫素）。 */
   paperGPU?: boolean;
+  /** 編輯畫布／頁條可先畫輕量輪廓並在背景烤靜態塗鴉；匯出不可開。 */
+  deferStaticDoodles?: boolean;
+  /** 0＝目前畫面，1＝頁面縮圖；背景佇列永遠先處理目前畫面。 */
+  doodlePriority?: number;
 }
 
 /** 視野裁切用的外接框：轉過的 block 用旋轉 AABB，沒轉的直接用 frame。 */
@@ -167,7 +171,11 @@ function pageSig(project: Project, index: number, opts: RenderOptions, S: number
   h = fnv(`${project.paperOnObjects}|${project.paperOnBackground}|${project.paperOnText}`, h);
   // paperGPU 進 sig：編輯畫布（GPU 紙）與匯出（CPU 紙）像素有反鋸齒邊緣級的差，
   // 共用同一格快取會讓匯出拿到 GPU 版——兩路必須各自一格
-  h = fnv(`${!!opts.transparent}|${!!opts.filters}|${!!opts.placeholderForMissingMedia}|${!!opts.paperGPU}`, h);
+  h = fnv(`${!!opts.transparent}|${!!opts.filters}|${!!opts.placeholderForMissingMedia}|${!!opts.paperGPU}|${!!opts.deferStaticDoodles}`, h);
+  // 頁條固定用輪廓，不跟完整點陣世代一起失效；只有目前編輯畫面在背景圖完成後換清晰。
+  if (opts.deferStaticDoodles && (opts.doodlePriority ?? 0) === 0) {
+    h = fnv(`|dg:${doodleCacheGeneration()}`, h);
+  }
   h = fnv(`${JSON.stringify(project.pageBackgroundHex ?? null)}`, h);
   for (const b of blocks) h = fnv(`|${blockSig(b, opts)}`, h);
   return String(h);
@@ -599,7 +607,8 @@ function drawBlock(
       break;
     case "doodle":
       // 塗鴉：時間給巡線／筆刷感動態，reveal 給生長；都沒有＝靜態全畫
-      drawDoodle(ctx, b.content.doodle, f.w, f.h, opts.time, reveal);
+      drawDoodle(ctx, b.content.doodle, f.w, f.h, opts.time, reveal,
+                 !!opts.deferStaticDoodles, opts.doodlePriority ?? 0);
       break;
     case "model": {
       // 3D 物件：向 modelpool 要「時間 time 的那一格」——渲染核心只認得 CanvasImageSource
@@ -657,7 +666,9 @@ function drawShape(ctx: CanvasRenderingContext2D, s: ShapeBlock, w: number, h: n
 function maskPath(ctx: CanvasRenderingContext2D, m: MediaBlock, w: number, h: number): void {
   ctx.beginPath();
   if (m.maskShape === "ellipse") {
-    ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    const rx = m.maskIsCircle ? Math.min(w, h) / 2 : w / 2;
+    const ry = m.maskIsCircle ? rx : h / 2;
+    ctx.ellipse(w / 2, h / 2, rx, ry, 0, 0, Math.PI * 2);
     return;
   }
   const r = (m.maskCornerRadius ?? 0) * (Math.min(w, h) / 2);
@@ -1461,10 +1472,17 @@ function drawBodyFrame(
         // 但 consume 維持 1 一定要前進，否則又是同一個「後面全部不見」的死結。
       }
       i += consume;
+      // 段落最後一行不撐滿；只有後面仍有同段文字時才左右齊行，與書籍排版／iOS 一致。
+      const paragraphContinues = i < units.length && units[i].text !== "\n";
       let x = seg.x;
       if (t.alignment === "center") x = seg.x + (seg.width - lw) / 2;
       else if (t.alignment === "trailing") x = seg.x + seg.width - lw;
-      ctx.fillText(acc, x, yTop + ascent);
+      if (t.alignment === "justified" && paragraphContinues
+          && [...acc].length > 1 && lw > seg.width * 0.55) {
+        drawJustifiedLine(ctx, acc, seg.x, yTop + ascent, seg.width, kern);
+      } else {
+        ctx.fillText(acc, x, yTop + ascent);
+      }
       if (i < units.length && units[i].text === "\n") { i++; endedParagraph = true; break; }
     }
     yTop += rowH + (endedParagraph ? paraGap : 0);
@@ -1570,6 +1588,35 @@ function lineWidth(ctx: CanvasRenderingContext2D, line: string, kern: number): n
 }
 
 /**
+ * 左右齊行每個字的 x。Canvas 的 measureText(char) 已包含目前 letterSpacing，
+ * 所以這裡只能補「左右齊行多出的間距」，不能再加一次 kern；再加會讓大字距
+ * 的最後一字跑出文字框（2026-09-13 Mac 回歸）。
+ */
+export function justifiedGlyphX(
+  ctx: CanvasRenderingContext2D, line: string, width: number, kern: number,
+): number[] {
+  const chars = [...line];
+  if (!chars.length) return [];
+  const extra = chars.length > 1 ? (width - lineWidth(ctx, line, kern)) / (chars.length - 1) : 0;
+  const xs: number[] = [];
+  let x = 0;
+  for (let i = 0; i < chars.length; i++) {
+    xs.push(x);
+    if (i < chars.length - 1) x += ctx.measureText(chars[i]).width + extra;
+  }
+  return xs;
+}
+
+function drawJustifiedLine(
+  ctx: CanvasRenderingContext2D, line: string, x: number, baseline: number,
+  width: number, kern: number,
+): void {
+  const chars = [...line];
+  const xs = justifiedGlyphX(ctx, line, width, kern);
+  for (let i = 0; i < chars.length; i++) ctx.fillText(chars[i], x + xs[i], baseline);
+}
+
+/**
  * 斷行單位（2026-09-01）。
  *
  * ⚠️ **不可以逐字元斷。** 原本的寫法一個字元一個字元塞，塞不下就地斷——
@@ -1592,20 +1639,39 @@ const CLOSE_RE = /[。、，．：；！？》）］｝」』】〉〕〙〗,.:;
 const OPEN_RE = /[《（［｛「『【〈〔〘〖([{]/;
 
 function breakUnits(para: string): BreakUnit[] {
+  // 與 iOS BookLineBreaks 同義：系統中文斷詞器認得的二字以上詞不從中間剖開。
+  // 專案文字不插字、不改檔，只把這些字暫時合成同一個斷行單位。
+  const protectedStarts = new Set<number>();
+  const Segmenter = (Intl as unknown as { Segmenter?: new (locale: string, options: { granularity: string }) => {
+    segment(input: string): Iterable<{ segment: string; index: number; isWordLike?: boolean }>
+  } }).Segmenter;
+  if (Segmenter) {
+    const seg = new Segmenter("zh-Hant", { granularity: "word" });
+    for (const part of seg.segment(para)) {
+      const chars = [...part.segment];
+      if (part.isWordLike && chars.length >= 2 && chars.length <= 8 && chars.every((c) => CJK_RE.test(c))) {
+        let at = part.index;
+        for (const ch of chars.slice(0, -1)) { at += ch.length; protectedStarts.add(at); }
+      }
+    }
+  }
   const us: BreakUnit[] = [];
+  let utf16 = 0;
   for (const ch of para) {
     const last = us[us.length - 1];
     if (ch === " " || ch === "\t" || ch === "\u3000") {
       if (last) last.trail += ch; else us.push({ text: "", trail: ch });
-      continue;
+      utf16 += ch.length; continue;
     }
     const cjk = CJK_RE.test(ch);
     // 接得上前一個單位的條件：前面沒有空白隔開，而且兩邊都是非中日韓（＝同一個詞）
-    if (last && !last.trail && !cjk && last.text && !CJK_RE.test(last.text[last.text.length - 1])) {
+    if (last && !last.trail && (protectedStarts.has(utf16)
+        || (!cjk && last.text && !CJK_RE.test(last.text[last.text.length - 1])))) {
       last.text += ch;
     } else {
       us.push({ text: ch, trail: "" });
     }
+    utf16 += ch.length;
   }
   // 避頭尾：收尾標點往前併、起頭標點往後併
   const out: BreakUnit[] = [];
@@ -1955,7 +2021,8 @@ function drawHorizontal(
   // 左右貼墨跡（第一批 #2）：框左緣＝最左字身、右緣＝最右字身，字要往回推左空氣才貼得上
   const trimX = inkTrimX(t);
   const minBl = trimX ? Math.min(...lines.map((l) => inkSides(ctx, l).bl)) : 0;
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
     const lm = ctx.measureText(line || "字");
     const baseline = y + lm.actualBoundingBoxAscent; // 墨跡上緣貼齊 → 等同 iOS 的貼字盒
     const lw = lineWidth(ctx, line, kern);
@@ -1969,7 +2036,10 @@ function drawHorizontal(
       if (t.alignment === "center") x = (w - lw) / 2;
       else if (t.alignment === "trailing") x = w - lw;
     }
-    if (line) ctx.fillText(line, x, baseline);
+    if (line && t.alignment === "justified" && t.manualWidth != null
+        && lineIndex < lines.length - 1 && lw > w * 0.55) {
+      drawJustifiedLine(ctx, line, 0, baseline, w, kern);
+    } else if (line) ctx.fillText(line, x, baseline);
     y += lineH + paraGap;
   }
 }

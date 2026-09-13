@@ -7,8 +7,8 @@
 import { Editor } from "./editor";
 import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema";
 import { renderAllPages } from "./core/export";
-import { autoFitText, maskAndStrokeCanvases, renderCounters, renderPageCanvas, renderStage, snugTextWidth, textPrintLines } from "./core/render";
-import { doodleCounters, drawDoodle, drawDoodleUncached, type DoodleBlock } from "./core/doodle";
+import { autoFitText, justifiedGlyphX, maskAndStrokeCanvases, renderCounters, renderPageCanvas, renderStage, snugTextWidth, textPrintLines } from "./core/render";
+import { doodleCounters, drawDoodle, drawDoodleUncached, rotatedStrokeHit, type DoodleBlock } from "./core/doodle";
 import { applyRiso, filterSig, parseRisoSig, RISO_DEFAULTS, splitSig, applyAdjust, isParamSig } from "./core/filters";
 import { tornCanvases, tornOf, tornCanvasSides, tornLocalSide } from "./core/tornedge";
 import { decodeProject, encodeProject, moveBlocks, reconcileOrder } from "./core/schema";
@@ -206,6 +206,32 @@ async function run(): Promise<void> {
     check("貼字盒高度＝墨跡高度（不是排版高度）",
           Math.abs(f.h - inkH) < inkH * 0.12,
           `框高 ${f.h.toFixed(1)}　墨跡高 ${inkH.toFixed(1)}`);
+
+    // Canvas 的 measureText 已含 letterSpacing。左右齊行若又手加一次 kern，
+    // 字距愈大溢出愈嚴重；最後一字的右緣必須仍貼住框右緣。
+    ctx.save();
+    ctx.font = `72px "PingFang TC"`;
+    ctx.letterSpacing = "24px";
+    const justified = "中英混排";
+    const targetW = 640;
+    const xs = justifiedGlyphX(ctx, justified, targetW, 24);
+    const last = [...justified].at(-1)!;
+    const lastRight = xs.at(-1)! + ctx.measureText(last).width - 24;
+    ctx.restore();
+    check("左右齊行：大字距最後一字不超出框",
+          Math.abs(lastRight - targetW) < 1,
+          `末字右緣 ${lastRight.toFixed(2)}　框寬 ${targetW}`);
+
+    // 筆畫分站兩角時，frame 中央是空白；點中央必須穿透，旋轉後的實筆仍要點得到。
+    const sparse: DoodleBlock = { strokes: [
+      { pts: [0.05, 0.05, 0.15, 0.05], w: 0.01, color: "111111", brush: "pen" },
+      { pts: [0.85, 0.95, 0.95, 0.95], w: 0.01, color: "111111", brush: "pen" },
+    ] };
+    const sparseFrame = { x: 0, y: 0, w: 1000, h: 1000 };
+    check("塗鴉命中：大型空白框中央不攔截",
+          rotatedStrokeHit(sparse, sparseFrame, 0, { x: 500, y: 500 }, 4) < 0);
+    check("塗鴉命中：旋轉後只點實筆",
+          rotatedStrokeHit(sparse, sparseFrame, 90, { x: 950, y: 50 }, 4) >= 0);
   }
 
   // ── 8. 直排的貼字盒也要貼合 ────────────────────────────────────
@@ -1248,7 +1274,7 @@ async function run(): Promise<void> {
             `fontSize=${txt?.fontSize} manualWidth=${txt?.manualWidth} kerning=${txt?.kerning} h=${t.frame.h.toFixed(1)}（起手 ${h0.toFixed(1)}）`);
     }
 
-    // (i) 群組縮放：鎖住的成員原地不動（與群組對齊同一條紀律）
+    // (i) 多選：鎖住的成員根本不進選取集合
     {
       const p = project([block("a", { x: 100, y: 100, w: 200, h: 200 }),
                          block("lock", { x: 400, y: 400, w: 100, h: 100 })]);
@@ -1256,14 +1282,8 @@ async function run(): Promise<void> {
       editor.load(p);
       editor.snapStrength = "none";
       editor.selectMany(["a", "lock"]);
-      pointer("pointerdown", 500, 500);
-      pointer("pointermove", 900, 900);
-      const a = p.blocks.find((k) => k.id === "a")!.frame;
-      const lk = p.blocks.find((k) => k.id === "lock")!.frame;
-      pointer("pointerup", 900, 900);
-      check("群組縮放：鎖住的成員不動，其餘照縮",
-            near(lk.x, 400) && near(lk.y, 400) && near(lk.w, 100) && near(a.w, 400),
-            `鎖住的=(${lk.x},${lk.y},${lk.w}) a 寬=${a.w}`);
+      const ids = editor.selectionBlocks().map((b) => b.id);
+      check("多選：鎖定物件不被選取", ids.length === 1 && ids[0] === "a", `選到=${ids.join(",")}`);
     }
 
     // (j) 群組縮放：外框用**旋轉後**的外接框——轉過的成員在框外就對不準

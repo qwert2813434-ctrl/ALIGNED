@@ -225,8 +225,15 @@ interface Piece { pts: { x: number; y: number; u: number; a: number; wm: number 
 // DoodleCache 同款）：縮放中尺寸連續變動，照顯示尺寸當鑰匙等於每格重烤；
 // 進位後一次縮放只跨兩三個級距，中間全是同一張圖在縮放。往上進位＝烤出來
 // 永遠 ≥ 顯示尺寸，縮小顯示是清晰的。
-const _doodleCache = new Map<string, HTMLCanvasElement>();
-const DOODLE_CACHE_MAX = 24;
+interface DoodleRaster { canvas: HTMLCanvasElement; width: number; height: number }
+const _doodleCache = new Map<string, DoodleRaster>();
+const _doodlePreview = new Map<string, HTMLCanvasElement>();
+const _doodlePending = new Map<string, {
+  d: DoodleBlock; w: number; h: number; bw: number; bh: number; priority: number;
+}>();
+let _doodlePump = 0;
+let _doodleGeneration = 0;
+const DOODLE_CACHE_MAX = 32;
 /** 1600 萬畫素 ≈ 64 MB。自己要有天花板，否則反過來製造記憶體壓力擠掉別人。 */
 const DOODLE_CACHE_PIXELS = 16_000_000;
 const DOODLE_BAKE_BASE = 128, DOODLE_BAKE_CAP = 2560;
@@ -238,14 +245,91 @@ export const doodleCounters = {
   get cached(): number { return _doodleCache.size; },
 };
 
+/** 整頁預覽快取把世代放進 key；背景烤好一塊就換代，舊的輪廓頁不會永久凍住。 */
+export function doodleCacheGeneration(): number { return _doodleGeneration; }
+
 // render.ts 的 fnv 是它的私有品；抄四行，別為此製造循環 import。
 function dfnv(s: string, h = 0x811c9dc5): number {
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
   return h >>> 0;
 }
 
+function doodleContentKey(d: DoodleBlock): string {
+  return `${dfnv(JSON.stringify(d))}|${dfnv(JSON.stringify(softPrefs))}`;
+}
+
+/** 冷開替身只畫線形，不蓋鉛筆顆粒；成本跟點數走，不跟 stamp 密度走。 */
+function previewDoodle(d: DoodleBlock, w: number, h: number, key: string): HTMLCanvasElement {
+  const old = _doodlePreview.get(key);
+  if (old) return old;
+  const long = Math.max(w, h);
+  const s = Math.min(1, 384 / Math.max(1, long));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
+  const g = c.getContext("2d")!;
+  g.scale(c.width / w, c.height / h);
+  g.lineCap = "round"; g.lineJoin = "round";
+  const short = Math.min(w, h);
+  for (const stroke of d.strokes) {
+    const pts = strokePoints(stroke, w, h);
+    if (!pts.length) continue;
+    g.strokeStyle = `#${stroke.color}`; g.fillStyle = `#${stroke.color}`;
+    g.globalAlpha = ["pencil", "chalk", "soft"].includes(stroke.brush ?? "") ? 0.62 : 0.9;
+    g.lineWidth = Math.max(0.5, stroke.w * short * 0.65);
+    if (pts.length === 1) {
+      const r = g.lineWidth / 2;
+      g.beginPath(); g.arc(pts[0].x, pts[0].y, r, 0, Math.PI * 2); g.fill();
+    } else {
+      g.beginPath(); g.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+      g.stroke();
+    }
+  }
+  _doodlePreview.set(key, c);
+  while (_doodlePreview.size > 48) _doodlePreview.delete(_doodlePreview.keys().next().value as string);
+  return c;
+}
+
+function keepDoodle(key: string, raster: DoodleRaster): void {
+  const old = _doodleCache.get(key);
+  if (old && old.width >= raster.width && old.height >= raster.height) return;
+  _doodleCache.delete(key); _doodleCache.set(key, raster);
+  let px = 0;
+  for (const v of _doodleCache.values()) px += v.width * v.height;
+  while (_doodleCache.size > DOODLE_CACHE_MAX || (px > DOODLE_CACHE_PIXELS && _doodleCache.size > 1)) {
+    const oldest = _doodleCache.keys().next().value as string;
+    const removed = _doodleCache.get(oldest);
+    px -= (removed?.width ?? 0) * (removed?.height ?? 0);
+    _doodleCache.delete(oldest);
+  }
+}
+
+function scheduleDoodlePump(): void {
+  if (_doodlePump || !_doodlePending.size) return;
+  _doodlePump = window.setTimeout(() => {
+    _doodlePump = 0;
+    const next = [..._doodlePending.entries()].sort((a, b) => a[1].priority - b[1].priority)[0];
+    if (!next) return;
+    const [key, job] = next; _doodlePending.delete(key);
+    const old = _doodleCache.get(key);
+    if (!old || old.width < job.bw || old.height < job.bh) {
+      const c = document.createElement("canvas"); c.width = job.bw; c.height = job.bh;
+      const g = c.getContext("2d");
+      if (g) {
+        g.scale(job.bw / job.w, job.bh / job.h);
+        drawDoodleUncached(g, job.d, job.w, job.h);
+        keepDoodle(key, { canvas: c, width: job.bw, height: job.bh });
+        _doodleGeneration++;
+        window.dispatchEvent(new CustomEvent("aligned:doodle-cache-ready"));
+      }
+    }
+    scheduleDoodlePump();
+  }, 16); // 每塊之間還一幀給點選／捲動；不再一次把 27 塊同步塞進同一個操作。
+}
+
 function bakedDoodle(
   ctx: CanvasRenderingContext2D, d: DoodleBlock, w: number, h: number,
+  deferred = false, priority = 0,
 ): HTMLCanvasElement | null {
   if (!d.strokes.length) return null;
   // 有效縮放從 transform 拿；用行向量長度——旋轉時 m.a 只剩 cos 分量會低估
@@ -256,12 +340,28 @@ function bakedDoodle(
   const target = Math.min(DOODLE_BAKE_CAP, DOODLE_BAKE_BASE * Math.pow(1.5, k));
   const s = target / Math.max(w, h);
   const bw = Math.max(1, Math.round(w * s)), bh = Math.max(1, Math.round(h * s));
-  const key = `${dfnv(JSON.stringify(d))}|${dfnv(JSON.stringify(softPrefs))}|${bw}x${bh}`;
+  const key = doodleContentKey(d);
   const hit = _doodleCache.get(key);
-  if (hit) {
+  if (hit && hit.width >= bw && hit.height >= bh) {
     _doodleCache.delete(key); _doodleCache.set(key, hit);   // LRU
     doodleCounters.hit++;
-    return hit;
+    return hit.canvas;
+  }
+  if (deferred) {
+    // 頁條在畫面上只有 64px 高，只需要輪廓辨識內容。若它也排完整鉛筆，開 11 頁
+    // 就會拿 27 塊低解析點陣和目前頁互搶 64MB cache，逐出後又排回，形成永久背景重算。
+    // priority 1 因此只讀現有大圖或便宜輪廓；真正完整烤圖只由目前畫面 priority 0 發起。
+    if (priority > 0) {
+      doodleCounters.miss++;
+      return hit?.canvas ?? previewDoodle(d, w, h, key);
+    }
+    const queued = _doodlePending.get(key);
+    if (!queued || queued.bw < bw || queued.bh < bh || priority < queued.priority) {
+      _doodlePending.set(key, { d, w, h, bw, bh, priority });
+    }
+    scheduleDoodlePump();
+    doodleCounters.miss++;
+    return hit?.canvas ?? previewDoodle(d, w, h, key);
   }
   doodleCounters.miss++;
   const c = document.createElement("canvas");
@@ -270,14 +370,7 @@ function bakedDoodle(
   if (!bx) return null;
   bx.scale(bw / w, bh / h);
   drawDoodleUncached(bx, d, w, h);
-  _doodleCache.set(key, c);
-  let px = 0;
-  for (const v of _doodleCache.values()) px += v.width * v.height;
-  while (_doodleCache.size > DOODLE_CACHE_MAX || (px > DOODLE_CACHE_PIXELS && _doodleCache.size > 1)) {
-    const oldest = _doodleCache.keys().next().value as string;
-    px -= (_doodleCache.get(oldest)?.width ?? 0) * (_doodleCache.get(oldest)?.height ?? 0);
-    _doodleCache.delete(oldest);
-  }
+  keepDoodle(key, { canvas: c, width: bw, height: bh });
   return c;
 }
 
@@ -289,12 +382,12 @@ function bakedDoodle(
  */
 export function drawDoodle(
   ctx: CanvasRenderingContext2D, d: DoodleBlock, w: number, h: number,
-  t?: number, reveal?: number,
+  t?: number, reveal?: number, deferred = false, priority = 0,
 ): void {
   // 半透明塊不走快取：直畫是逐筆乘 alpha（筆畫重疊處會疊深），整張圖再乘 alpha
   // 是整層淡出，重疊處長相不同。寧可少快取也不改變既有專案的外觀。
   if (reveal === undefined && !d.play && !d.wobble && ctx.globalAlpha === 1 && w > 1 && h > 1) {
-    const img = bakedDoodle(ctx, d, w, h);
+    const img = bakedDoodle(ctx, d, w, h, deferred, priority);
     if (img) { ctx.drawImage(img, 0, 0, w, h); return; }
   }
   drawDoodleUncached(ctx, d, w, h, t, reveal);
@@ -982,6 +1075,50 @@ export function strokeHit(
     if (s.pts.length === 1) { if (Math.hypot(p.x - s.pts[0].x, p.y - s.pts[0].y) <= r) return si; continue; }
     for (let i = 1; i < s.pts.length; i++) {
       if (distToSeg(p, s.pts[i - 1], s.pts[i]) <= r) return si;
+    }
+  }
+  return -1;
+}
+
+/**
+ * 選取用的筆跡命中。block 旋轉只發生在顯示階段，筆畫資料仍在未旋轉 frame 裡；
+ * 因此先把點繞框中心逆轉回本地方向，再交給與橡皮擦共用的精準距離判定。
+ */
+export function rotatedStrokeHit(
+  d: DoodleBlock, frame: { x: number; y: number; w: number; h: number }, rotation: number,
+  p: { x: number; y: number }, tolPx: number,
+): number {
+  let local = p;
+  if (rotation) {
+    const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2;
+    const r = (-rotation * Math.PI) / 180;
+    const dx = p.x - cx, dy = p.y - cy;
+    local = {
+      x: cx + dx * Math.cos(r) - dy * Math.sin(r),
+      y: cy + dx * Math.sin(r) + dy * Math.cos(r),
+    };
+  }
+
+  // 選取會跟著滑鼠頻繁執行，直接讀正規化座標，避免每次命中都 unpack
+  // 出整份 points 陣列；大型塗鴉仍是零額外配置的線段掃描。
+  const short = Math.min(frame.w, frame.h);
+  for (let si = d.strokes.length - 1; si >= 0; si--) {
+    const s = d.strokes[si];
+    const count = Math.floor(s.pts.length / 2);
+    if (!count) continue;
+    const radius = s.w * short / 2 + tolPx;
+    let ax = frame.x + s.pts[0] * frame.w;
+    let ay = frame.y + s.pts[1] * frame.h;
+    if (count === 1) {
+      if (Math.hypot(local.x - ax, local.y - ay) <= radius) return si;
+      continue;
+    }
+    for (let pi = 1; pi < count; pi++) {
+      const bx = frame.x + s.pts[pi * 2] * frame.w;
+      const by = frame.y + s.pts[pi * 2 + 1] * frame.h;
+      if (distToSeg(local, { x: ax, y: ay }, { x: bx, y: by }) <= radius) return si;
+      ax = bx;
+      ay = by;
     }
   }
   return -1;

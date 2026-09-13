@@ -3,6 +3,6 @@
 import { rmSync } from 'node:fs'
 
 for (const p of [
-  'dist/samples/real', 'dist/samples/_probe', 'dist/samples/perf',
+  'dist/samples/real', 'dist/samples/_probe', 'dist/samples/_3d-reveal', 'dist/samples/perf',
   'dist/filterref', 'dist/assetprobe.html', 'dist/videoprobe.html',
 ]) rmSync(p, { recursive: true, force: true })

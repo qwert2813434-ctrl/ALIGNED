@@ -21,6 +21,8 @@ const CAP = 1080;
 interface Loaded {
   root: THREE.Group;
   size: THREE.Vector3;
+  parts: { object: THREE.Object3D; base: THREE.Vector3; delta: THREE.Vector3 }[];
+  materials: { material: THREE.Material; opacity: number; transparent: boolean; depthWrite: boolean }[];
 }
 
 export class ModelPool {
@@ -85,7 +87,25 @@ export class ModelPool {
       const root = g.scene;
       const box = new THREE.Box3().setFromObject(root);
       root.position.sub(box.getCenter(new THREE.Vector3()));   // 置中＝繞自己轉
-      this.models.set(file, { root, size: box.getSize(new THREE.Vector3()) });
+      root.updateMatrixWorld(true);
+      const parts: Loaded["parts"] = [];
+      const materials: Loaded["materials"] = [];
+      root.traverse((object) => {
+        const raw = object.userData.aligned_explode as unknown;
+        if (Array.isArray(raw) && raw.length === 3 && raw.every(Number.isFinite)) {
+          parts.push({ object, base: object.position.clone(), delta: new THREE.Vector3(raw[0], raw[1], raw[2]) });
+        }
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.material) return;
+        const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const own = source.map((material) => material.clone());
+        mesh.material = Array.isArray(mesh.material) ? own : own[0];
+        for (const material of own) {
+          const m = material as THREE.Material & { opacity: number };
+          materials.push({ material: m, opacity: m.opacity, transparent: m.transparent, depthWrite: m.depthWrite });
+        }
+      });
+      this.models.set(file, { root, size: box.getSize(new THREE.Vector3()), parts, materials });
       this.onFrame();   // 載好了請畫布重畫一次
       next();
     }, undefined, () => {
@@ -136,7 +156,28 @@ export class ModelPool {
 
     this.holder.clear();
     this.holder.add(got.root);
-    this.holder.rotation.y = (modelYawAt(m, time) * Math.PI) / 180;
+    const explode = Math.max(0, Math.min(2, m.explode ?? 0));
+    for (const part of got.parts) part.object.position.copy(part.base).addScaledVector(part.delta, explode);
+    const opacity = Math.max(0.08, Math.min(1, m.opacity ?? 1));
+    // Keep each authored material unchanged. Multiplying every overlapping
+    // surface by the slider value makes complex watches accumulate back toward
+    // opaque. The completed render is faded once below instead.
+    for (const saved of got.materials) {
+      const material = saved.material as THREE.Material & { opacity: number };
+      material.opacity = saved.opacity;
+      const transparent = saved.transparent;
+      const depthWrite = saved.depthWrite;
+      if (material.transparent !== transparent || material.depthWrite !== depthWrite) {
+        material.transparent = transparent;
+        material.depthWrite = depthWrite;
+        material.needsUpdate = true;
+      }
+    }
+    this.holder.rotation.set(
+      ((m.pitch ?? 0) * Math.PI) / 180,
+      (modelYawAt(m, time) * Math.PI) / 180,
+      0,
+    );
     r.render(this.scene, this.cam);
 
     // renderer 是共用的——成品拷進 block 專屬畫布，下一個 block 才不會把它蓋掉
@@ -145,7 +186,9 @@ export class ModelPool {
     if (o.width !== w || o.height !== h) { o.width = w; o.height = h; }
     const cx = o.getContext("2d")!;
     cx.clearRect(0, 0, w, h);
+    cx.globalAlpha = opacity;
     cx.drawImage(r.domElement, 0, 0);
+    cx.globalAlpha = 1;
     return o;
   }
 }

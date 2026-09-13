@@ -69,6 +69,10 @@ export function wrapHoles(self: Block, blocks: Block[]): WrapHole[] {
       // 空欄位槽不擋字（iOS !isEmptySlot 同款）
       if (m.excludesText !== true || !m.assetFileName) continue;
       r = { ...b.frame };
+      if (m.maskIsCircle) {
+        const side = Math.min(r.w, r.h);
+        r = { x: r.x + (r.w - side) / 2, y: r.y + (r.h - side) / 2, w: side, h: side };
+      }
       shape = m.maskShape === "ellipse" ? "ellipse" : "rect";
       mode = wrapMode(m.textWrapMode);
     } else continue;

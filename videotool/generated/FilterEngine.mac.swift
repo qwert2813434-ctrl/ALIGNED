@@ -118,6 +118,7 @@ enum FilterEngine {
 
 
 
+
     /// CIImage 級入口 (Stage 2) — 影片管線共用同一套配方：canvas 即時預覽的
     /// AVVideoComposition handler 與 mp4 匯出的逐格 compositor 都走這裡。
     /// 一律裁回輸入 extent（Bloom 會把 extent 撐大，不裁回去合成座標就歪）。

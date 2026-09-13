@@ -494,6 +494,10 @@ export const en: Record<string, string> = {
   "圈數": "Turns",
   "秒／圈": "Sec / turn",
   "角度": "Angle",
+  "左右角度": "Horizontal angle",
+  "上下角度": "Vertical angle",
+  "爆炸程度": "Explode",
+  "實體程度": "Solidity",
 
   "套用到": "Apply to",
   "物件": "Elements",

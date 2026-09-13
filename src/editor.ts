@@ -16,7 +16,7 @@ import { cssFont } from "./core/fonts";
 import { autoFitText, columnHeight, naturalSize, naturalTextSize, renderStage, textPrintLines } from "./core/render";
 import { ANIM_STAGGER, defaultDur, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import type { FilterAssets } from "./core/filters";
-import { drawDoodle, doodleGrowDur, speedPress, streamlinePts, packStrokes, strokeHit, thinPoints, unpackStrokes, type BrushKind, type DoodleBlock , getSoftPrefs, softSnapshot } from "./core/doodle";
+import { drawDoodle, doodleGrowDur, speedPress, streamlinePts, packStrokes, rotatedStrokeHit, strokeHit, thinPoints, unpackStrokes, type BrushKind, type DoodleBlock , getSoftPrefs, softSnapshot } from "./core/doodle";
 import { resolvePosition, rotatedBounds, equalSpacingBadges, snapGuide, snapResizingEdge, type GuideLine, type SnapStrength, type SpacingBadge } from "./core/align";
 
 interface View { scale: number; tx: number; ty: number }
@@ -128,6 +128,9 @@ export class Editor {
   /** 按住 R＝拉角變成旋轉（Mac 的效率語意，滑鼠不用切工具）。 */
   private rKey = false;
   private rotating: { id: string; start: number; from: { x: number; y: number } } | null = null;
+  /** 3D 視角模式：明確開關，避免一般拖曳物件與轉模型搶同一個滑鼠手勢。 */
+  private modelOrbitEnabled = false;
+  private modelOrbit: { id: string; x: number; y: number; yaw: number; pitch: number } | null = null;
   /** 參考線：可以在畫布上直接拖，拖出頁面外就是丟掉（Photoshop 的語意）。 */
   private guideDrag: { axis: "x" | "y"; index: number } | null = null;
   /**
@@ -198,15 +201,17 @@ export class Editor {
       this.onContextMenu?.(b, { x: e.clientX, y: e.clientY });
     });
     canvas.addEventListener("pointermove", (e) => {
-      if (this.drag || this.sizing || this.textSizing || this.pan || this.marquee || this.content || this.rotating) return;
+      if (this.drag || this.sizing || this.textSizing || this.pan || this.marquee || this.content || this.rotating || this.modelOrbit) return;
       const p = this.at(e);
       const hk = this.hitHandle(p);
       // 游標就是說明書：手把上顯示縮放/裁切/旋轉，物件上顯示可搬動
       const g = this.hitGuide(p);
+      const hit = this.hit(p);
       canvas.style.cursor = this.doodle ? "crosshair" : this.contentId ? "grab"
+        : this.modelOrbitEnabled && hit?.content.type === "model" ? "grab"
         : g ? (g.axis === "x" ? "ew-resize" : "ns-resize")
         : hk ? (this.rKey ? "crosshair" : isEdge(hk) ? (hk === "left" || hk === "right" ? "ew-resize" : "ns-resize") : "nwse-resize")
-        : this.hit(p) ? "move" : this.spaceHeld ? "grab" : "default";
+        : hit ? "move" : this.spaceHeld ? "grab" : "default";
     });
     // 空白處拖曳＝框選（Keynote 的語意），平移改成按住空白鍵或中鍵——
     // 觸控板兩指捲動本來就能平移，所以主要語意讓給框選才對。
@@ -315,7 +320,12 @@ export class Editor {
       const dx = p.x - (f.x + f.w / 2), dy = p.y - (f.y + f.h / 2);
       const lx = dx * Math.cos(r) - dy * Math.sin(r) + f.w / 2;
       const ly = dx * Math.sin(r) + dy * Math.cos(r) + f.h / 2;
-      if (lx >= 0 && lx <= f.w && ly >= 0 && ly <= f.h) return b;
+      if (lx < 0 || lx > f.w || ly < 0 || ly > f.h) continue;
+      // 塗鴉的 frame 只是所有筆畫的包裝盒。兩筆分站左上／右下時，盒中央可能整片
+      // 都是空的；點那裡應繼續往下找文字／圖片，只有碰到真筆跡才選中塗鴉。
+      if (b.content.type === "doodle"
+          && rotatedStrokeHit(b.content.doodle, f, b.rotation, p, 8 / Math.max(this.view.scale, 0.001)) < 0) continue;
+      return b;
     }
     return null;
   }
@@ -373,7 +383,9 @@ export class Editor {
     const out: Handle[] = CORNERS.map((k) => ({
       key: k as HandleKey, ...cornerPoint(b.frame, b.rotation, CORNER_XY[k].x, CORNER_XY[k].y),
     }));
-    if (!cropable(b) || onScreen < 56) return out;
+    const fixedCircle = (b.content.type === "image" || b.content.type === "video")
+      && b.content.media.maskIsCircle === true;
+    if (!cropable(b) || fixedCircle || onScreen < 56) return out;
     const f = b.frame;
     out.push(
       { key: "left",   x: f.x,           y: f.y + f.h / 2, bar: "v" },
@@ -833,6 +845,15 @@ export class Editor {
     const additive = additiveClick(e);
     if (b) {
       if (additive) {
+        // 多選只收未鎖定物件；鎖定物件保留單選能力，使用者才仍可解鎖。
+        this.multi = new Set([...this.multi].filter((id) =>
+          this.project!.blocks.some((k) => k.id === id && !k.locked)));
+        if (b.locked) {
+          this.selected = this.multi.size ? [...this.multi][this.multi.size - 1] : null;
+          this.emitSelection();
+          this.dirty = true;
+          return;
+        }
         // ⇧／⌘ 點＝加減選。減掉主選取時把主選取讓給集合裡剩下的任一個
         if (this.multi.has(b.id)) this.multi.delete(b.id); else this.multi.add(b.id);
         this.selected = this.multi.has(b.id) ? b.id
@@ -844,6 +865,17 @@ export class Editor {
         this.selected = b.id;   // 點在已選取的成員上＝維持整組（接著可以整組拖）
       }
       this.emitSelection();
+      // 視角模式只攔「直接拖在已選 3D 物件上」。空白處、其他物件與雙指/滾輪
+      // 仍走原本畫布操作；因此不會犧牲平移、框選或 Option 複製。
+      if (this.modelOrbitEnabled && !b.locked && b.content.type === "model") {
+        this.modelOrbit = {
+          id: b.id, x: e.offsetX, y: e.offsetY,
+          yaw: b.content.model.yaw ?? 0, pitch: b.content.model.pitch ?? 0,
+        };
+        this.canvas.style.cursor = "grabbing";
+        this.dirty = true;
+        return;
+      }
       if (e.altKey && !b.locked && this.onDuplicateForDrag) {
         // ⌥ 拖曳＝原地留一份、拖走複製品（桌面共通語意）
         const copies = this.onDuplicateForDrag();
@@ -916,6 +948,16 @@ export class Editor {
   }
 
   private move = (e: PointerEvent): void => {
+    if (this.modelOrbit && this.project) {
+      const b = this.project.blocks.find((k) => k.id === this.modelOrbit!.id);
+      if (b?.content.type === "model") {
+        b.content.model.yaw = this.modelOrbit.yaw + (e.offsetX - this.modelOrbit.x) * 0.45;
+        b.content.model.pitch = Math.max(-75, Math.min(75,
+          this.modelOrbit.pitch - (e.offsetY - this.modelOrbit.y) * 0.35));
+        this.dirty = true;
+      }
+      return;
+    }
     if (this.stroke) {
       const p = this.at(e);
       if (this.doodle?.eraser) { this.eraseAt(p); return; }
@@ -1088,11 +1130,12 @@ export class Editor {
     }
     const dragged = this.drag != null || this.sizing != null || this.content != null
                     || this.rotating != null || this.guideDrag != null || this.groupSizing != null
-                    || this.textSizing != null;
+                    || this.textSizing != null || this.modelOrbit != null;
     const marqueed = this.marquee != null;
     this.groupSizing = null; this.textSizing = null;
     this.drag = null; this.sizing = null; this.pan = null; this.marquee = null;
-    this.content = null; this.rotating = null; this.guideDrag = null;
+    this.content = null; this.rotating = null; this.guideDrag = null; this.modelOrbit = null;
+    if (this.modelOrbitEnabled) this.canvas.style.cursor = "grab";
     if (marqueed) this.emitSelection();
     this.guides = []; this.badges = [];
     this.dirty = true;
@@ -1333,7 +1376,8 @@ export class Editor {
       el.style.top = `${sy - inkTop}px`;
       el.style.width = `${Math.max(f.w * v.scale, 8)}px`;
       el.style.height = "auto";
-      el.style.textAlign = t.alignment === "center" ? "center" : t.alignment === "trailing" ? "right" : "left";
+      el.style.textAlign = t.alignment === "center" ? "center" : t.alignment === "trailing" ? "right" : t.alignment === "justified" ? "justify" : "left";
+      el.style.textAlignLast = "left";
     }
     if (b.rotation) {
       el.style.transform = `rotate(${b.rotation}deg)`;
@@ -1425,9 +1469,12 @@ export class Editor {
 
   /** 程式化多選（框選以外的入口，例如全選）。 */
   selectMany(ids: string[]): void {
-    this.multi = new Set(ids);
-    this.selected = ids.length === 1 ? ids[0] : (ids.length ? this.selected : null);
-    if (this.selected && !this.multi.has(this.selected)) this.selected = ids[0] ?? null;
+    const allowed = this.project
+      ? ids.filter((id) => this.project!.blocks.some((b) => b.id === id && !b.locked))
+      : [];
+    this.multi = new Set(allowed);
+    this.selected = allowed.length === 1 ? allowed[0] : (allowed.length ? this.selected : null);
+    if (this.selected && !this.multi.has(this.selected)) this.selected = allowed[0] ?? null;
     this.emitSelection();
     this.dirty = true;
   }
@@ -1498,6 +1545,16 @@ export class Editor {
   getSelected(): Block | null {
     return this.project?.blocks.find((b) => b.id === this.selected) ?? null;
   }
+
+  /** 面板控制的 3D 視角模式；關閉時保證不殘留半個拖曳。 */
+  setModelOrbitEnabled(on: boolean): void {
+    this.modelOrbitEnabled = on;
+    if (!on) this.modelOrbit = null;
+    this.canvas.style.cursor = on ? "grab" : "default";
+    this.dirty = true;
+  }
+
+  isModelOrbitEnabled(): boolean { return this.modelOrbitEnabled; }
 
   /** 外部（檢視器／快捷鍵）改了專案資料後叫這個重畫。 */
   refresh(): void { this.dirty = true; }
@@ -1791,7 +1848,7 @@ export class Editor {
     renderStage(ctx, this.project,
       { placeholderForMissingMedia: true, images: this.images, mattes: this.images, videos: this.videos, models: this.models,
         filters: this.filters, skipBlockId: this.editing?.id, paperGPU: true,
-        viewRect: this.visibleRect(), ...animOpts }, {
+        viewRect: this.visibleRect(), deferStaticDoodles: true, doodlePriority: 0, ...animOpts }, {
       hideProjectGuides: this.guidesHidden,
       previewGuides: this.previewGuides ?? undefined,
       // 多選時多畫一圈群組外框——手把長在它的右下角，沒有框就看不出那顆在管什麼

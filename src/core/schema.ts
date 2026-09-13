@@ -12,7 +12,7 @@ import { __f } from "../i18n";
 
 export interface Rect { x: number; y: number; w: number; h: number }
 
-export type TextAlign = "leading" | "center" | "trailing";
+export type TextAlign = "leading" | "center" | "trailing" | "justified";
 export type VAlign = "top" | "middle" | "bottom";
 export type ShapeKind = "rectangle" | "ellipse" | "line";
 
@@ -62,6 +62,9 @@ export interface MediaBlock {
   cropRect: Rect;          // 正規化 0–1；(0,0,1,1) 有特殊語意，見 geometry.aspectFillCrop
   rotationDegrees?: number;// 拉直（-45…45），轉的是內容不是 block
   maskShape?: "rectangle" | "ellipse";
+  /** 正圓模式：基礎仍是 ellipse，另用 optional flag 區分既有橢圓。
+   *  寫入時框也會收成 1:1，因此舊版忽略此欄位仍能正確顯示成圓。 */
+  maskIsCircle?: boolean;
   maskCornerRadius?: number;  // 短邊一半的分數
   /** 去背遮罩（2026-08-25）：assets/ 裡的**灰階** PNG，白＝留、黑＝去，與原圖同尺寸。
    *  存灰階不存切好的圖，是因為留人／反轉／人形當窗口填材質是同一張遮罩換合成方式；
@@ -145,6 +148,12 @@ export interface ModelBlock {
   dur?: number;
   /** 靜止／終點角度（度）——排版上看到的那一面，也是快轉煞停的收尾面。 */
   yaw?: number;
+  /** 上下觀看角度（度）。與 yaw 合用即可得到真正的 45° hero view。 */
+  pitch?: number;
+  /** 爆炸展示程度。0＝組裝完成；1＝模型作者建議的分解距離。 */
+  explode?: number;
+  /** 整體實體程度。1＝實體；較低值用於透視／組裝揭示。 */
+  opacity?: number;
 }
 
 export type BlockContent =
