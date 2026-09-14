@@ -62,6 +62,11 @@ export function wrapHoles(self: Block, blocks: Block[]): WrapHole[] {
         const th = Math.max(0.25, Math.min(s.lineWidth ?? Math.max(2, r.h * 0.5), r.h));
         r = { x: r.x, y: r.y + r.h / 2 - th / 2, w: r.w, h: th };
       }
+      if (s.kind === "ellipse" && s.isCircle) {
+        // 正圓的洞跟畫面一樣是短邊正圓
+        const side = Math.min(r.w, r.h);
+        r = { x: r.x + (r.w - side) / 2, y: r.y + (r.h - side) / 2, w: side, h: side };
+      }
       shape = s.kind === "ellipse" ? "ellipse" : "rect";
       mode = wrapMode(s.textWrapMode);
     } else if (b.content.type === "image" || b.content.type === "video") {

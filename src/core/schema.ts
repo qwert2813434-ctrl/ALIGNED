@@ -131,6 +131,9 @@ export interface ShapeBlock {
   lineWidth?: number;
   excludesText?: boolean;
   textWrapMode?: string;
+  /** 正圓（2026-09-15，iOS ShapeBlock.isCircle 同義）：基礎仍是 ellipse，另用 optional flag 區分既有橢圓
+   *  （同 maskIsCircle）。拉角維持 1:1；畫的時候以短邊正圓防禦，舊版把框拉成長方形也還是圓。 */
+  isCircle?: boolean;
 }
 
 /** 3D 物件（2026-08-16）。專案裡它永遠是「活的物件」（.glb 進 assets/，這裡只存

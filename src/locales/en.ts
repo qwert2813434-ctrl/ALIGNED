@@ -215,6 +215,7 @@ export const en: Record<string, string> = {
   "遮罩": "Mask",
   "圓角矩形": "Rounded rectangle",
   "橢圓": "Ellipse",
+  "正圓": "Circle",
   "外框色": "Border color",
   "外框寬": "Border width",
   "拉直": "Straighten",

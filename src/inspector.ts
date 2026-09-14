@@ -128,7 +128,8 @@ function layerName(b: Block): string {
     return t ? (t.length > 14 ? `${t.slice(0, 14)}…` : t) : __("（空白文字）");
   }
   if (c.type === "shape") {
-    return { rectangle: __("矩形"), ellipse: __("圓形"), line: __("線條") }[c.shape.kind] ?? __("形狀");
+    if (c.shape.kind === "ellipse" && c.shape.isCircle) return __("正圓");
+    return { rectangle: __("矩形"), ellipse: __("橢圓"), line: __("線條") }[c.shape.kind] ?? __("形狀");
   }
   if (c.type === "model") return __("3D 物件");
   if (c.type === "doodle") return __f("塗鴉（{n} 筆）", { n: c.doodle.strokes.length });
@@ -1096,9 +1097,19 @@ export class Inspector {
     const editable = b.content.type === "shape" || b.content.type === "image"
       || b.content.type === "video" || b.content.type === "model";
     // 文字的框是貼字盒（由內容決定），這裡不給改——改字級/欄寬才是正路
+    // 正圓（2026-09-15）：寬高一起改，框維持正方形（num 是 change 才觸發，重建不會打斷輸入）
+    const circle = b.content.type === "shape" && b.content.shape.isCircle === true;
     size.append(
-      this.num(Math.round(b.frame.w), { step: 1, disabled: !editable }, (v) => { b.frame.w = v; this.emit(); }),
-      this.num(Math.round(b.frame.h), { step: 1, disabled: !editable }, (v) => { b.frame.h = v; this.emit(); }),
+      this.num(Math.round(b.frame.w), { step: 1, disabled: !editable }, (v) => {
+        b.frame.w = v;
+        if (circle) { b.frame.h = v; this.rebuild(); }
+        this.emit();
+      }),
+      this.num(Math.round(b.frame.h), { step: 1, disabled: !editable }, (v) => {
+        b.frame.h = v;
+        if (circle) { b.frame.w = v; this.rebuild(); }
+        this.emit();
+      }),
     );
     if (editable) {
       // 縮放拉桿（2026-09-05 小高：「尺寸跟旋轉最需要拉桿」）：以拖動起點的尺寸為 100%，
@@ -1394,10 +1405,29 @@ export class Inspector {
 
   private shape(sh: ShapeBlock): void {
     const s = this.section(__("形狀"), "content", true);
+    // 正圓（2026-09-15，同 iOS 圖形面板）：基礎仍是 ellipse＋isCircle；框以中心收成短邊正方形、
+    // 旋轉歸零（圓轉了看起來一樣，留著只會讓外接框吸附對到看不見的角）
     this.row(s, __("類型")).append(this.select(
-      [["rectangle", __("矩形")], ["ellipse", __("圓形")], ["line", __("線條")]],
-      sh.kind,
-      (v) => { sh.kind = v as ShapeBlock["kind"]; this.rebuild(); this.emit(); },
+      [["rectangle", __("矩形")], ["circle", __("正圓")], ["ellipse", __("橢圓")], ["line", __("線條")]],
+      sh.kind === "ellipse" && sh.isCircle ? "circle" : sh.kind,
+      (v) => {
+        if (v === "circle") {
+          const b = this.block, p = this.project;
+          if (b && p) {
+            const f = b.frame;
+            const side = sh.kind === "line" ? p.canvasWidth * 0.3 : Math.min(f.w, f.h);
+            b.frame = { x: f.x + f.w / 2 - side / 2, y: f.y + f.h / 2 - side / 2, w: side, h: side };
+            b.rotation = 0;
+          }
+          sh.kind = "ellipse";
+          sh.isCircle = true;
+        } else {
+          sh.kind = v as ShapeBlock["kind"];
+          sh.isCircle = undefined;
+        }
+        this.rebuild();
+        this.emit();
+      },
     ));
     this.row(s, __("顏色")).append(this.swatches(sh.colorHex, (hex) => { sh.colorHex = hex; this.emit(); }));
     if (sh.kind === "rectangle") {

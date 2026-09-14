@@ -648,7 +648,12 @@ function drawShape(ctx: CanvasRenderingContext2D, s: ShapeBlock, w: number, h: n
     }
     case "ellipse":
       ctx.beginPath();
-      ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      if (s.isCircle) {
+        // 正圓：框被拉成長方形也畫短邊正圓置中（iOS ShapeBlockView 同一套防禦）
+        ctx.arc(w / 2, h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);
+      } else {
+        ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      }
       ctx.fill();
       break;
     case "line": {

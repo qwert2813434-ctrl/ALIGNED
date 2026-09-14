@@ -292,3 +292,97 @@ export function rotatedBounds(f: Rect, rotation: number): Rect {
   const w = f.w * c + f.h * s, h = f.w * s + f.h * c;
   return { x: midX(f) - w / 2, y: midY(f) - h / 2, w, h };
 }
+
+// ── 拉角縮放的外接框吸附（2026-09-15 小高：「旋轉後的方塊，無法吸附參考線」）──────────
+// iOS `Engines/ResizeSnapMath.swift` 逐條同式。錨點固定（對角；⇧＝中心），新尺寸 (w,h) 下
+// 旋轉外接框四邊都是 w、h 的一次式：邊＝錨點分量＋a·w＋b·h。咬到就反解；
+// 沒轉時係數只剩 0／1，化簡回原本「右緣＝左緣＋w、下緣＝上緣＋h」。
+
+export interface ResizeEdge { vertical: boolean; anchor: number; a: number; b: number }
+
+/** 係數太小＝這條邊幾乎不跟著尺寸動（轉 89° 時右緣對 w 只剩 0.017），拿它反解會把尺寸甩飛。 */
+export const RESIZE_MIN_COEF = 0.2;
+/** 吸附一次最多改多少尺寸（吸附半徑的四倍）；超過就當沒咬到。 */
+export const RESIZE_MAX_JUMP = 32;
+
+type EdgeSnapper = (value: number, vertical: boolean) => EdgeSnapResult;
+
+const clean0 = (v: number): number => (Math.abs(v) < 1e-9 ? 0 : v);
+
+/** 外接框四條邊（左、右、上、下）。sx／sy＝被拉的角在本地座標的方向（右下＝+1,+1）；center＝以中心縮放。 */
+export function resizeEdges(anchor: { x: number; y: number }, rotation: number, sx = 1, sy = 1, center = false): ResizeEdge[] {
+  const rad = (rotation * Math.PI) / 180;
+  const c = clean0(Math.cos(rad)), s = clean0(Math.sin(rad));
+  const hc = Math.abs(c) / 2, hs = Math.abs(s) / 2;
+  const cxA = center ? 0 : (sx * c) / 2, cxB = center ? 0 : (-sy * s) / 2;
+  const cyA = center ? 0 : (sx * s) / 2, cyB = center ? 0 : (sy * c) / 2;
+  return [
+    { vertical: true, anchor: anchor.x, a: clean0(cxA - hc), b: clean0(cxB - hs) },
+    { vertical: true, anchor: anchor.x, a: clean0(cxA + hc), b: clean0(cxB + hs) },
+    { vertical: false, anchor: anchor.y, a: clean0(cyA - hs), b: clean0(cyB - hc) },
+    { vertical: false, anchor: anchor.y, a: clean0(cyA + hs), b: clean0(cyB + hc) },
+  ];
+}
+
+/** 自由縮放（圖形）：左右、上下各挑最近咬到的一條；兩條都有就解 2×2，解壞了只照最近那條改它最敏感的變數。 */
+export function snapFreeResize(edges: ResizeEdge[], w: number, h: number, minSide: number, snap: EdgeSnapper):
+  { w: number; h: number; hits: EdgeSnapResult[] } {
+  type Pick = { e: ResizeEdge; t: number; d: number; r: EdgeSnapResult };
+  const best: Pick[] = [];
+  for (const vertical of [true, false]) {
+    let pick: Pick | null = null;
+    for (const e of edges) {
+      if (e.vertical !== vertical || Math.max(Math.abs(e.a), Math.abs(e.b)) < RESIZE_MIN_COEF) continue;
+      const v = e.anchor + e.a * w + e.b * h;
+      const r = snap(v, vertical);
+      if (!r.snapped) continue;
+      const d = Math.abs(r.value - v);
+      if (!pick || d < pick.d) pick = { e, t: r.value, d, r };
+    }
+    if (pick) best.push(pick);
+  }
+  best.sort((p, q) => p.d - q.d);
+  if (best.length === 2) {
+    const e1 = best[0].e, e2 = best[1].e;
+    const r1 = best[0].t - e1.anchor, r2 = best[1].t - e2.anchor;
+    const det = e1.a * e2.b - e1.b * e2.a;
+    if (Math.abs(det) >= RESIZE_MIN_COEF * RESIZE_MIN_COEF) {
+      const nw = (r1 * e2.b - e1.b * r2) / det;
+      const nh = (e1.a * r2 - r1 * e2.a) / det;
+      if (Number.isFinite(nw) && Number.isFinite(nh) && nw >= minSide && nh >= minSide
+          && Math.abs(nw - w) <= RESIZE_MAX_JUMP && Math.abs(nh - h) <= RESIZE_MAX_JUMP) {
+        return { w: nw, h: nh, hits: [best[0].r, best[1].r] };
+      }
+    }
+  }
+  for (const hit of best) {
+    const e = hit.e, rest = hit.t - e.anchor;
+    if (Math.abs(e.a) >= Math.abs(e.b)) {
+      const nw = (rest - e.b * h) / e.a;
+      if (Number.isFinite(nw) && nw >= minSide && Math.abs(nw - w) <= RESIZE_MAX_JUMP) return { w: nw, h, hits: [hit.r] };
+    } else {
+      const nh = (rest - e.a * w) / e.b;
+      if (Number.isFinite(nh) && nh >= minSide && Math.abs(nh - h) <= RESIZE_MAX_JUMP) return { w, h: nh, hits: [hit.r] };
+    }
+  }
+  return { w, h, hits: [] };
+}
+
+/** 等比縮放（照片、正圓）：h＝w·k，每條邊只剩 w（係數 a＋b·k）；挑離最近的反解，平手左右邊贏。 */
+export function snapLockedResize(edges: ResizeEdge[], w: number, k: number, minSide: number, snap: EdgeSnapper):
+  { width: number; hit: EdgeSnapResult | null } {
+  let pick: { width: number; d: number; vertical: boolean; r: EdgeSnapResult } | null = null;
+  for (const e of edges) {
+    const g = e.a + e.b * k;
+    if (Math.abs(g) < RESIZE_MIN_COEF) continue;
+    const v = e.anchor + g * w;
+    const r = snap(v, e.vertical);
+    if (!r.snapped) continue;
+    const nw = (r.value - e.anchor) / g;
+    if (!Number.isFinite(nw) || nw < minSide || Math.abs(nw - w) > RESIZE_MAX_JUMP) continue;
+    const d = Math.abs(r.value - v);
+    if (pick && (pick.d < d || (pick.d === d && (pick.vertical || !e.vertical)))) continue;
+    pick = { width: nw, d, vertical: e.vertical, r };
+  }
+  return pick ? { width: pick.width, hit: pick.r } : { width: w, hit: null };
+}

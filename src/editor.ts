@@ -17,7 +17,7 @@ import { autoFitText, columnHeight, naturalSize, naturalTextSize, renderStage, t
 import { ANIM_STAGGER, defaultDur, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import type { FilterAssets } from "./core/filters";
 import { drawDoodle, doodleGrowDur, speedPress, streamlinePts, packStrokes, rotatedStrokeHit, strokeHit, thinPoints, unpackStrokes, type BrushKind, type DoodleBlock , getSoftPrefs, softSnapshot } from "./core/doodle";
-import { resolvePosition, rotatedBounds, equalSpacingBadges, snapGuide, snapResizingEdge, type GuideLine, type SnapStrength, type SpacingBadge } from "./core/align";
+import { resolvePosition, rotatedBounds, equalSpacingBadges, snapGuide, snapResizingEdge, resizeEdges, snapFreeResize, snapLockedResize, type GuideLine, type SnapStrength, type SpacingBadge } from "./core/align";
 
 interface View { scale: number; tx: number; ty: number }
 
@@ -65,9 +65,10 @@ function resizable(b: Block): boolean {
     || b.content.type === "shape" || b.content.type === "model");
 }
 
-/** 等比鎖定＝照片、影片與 3D（iOS：角是 aspect-locked，拉了不變形）。形狀自由拉。 */
+/** 等比鎖定＝照片、影片與 3D（iOS：角是 aspect-locked，拉了不變形）。形狀自由拉，正圓除外（2026-09-15）。 */
 function aspectLocked(b: Block): boolean {
-  return b.content.type === "image" || b.content.type === "video" || b.content.type === "model";
+  return b.content.type === "image" || b.content.type === "video" || b.content.type === "model"
+    || (b.content.type === "shape" && b.content.shape.isCircle === true);
 }
 
 /** 可以裁切的：未旋轉、有素材的媒體（iOS `content.isMedia && rotation == 0`）。 */
@@ -588,7 +589,7 @@ export class Editor {
       h = Math.max(sy * uy * half, minSize);
     }
 
-    // 吸附只在未旋轉時給：旋轉後「正在動的邊」不是軸對齊的，咬軸對齊的參考線沒意義
+    // 吸附：未旋轉走軸對齊的邊；旋轉過改咬旋轉外接框的邊（下面 else if）
     this.guides = [];
     if (!b.rotation && this.snapStrength !== "none") {
       const others = this.snapTargets(p, (_, i) => i === idx);
@@ -610,6 +611,25 @@ export class Editor {
         if (ex.snapped) w = Math.max(sx * (ex.value - ax0) * half, minSize);
         if (ey.snapped) h = Math.max(sy * (ey.value - ay0) * half, minSize);
         this.guides = [...ex.guides, ...ey.guides];
+      }
+    } else if (b.rotation && this.snapStrength !== "none") {
+      // 旋轉過（2026-09-15 小高：「旋轉後的方塊，無法吸附參考線」）：原本整段跳過。
+      // 錨點（對角；⇧＝中心）不動，旋轉外接框四邊都是 w、h 的一次式——咬到就反解（iOS ResizeSnapMath 同式）
+      const others = this.snapTargets(p, (_, i) => i === idx);
+      const home = pageRect(p, pageIndexForX(p, f0.x + f0.w / 2));
+      const stage = stageBounds(p);
+      const strength = this.snapStrength;
+      const edges = resizeEdges({ x: ax0, y: ay0 }, b.rotation, sx, sy, center);
+      const snap = (v: number, vertical: boolean) => snapResizingEdge(
+        v, vertical ? "vertical" : "horizontal", others, home, stage, strength,
+        vertical ? (p.guidesX ?? []) : (p.guidesY ?? []));
+      if (lock) {
+        const r = snapLockedResize(edges, w, aspect, minSize, snap);
+        if (r.hit) { w = r.width; h = w * aspect; this.guides = r.hit.guides; }
+      } else {
+        const r = snapFreeResize(edges, w, h, minSize, snap);
+        w = r.w; h = r.h;
+        this.guides = r.hits.flatMap((x) => x.guides);
       }
     }
 
