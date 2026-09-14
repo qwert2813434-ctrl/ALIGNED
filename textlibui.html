@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>文字庫面板自測</title>
+<style>
+  :root { --chrome: #FFFFFF; --card: #FFFFFF; --line: #E2E2E7; --ink: #1E1E23; --ink2: #75757C; color-scheme: light; }
+  :root[data-theme="dark"] { --chrome: #1D1E22; --card: #292A30; --line: #3A3B42; --ink: #F2F2F5; --ink2: #A9A9B2; color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; background: #F4F3F0; color: var(--ink);
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang TC", "Helvetica Neue", sans-serif; }
+  :root[data-theme="dark"] body { background: #141418; }
+  #out { padding: 18px 22px; font: 13px/1.9 ui-monospace, "SF Mono", monospace; }
+  .ok { color: #1a8a3f; } .bad { color: #c0392b; font-weight: 600; } #out span { opacity: .55; }
+</style>
+</head>
+<body>
+  <div id="out">執行中…</div>
+  <script type="module" src="/src/textlibuitest.ts"></script>
+</body>
+</html>

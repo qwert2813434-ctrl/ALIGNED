@@ -11,6 +11,9 @@ import { decodeProject, encodeProject, moveBlocks, type Block, type Project } fr
 import { loadFonts, registerSystemFonts, registerUserFont, type DynamicFont } from "./core/fonts";
 import { restoreStoreFonts, unresolvedNames, repairable, downloadStoreFont } from "./core/fontstore";
 import { openFontStore } from "./fontstoreui";
+import { isTextLibraryOpen, openTextLibrary, textLibraryIcon, type TextLibraryHost } from "./textlibui";
+import { TextLibraryStore, localTextLibPrefs, memoryTextLibBackend, tauriTextLibBackend } from "./textlib";
+import { canCollectText, collectCells, memoTextBlock, type TextMemo } from "./core/textmemo";
 import { initSoftPrefs, openBrushPrefs } from "./brushprefs";
 import { getUIPrefs, onUIPrefsChanged } from "./uiprefs";
 import { CHIP, chipIcon } from "./icons";
@@ -1816,6 +1819,74 @@ function insertBlankAfter(i: number): void {
   afterPageChange(i + 1);
 }
 
+// ── 文字庫（2026-09-14）─────────────────────────────────────────────────
+// iPhone／iPad 同步到 iCloud 雲碟「ALIGNED/TextLibrary」的同一批文字，桌面版直接讀寫那個資料夾：
+// 工具列書本／首頁＝打開（寫、稿紙、排進畫面）；右鍵文字框＝收進文字庫。資料與規則在 textlib.ts、core/textmemo.ts。
+const textLibrary = new TextLibraryStore(
+  inApp ? tauriTextLibBackend(invoke) : memoryTextLibBackend({ aligned: "/瀏覽器預覽/ALIGNED" }),
+  localTextLibPrefs, __("衝突副本"));
+
+const textLibraryHost: TextLibraryHost = {
+  store: textLibrary,
+  measureCtx,
+  inApp,
+  canPlace: () => !!current && !home.classList.contains("on") && !sheet.classList.contains("on"),
+  place: (memo, cells) => placeTextMemo(memo, cells),
+  pickFolder: async () => {
+    if (!inApp) return null;
+    const picked = await openDialog({ directory: true, title: __("選文字庫資料夾"), defaultPath: lastDir("textLibrary") });
+    if (typeof picked !== "string") return null;
+    rememberDirExact("textLibrary", picked);
+    return picked;
+  },
+  confirm: (message) => (inApp ? ask(message, { kind: "warning" }) : Promise.resolve(window.confirm(message))),
+};
+
+function openTextLibraryPanel(opts?: { select?: string; note?: string }): void {
+  openTextLibrary(textLibraryHost, opts);
+}
+
+/** 排進畫面：當頁一個新的長文框，框寬＝那篇的每排格數（iOS 同一組數字），記一步復原；庫裡記次數與專案名。 */
+function placeTextMemo(memo: TextMemo, cells: number): void {
+  if (!current) return;
+  const page = editor.currentPageIndex();
+  const { frame, text } = memoTextBlock(current, page, memo.body, cells);
+  const b = baseBlock({ type: "text", text }, frame.w, frame.h);
+  b.frame = frame;
+  current.blocks.push(b);
+  editor.refresh();
+  editor.select(b.id);
+  scheduleThumbs();
+  commit("add");
+  meta.textContent = __f("已排進第 {n} 頁", { n: page + 1 });
+  void textLibrary.markUsed(memo.id, current.name).catch(() => undefined);
+}
+
+/** 收進文字庫（同 iOS）：一框一篇、長文框連每排格數一起記，佔位字與庫裡已有的不收；收完打開文字庫。 */
+async function collectToTextLibrary(blocks: Block[]): Promise<void> {
+  if (!current) return;
+  const cw = current.canvasWidth;
+  const sources = blocks.flatMap((k) => (k.content.type === "text" && canCollectText(k.content.text.text)
+    ? [{ text: k.content.text.text, cellsPerRow: collectCells(k.content.text, k.frame.w, cw) }] : []));
+  if (!sources.length) return;
+  await textLibrary.resolveFolder();
+  if (!textLibrary.dir) { openTextLibraryPanel({ note: __("先選好文字庫的位置，再收一次") }); return; }
+  try {
+    const r = await textLibrary.collect(sources, current.name);
+    const note = !r.added.length ? __("都已經在文字庫裡了")
+      : r.existing ? __f("收進 {n} 篇，{m} 篇本來就在文字庫", { n: r.added.length, m: r.existing })
+      : __f("收進 {n} 篇到文字庫", { n: r.added.length });
+    openTextLibraryPanel({ select: r.added[0]?.id, note });
+  } catch (x) {
+    meta.textContent = __f("收進文字庫失敗：{msg}", { msg: (x as Error).message ?? String(x) });
+  }
+}
+
+$<HTMLButtonElement>("#textLibBtn").innerHTML = textLibraryIcon(18);
+$<HTMLButtonElement>("#textLibBtn").addEventListener("click", () => openTextLibraryPanel());
+$<HTMLButtonElement>("#homeTextLib").innerHTML = `${textLibraryIcon(17)}${__("文字庫")}`;
+$<HTMLButtonElement>("#homeTextLib").addEventListener("click", () => openTextLibraryPanel());
+
 editor.onContextMenu = (b, at) => {
   if (!current) return;
   const sel = editor.selectionBlocks();
@@ -1852,6 +1923,9 @@ editor.onContextMenu = (b, at) => {
         { label: __("首字大寫"), run: () => recase(sentence) },
       ] });
     }
+    // 收進文字庫（2026-09-14，同 iOS）：選到的文字框一框一篇收進去，收完打開文字庫
+    const collectable = sel.filter((k) => k.content.type === "text" && canCollectText(k.content.text.text));
+    if (collectable.length) items.push({ label: __("收進文字庫"), run: () => void collectToTextLibrary(collectable) });
     if (others.length) {
       items.push({ label: many ? __("複製到其他頁") : __("複製到第…頁"),
                    sub: others.map((i) => ({ label: __f("第 {n} 頁", { n: i + 1 }), run: () => toPage(sel, i, true) })) });
@@ -3644,6 +3718,13 @@ function handleNativeMenu(id: string): void {
     const active = document.activeElement as HTMLElement | null;
     return !!active && (["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName) || active.isContentEditable);
   })();
+  // 文字庫面板開著＝後面的畫布不動：編輯指令只給面板裡的輸入框（⌘Z 復原的是打的字），其他選單先不理
+  if (isTextLibraryOpen()) {
+    const textCommand: Record<string, string> = { edit_undo: "undo", edit_redo: "redo", edit_copy: "copy",
+                                                  edit_paste: "paste", edit_select_all: "selectAll" };
+    if (typing && textCommand[id]) document.execCommand(textCommand[id]);
+    return;
+  }
   const actions: Record<string, () => void> = {
     app_settings: () => press("#gearBtn"),
     file_new: () => press("#newproj"), file_open: () => press("#open"),
@@ -3668,6 +3749,7 @@ function handleNativeMenu(id: string): void {
     view_fit: () => editor.fitAll(), view_guides: toggleGuidesHidden,
     view_guide_panel: () => press("#guidesBtn"), view_layers: () => press("#layersBtn"),
     view_play: () => press("#playBtn"),
+    view_text_library: () => openTextLibraryPanel(),
     ai_status: () => {
       const state = current && !home.classList.contains("on") ? `已準備共編：${current.name}` : "MCP 已準備，請先開啟一份專案";
       meta.textContent = __(state);

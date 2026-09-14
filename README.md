@@ -121,6 +121,10 @@ open http://localhost:5173/selftest.html   # 瀏覽器內互動自測
   > （貼著元件左緣兩側各點一次）才抓得到。
   > **仍未覆蓋**：整頁 CSS zoom 與捲動下的座標偏移（那需要 WebKit／Chrome 兩種語意各跑一次）。
 
+- **`textlibtest/run.sh`** — 文字庫（2026-09-14）：全 Unicode 字元判斷、iOS `TextMemo.swift` 與 `src/core/textmemo.ts`
+  同一批測資逐值比對，以及 iOS `TextMemoSync` 編成命令列、與桌面版 `src/textlib.ts` 讀寫同一個資料夾的互通情境。
+  面板另有 `textlibui.html` 自測（headless Chrome 用 CDP 照真實時間跑；`--virtual-time-budget` 會卡住）。
+
 拿真實專案檔來測：範本是 AppleArchive/LZFSE，不是 zip，用系統的 `aa` 解：
 ```bash
 aa extract -i "../TemplateForge/範本_輪播全集/17｜工作人員名單 Credits（7頁）.alignproj" -d /tmp/x

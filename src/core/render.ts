@@ -2101,3 +2101,18 @@ function drawVertical(
   });
   ctx.restore();
 }
+
+/**
+ * 文字庫稿紙（2026-09-14）：一段字照長文框的斷行排成一排一排——跟畫布同一支 wrap（保詞、標點規則都一樣），
+ * 稿紙預覽幾排，排進畫面就是幾排。`width`＝框寬。
+ */
+export function bodyTextLines(ctx: CanvasRenderingContext2D, t: TextBlock, canvasWidth: number, width: number): string[] {
+  const size = resolvedFontSize(t, canvasWidth);
+  const kern = resolvedKerning(t, canvasWidth);
+  ctx.save();
+  ctx.font = cssFont(t, size);
+  ctx.letterSpacing = `${kern}px`;
+  const lines = wrap(ctx, t.text, width, kern);
+  ctx.restore();
+  return lines;
+}

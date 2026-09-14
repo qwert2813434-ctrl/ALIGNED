@@ -11,6 +11,7 @@ use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 mod mediaserv;
 mod model;
 mod agentbridge;
+mod textlib;
 
 /// 呼叫系統的 Apple Archive 工具。
 /// Windows／Linux 沒有 `aa`，而 `.alignproj` 就是 AppleArchive/LZFSE 容器——
@@ -460,6 +461,7 @@ fn main() {
                 .item(&item("view_guides", "顯示／隱藏參考線", Some("CmdOrCtrl+;"))?)
                 .item(&item("view_guide_panel", "參考線面板", None)?)
                 .item(&item("view_layers", "圖層面板", None)?)
+                .item(&item("view_text_library", "文字庫", None)?)
                 .item(&item("view_play", "播放／暫停版面", None)?)
                 .separator().fullscreen().build()?;
             let ai_menu = SubmenuBuilder::new(app, "AI")
@@ -486,7 +488,9 @@ fn main() {
             list_system_fonts, list_user_fonts, import_font, open_url,
             agentbridge::agent_bridge_take, agentbridge::agent_bridge_respond,
             model::model_status, model::model_download, model::model_remove, model::model_matte,
-            model::model_unload, model::model_cached])
+            model::model_unload, model::model_cached,
+            textlib::textlib_locate, textlib::textlib_list, textlib::textlib_read, textlib::textlib_write,
+            textlib::textlib_delete, textlib::textlib_ensure_dir, textlib::textlib_download])
         .run(tauri::generate_context!())
         .expect("tauri 啟動失敗");
 }
