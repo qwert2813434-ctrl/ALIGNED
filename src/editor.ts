@@ -1420,6 +1420,13 @@ export class Editor {
     const a1 = Math.atan2(at.y - cy, at.x - cx);
     let deg = r.start + ((a1 - a0) * 180) / Math.PI;
     if (snap15) deg = Math.round(deg / 15) * 15;
+    else {
+      // ±90° 微微吸附（2026-09-15 小高：快速找到 90／−90；同 iOS 長按旋轉）。0° 不吸，微調幾度才順手
+      const n = ((((deg + 180) % 360) + 360) % 360) - 180;
+      for (const a of [90, -90]) {
+        if (Math.abs(n - a) <= 3) { deg += a - n; break; }
+      }
+    }
     b.rotation = Math.round(deg * 10) / 10;
     this.dirty = true;
   }
