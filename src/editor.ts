@@ -58,11 +58,12 @@ function cornerPoint(f: Rect, rotation: number, nx: number, ny: number): { x: nu
   return { x: cx + dx * c - dy * s, y: cy + dx * s + dy * c };
 }
 
-/** 左側文字把手：拖曳起手時框的右上角（旋轉後畫面上那一點）固定，依新尺寸反推框的位置。 */
-function holdTopRight(b: Block, f0: Rect): void {
-  const a = cornerPoint(f0, b.rotation, 1, 0);
+/** 文字手把：拖曳起手時框上緣的一角（旋轉後畫面上那一點）固定，依新尺寸反推框的位置。
+ *  nx＝0 左上角（拉右側手把）、1 右上角（拉左側手把）——拉哪邊對面固定。 */
+function holdTopCorner(b: Block, f0: Rect, nx: 0 | 1): void {
+  const a = cornerPoint(f0, b.rotation, nx, 0);
   const f = b.frame, r = (b.rotation * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
-  const vx = f.w / 2, vy = -f.h / 2;
+  const vx = (nx - 0.5) * f.w, vy = -f.h / 2;
   const cx = a.x - (vx * c - vy * s), cy = a.y - (vx * s + vy * c);
   b.frame = { ...f, x: cx - f.w / 2, y: cy - f.h / 2 };
 }
@@ -383,14 +384,20 @@ export class Editor {
       const t = b.content.text, f = b.frame;
       const off = 7 / this.view.scale;
       const ox = 1 + off / Math.max(f.w, 1), oy = 1 + off / Math.max(f.h, 1);
-      // 放在頁面右半邊的橫排標題：字級／欄寬手把長在左邊、右緣固定（2026-09-15 小高：字要靠右時
-      // 得先移開再調框）。拖曳中鎖住起手那一邊，字長過頁中線也不跳邊。同 iOS。
-      const left = this.textSizing?.id === b.id
-        ? this.textSizing.key === "bl" || this.textSizing.key === "left"
-        : this.textHandlesLeft(b);
-      const nx = left ? -off / Math.max(f.w, 1) : ox;
-      const out: Handle[] = [{ key: left ? "bl" : "br", ...cornerPoint(f, b.rotation, nx, oy) }];
-      if (!t.vertical) out.push({ key: left ? "left" : "right", ...cornerPoint(f, b.rotation, nx, 0.5), bar: "v" });
+      // 字級／欄寬手把左右各一組，拉哪邊對面固定（2026-09-15 小高：看對齊不看位置、全部齊平會衝突→左右都留）。
+      // 框在螢幕上窄（< 48px）只出一邊：靠右對齊出左邊、其餘右邊。拖曳中抓的那一邊一定留著。同 iOS。
+      const sides = this.textHandleSides(b);
+      if (this.textSizing?.id === b.id) {
+        if (this.textSizing.key === "bl" || this.textSizing.key === "left") sides.left = true; else sides.right = true;
+      }
+      const lx = -off / Math.max(f.w, 1);
+      const out: Handle[] = [];
+      if (sides.right) out.push({ key: "br", ...cornerPoint(f, b.rotation, ox, oy) });
+      if (sides.left) out.push({ key: "bl", ...cornerPoint(f, b.rotation, lx, oy) });
+      if (!t.vertical) {
+        if (sides.right) out.push({ key: "right", ...cornerPoint(f, b.rotation, ox, 0.5), bar: "v" });
+        if (sides.left) out.push({ key: "left", ...cornerPoint(f, b.rotation, lx, 0.5), bar: "v" });
+      }
       // 下緣：長文框＝容器高；直排標題＝欄高（換行約束，等同橫排右緣壓段落）
       if (t.isBodyFrame || t.vertical) out.push({ key: "bottom", ...cornerPoint(f, b.rotation, 0.5, oy), bar: "h" });
       return out;
@@ -432,13 +439,11 @@ export class Editor {
 
   /** 命中哪個手把。抓取半徑固定在螢幕上（11px），縮小時才不會抓不到。
    *  角先問——小圖時角與邊的抓取範圍會重疊，縮放優先於裁切。 */
-  /** 文字手把要不要長在左邊：頁面右半邊的橫排標題（直排、長文框不換邊）。 */
-  private textHandlesLeft(b: Block): boolean {
-    const p = this.project;
-    if (!p || b.content.type !== "text" || b.content.text.vertical || b.content.text.isBodyFrame) return false;
-    const cx = b.frame.x + b.frame.w / 2;
-    const page = pageRect(p, pageIndexForX(p, cx));
-    return cx > page.x + page.w / 2;
+  /** 文字手把出在哪幾邊：橫排標題框在螢幕上夠寬左右都出；窄的看對齊（靠右出左邊）；直排、長文框只有右邊。 */
+  private textHandleSides(b: Block): { left: boolean; right: boolean } {
+    if (b.content.type !== "text" || b.content.text.vertical || b.content.text.isBodyFrame) return { left: false, right: true };
+    if (b.frame.w * this.view.scale >= 48) return { left: true, right: true };
+    return b.content.text.alignment === "trailing" ? { left: true, right: false } : { left: false, right: true };
   }
 
   private hitHandle(p: { x: number; y: number }): HandleKey | null {
@@ -709,7 +714,7 @@ export class Editor {
       return rr.value;
     };
 
-    // 左側手把（bl／left）與 br／right 同語意，只是右上角固定、字往左長
+    // 拉哪邊對面固定：br／right＝左上角固定，bl／left＝右上角固定（2026-09-15 起不再照對齊方式長）
     const fromLeft = s.key === "bl" || s.key === "left";
     if (s.key === "br" || s.key === "bl") {
       const diag = Math.max(Math.hypot(f0.w, f0.h), 1);
@@ -717,7 +722,7 @@ export class Editor {
       t.fontSize = Math.min(Math.max(s.startFontSize * ratio, 8), 500);
       t.hugWidth = true;   // 改過字級＝框從此貼字寬（schema）
       autoFitText(this.ctx, p);
-      if (fromLeft) holdTopRight(b, f0);
+      holdTopCorner(b, f0, fromLeft ? 1 : 0);
     } else if (s.key === "right" || s.key === "left") {
       const w = fromLeft
         ? f0.x + f0.w - snapEdge(f0.x + dx, "vertical")
@@ -729,7 +734,7 @@ export class Editor {
       t.manualWidth = Math.round(Math.min(Math.max(w, minW), Math.max(nat.w, minW)));
       if (t.isBodyFrame) b.frame = { ...b.frame, w: t.manualWidth };
       else autoFitText(this.ctx, p);
-      if (fromLeft) holdTopRight(b, f0);
+      holdTopCorner(b, f0, fromLeft ? 1 : 0);
     } else if (t.vertical && !t.isBodyFrame) {
       // 直排標題：下緣＝欄高（換行約束）。用「起手欄高＋位移」而不是拿 frame 高回推——
       // frame 高是墨跡結果，回灌當約束就成循環相依，小拖曳會讓欄裂開（columnHeight 註解那顆雷）。

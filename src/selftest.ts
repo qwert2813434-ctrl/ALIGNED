@@ -1427,11 +1427,11 @@ async function run(): Promise<void> {
       check("短字尾巴：hugWidth 的一個小字框貼字", h.frame.w > 10 && h.frame.w < 40, `貼字=${h.frame.w}`);
     }
 
-    // (e) 頁面右半邊的字：手把長在左邊；左下角放大右緣與上緣不動、左緣欄寬右緣不動（2026-09-15）
+    // (e) 靠右對齊的字一定有左側手把（夠寬時右側也有）；左下角放大右緣與上緣不動、左緣欄寬右緣不動（2026-09-15）
     {
       const p = project([{
         id: "t", frame: { x: 700, y: 300, w: 200, h: 50 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
-        content: { type: "text", text: { text: "靠右的字", alignment: "leading", fontSize: 40, colorHex: "000000" } },
+        content: { type: "text", text: { text: "靠右的字", alignment: "trailing", fontSize: 40, colorHex: "000000" } },
       }]);
       editor.load(p);
       editor.snapStrength = "none";
@@ -1444,8 +1444,8 @@ async function run(): Promise<void> {
       pointer("pointermove", f.x - f.w - off, f.y + f.h * 2 + off);   // 往左下沿對角線拉到兩倍
       pointer("pointerup", f.x - f.w - off, f.y + f.h * 2 + off);
       const t = textOf(b)!;
-      check("文字手把換邊：右半邊的字手把在左邊，左下角放大字級、右緣與上緣不動",
-            keys.includes("bl") && keys.includes("left") && !keys.includes("br")
+      check("文字手把：靠右對齊的字有左側手把（夠寬時右側也有），左下角放大字級、右緣與上緣不動",
+            keys.includes("bl") && keys.includes("left") && keys.includes("br") === f.w * v.scale >= 48
             && near(t.fontSize ?? 0, 80, 1) && near(b.frame.x + b.frame.w, f.x + f.w, 0.5) && near(b.frame.y, f.y, 0.5)
             && t.hugWidth === true,
             `keys=${keys.join(",")} fontSize=${t.fontSize} 右緣=${(b.frame.x + b.frame.w).toFixed(1)}（起手 ${(f.x + f.w).toFixed(1)}）`);
@@ -1458,6 +1458,45 @@ async function run(): Promise<void> {
             near(t.manualWidth ?? 0, Math.round(f2.w * 0.5), 1) && near(b.frame.x + b.frame.w, f2.x + f2.w, 0.5)
             && b.frame.h > f2.h * 1.5,
             `manualWidth=${t.manualWidth} 右緣=${(b.frame.x + b.frame.w).toFixed(1)}（起手 ${(f2.x + f2.w).toFixed(1)}）高=${b.frame.h.toFixed(0)}`);
+    }
+
+    // (g) 窄的字只出一邊、看對齊：靠左→右邊、靠右→左邊（2026-09-15）
+    {
+      const mk = (id: string, x: number, alignment: "leading" | "trailing"): Block => ({
+        id, frame: { x, y: 600, w: 40, h: 30 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "字", alignment, fontSize: 23, colorHex: "000000", hugWidth: true } },
+      });
+      const p = project([mk("l", 100, "leading"), mk("r", 700, "trailing")]);
+      editor.load(p);
+      editor.snapStrength = "none";
+      const keysOf = (b: Block): string => {
+        editor.select(b.id);
+        return (editor as unknown as { handlePoints(): { key: string }[] }).handlePoints().map((k) => k.key).join(",");
+      };
+      const narrow = p.blocks.every((b) => b.frame.w * v.scale < 48);
+      const kl = keysOf(p.blocks[0]), kr = keysOf(p.blocks[1]);
+      check("文字手把：窄的字只出一邊，靠左在右、靠右在左",
+            narrow && kl === "br,right" && kr === "bl,left", `窄=${narrow} 靠左=${kl} 靠右=${kr}`);
+    }
+
+    // (h) 拉哪個角對面固定：置中的字拉右下角，左緣與上緣不動（以前照對齊往兩邊長）
+    {
+      const p = project([{
+        id: "c", frame: { x: 200, y: 800, w: 200, h: 50 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "置中文字", alignment: "center", fontSize: 40, colorHex: "000000", hugWidth: true } },
+      }]);
+      editor.load(p);
+      editor.snapStrength = "none";
+      const b = p.blocks[0];
+      tap(b.frame.x + 10, b.frame.y + b.frame.h / 2);
+      const f = { ...b.frame };
+      const off = 7 / v.scale;
+      pointer("pointerdown", f.x + f.w + off, f.y + f.h + off);
+      pointer("pointermove", f.x + f.w * 2 + off, f.y + f.h * 2 + off);
+      pointer("pointerup", f.x + f.w * 2 + off, f.y + f.h * 2 + off);
+      check("文字手把：置中的字拉右下角放大，左緣與上緣不動",
+            near(b.frame.x, f.x, 0.5) && near(b.frame.y, f.y, 0.5) && b.frame.w > f.w * 1.5,
+            `x=${b.frame.x.toFixed(1)}（起手 ${f.x.toFixed(1)}）w=${b.frame.w.toFixed(0)}（起手 ${f.w.toFixed(0)}）`);
     }
 
     // (f) 參考線值超出一頁寬（整張畫布座標誤寫進來）：每頁重複時落到最後一頁外面的不畫（2026-09-15）
