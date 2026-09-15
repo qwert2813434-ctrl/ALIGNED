@@ -38,6 +38,9 @@ export interface TextBlock {
   isBodyFrame?: boolean;   // true＝長文框（固定容器、會裁切、吃文繞圖）
   vertical?: boolean;
   verticalLeftToRight?: boolean;  // 直排欄序，預設由右到左
+  /** 直排上下齊平（2026-09-15 小高：「直排缺上下齊平」）：段落末欄以外，每欄的字平均撐滿欄高；只在 vertical 時有作用。
+   *  獨立旗標、不併進 verticalAlignment（舊版 iOS 解不了新列舉值，整份專案讀不進來）。iOS 同名同義。 */
+  verticalJustified?: true;
   fontSize?: number;       // 未設 → canvasWidth * 0.045
   fontName?: string;       // 家族鍵（該家族 Regular 的 PostScript 名），未設＝系統黑體
   fontWeightValue?: number;// 0…4，未設 → 3 (bold)

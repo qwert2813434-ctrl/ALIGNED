@@ -192,6 +192,7 @@ export const en: Record<string, string> = {
   "段落間距": "Paragraph spacing",
   "直排": "Vertical writing",
   "欄序左起": "Columns left to right",
+  "上下齊平": "Justify columns",
   "顏色": "Color",
   "長文框": "Text frame",
   "框大小": "Frame size",

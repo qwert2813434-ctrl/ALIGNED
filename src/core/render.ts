@@ -1776,9 +1776,13 @@ function verticalMetrics(
   const perCol = Math.max(1, Math.floor(columnHeight / advance));
 
   const cols: string[] = [];
+  const paraEnd: boolean[] = [];   // 段落末欄：上下齊平時照舊靠上（同橫排齊行的末行）
   for (const para of t.text.split("\n")) {
-    if (!para) { cols.push(""); continue; }
-    for (let i = 0; i < para.length; i += perCol) cols.push(para.slice(i, i + perCol));
+    if (!para) { cols.push(""); paraEnd.push(true); continue; }
+    for (let i = 0; i < para.length; i += perCol) {
+      cols.push(para.slice(i, i + perCol));
+      paraEnd.push(i + perCol >= para.length);
+    }
   }
 
   // 墨跡尺寸逐字量測取最大值——中日文與英數的字身寬高差很多，用 em 猜會鬆。
@@ -1798,12 +1802,22 @@ function verticalMetrics(
   if (!inkW) { inkW = size; inkTop = size * 0.88; inkBottom = 0; }
 
   const longest = Math.max(...cols.map((c) => c.length), 1);
+  const naturalH = (longest - 1) * advance + inkTop + inkBottom;
+  // 上下齊平：段落末欄以外，字距拉開到末字墨底落在欄高（首字墨頂仍在 0）；字距壓得比墨還緊、
+  // 撐不開的就維持原進距。量測（框高）與繪製共用這支，兩邊不會分家。
+  const justify = t.verticalJustified === true;
+  const stepOf = (i: number): number => {
+    const n = Array.from(cols[i]).length;
+    if (!justify || paraEnd[i] || n < 2) return advance;
+    return Math.max(advance, (columnHeight - inkTop - inkBottom) / (n - 1));
+  };
+  const stretched = justify && cols.some((_, i) => stepOf(i) > advance);
   return {
-    cols, pitch, advance, inkW,
+    cols, pitch, advance, inkW, stepOf,
     // 貼字盒＝真實墨跡涵蓋範圍。最後一個字後面不再有進距（與橫排的
-    // 「尾字字距要減掉」是同一回事，只是換到縱軸）。
+    // 「尾字字距要減掉」是同一回事，只是換到縱軸）。齊平撐開的欄＝欄高。
     extentW: (cols.length - 1) * pitch + inkW,
-    extentH: (longest - 1) * advance + inkTop + inkBottom,
+    extentH: stretched ? Math.max(naturalH, columnHeight) : naturalH,
   };
 }
 
@@ -2106,6 +2120,7 @@ function drawVertical(
     // 長文框：整欄放不下容器就不排（RTL 溢出在左、LTR 在右，一條件兩向都蓋）
     if (wholeColumnsOnly && (cx - v.inkW / 2 < -0.5 || cx + v.inkW / 2 > w + 0.5)) return;
     let y = 0;
+    const step = v.stepOf(i);   // 上下齊平撐開的欄進距較大，其餘＝v.advance
     for (const ch of col) {
       const m = ctx.measureText(ch);
       if (VERT_ROTATE.has(ch)) {
@@ -2122,7 +2137,7 @@ function drawVertical(
       } else {
         ctx.fillText(ch, cx - m.width / 2, y + m.actualBoundingBoxAscent);
       }
-      y += v.advance;
+      y += step;
     }
   });
   ctx.restore();

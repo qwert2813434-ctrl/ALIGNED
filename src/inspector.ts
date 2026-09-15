@@ -1331,6 +1331,11 @@ export class Inspector {
         t.verticalLeftToRight = on ? true : undefined;
         this.emit(true);
       }));
+      // 上下齊平（2026-09-15 小高：「直排缺上下齊平」）：段落末欄以外每欄撐滿欄高，框高跟著變成欄高（retext 重算貼字盒）
+      this.row(s, __("上下齊平")).append(this.check(t.verticalJustified === true, (on) => {
+        t.verticalJustified = on ? true : undefined;
+        this.emit(true);
+      }));
     }
     this.row(s, __("顏色")).append(this.swatches(t.colorHex ?? "000000", (hex) => {
       t.colorHex = hex;

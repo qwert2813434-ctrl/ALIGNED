@@ -1574,6 +1574,50 @@ async function run(): Promise<void> {
             `空=${JSON.stringify(emptyRuns)} 有字=${JSON.stringify(fullRuns).slice(0, 60)}`);
     }
 
+    // (l) 直排上下齊平（2026-09-15 小高：「直排缺上下齊平」）：段落末欄以外的欄撐滿欄高、框高＝欄高；
+    //     沒旗標的直排照舊貼字；存檔來回保留旗標、沒開的不寫
+    {
+      const mk = (id: string, x: number, justified: boolean): Block => ({
+        id, frame: { x, y: 100, w: 60, h: 60 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "直排齊平測試國直排齊平測試國直排齊平", alignment: "leading", fontSize: 40,
+                   colorHex: "000000", hugWidth: true, vertical: true, manualHeight: 310,
+                   ...(justified ? { verticalJustified: true as const } : {}) } },
+      });
+      const p = project([mk("n", 100, false), mk("j", 500, true)]);
+      editor.load(p);
+      const n = p.blocks.find((k) => k.id === "n")!, j = p.blocks.find((k) => k.id === "j")!;
+      check("直排上下齊平：框高撐到欄高，沒旗標的照舊貼字（欄數、框寬一樣）",
+            near(j.frame.h, 310, 1) && n.frame.h < 300 && near(j.frame.w, n.frame.w, 0.5),
+            `齊平 ${j.frame.w.toFixed(0)}×${j.frame.h.toFixed(0)}　原本 ${n.frame.w.toFixed(0)}×${n.frame.h.toFixed(0)}`);
+
+      const c = renderPageCanvas(p, 0, { transparent: true });
+      const cx = c.getContext("2d")!;
+      // 從 x0 起 30px 寬的直條裡，最低的有墨列（相對框頂）
+      const lowestInk = (b: Block, x0: number): number => {
+        const w = 30, h = Math.ceil(b.frame.h) + 4;
+        const img = cx.getImageData(Math.round(x0), Math.round(b.frame.y), w, h).data;
+        let low = -1;
+        for (let row = 0; row < h; row++) for (let col = 0; col < w; col++) if (img[(row * w + col) * 4 + 3] > 60) low = row;
+        return low;
+      };
+      const firstJ = lowestInk(j, j.frame.x + j.frame.w - 35), firstN = lowestInk(n, n.frame.x + n.frame.w - 35);
+      const lastJ = lowestInk(j, j.frame.x + 5), lastN = lowestInk(n, n.frame.x + 5);
+      check("直排上下齊平：第一欄末字墨底落到欄高、段落末欄照舊靠上（畫出來的墨）",
+            firstJ >= 304 && firstJ <= 312 && firstN <= firstJ - 20 && Math.abs(lastJ - lastN) <= 1,
+            `第一欄墨底 齊平=${firstJ} 原本=${firstN}　末欄 齊平=${lastJ} 原本=${lastN}`);
+
+      type EncText = { id: string; content: { text: { _0: Record<string, unknown> } } };
+      const enc = JSON.parse(JSON.stringify(encodeProject(p))) as { blocks: EncText[] };
+      const encJ = enc.blocks.find((b) => b.id === "j")!.content.text._0;
+      const encN = enc.blocks.find((b) => b.id === "n")!.content.text._0;
+      const back = decodeProject(enc);
+      const backJ = textOf(back.blocks.find((k) => k.id === "j")!), backN = textOf(back.blocks.find((k) => k.id === "n")!);
+      check("直排上下齊平：存檔寫 verticalJustified:true、讀回保留；沒開的不寫這個欄位",
+            encJ.verticalJustified === true && !("verticalJustified" in encN)
+            && backJ?.verticalJustified === true && backN?.verticalJustified === undefined,
+            `存 齊平=${String(encJ.verticalJustified)} 原本有欄位=${"verticalJustified" in encN}`);
+    }
+
     // (f) 參考線值超出一頁寬（整張畫布座標誤寫進來）：每頁重複時落到最後一頁外面的不畫（2026-09-15）
     {
       const p = { ...project([]), pageHeight: 50, guidesX: [1500] };   // 1080 × 2 頁＝stage 2160
