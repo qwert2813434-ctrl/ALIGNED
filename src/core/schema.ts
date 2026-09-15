@@ -384,6 +384,9 @@ function encRect(r: Rect): number[][] {
  * 這也是 iOS 自己存檔的格式（fontStripped 之後 runs 只剩前景色），所以重建＝同構。
  */
 function colorRuns(text: string, hexColor: string): unknown[] {
+  // 空字不帶屬性：iOS 解 AttributedString 時「空字串的 run 帶屬性」整份專案拒收
+  //（2026-09-15「官網網頁素材」匯入失敗）。空字沒東西可上色，顏色另存在 colorHex。
+  if (!text) return ["", {}];
   const n = (i: number) => srgbToLin(parseInt(hexColor.slice(i, i + 2), 16) / 255);
   return [text, {
     "SwiftUI.ForegroundColor": {

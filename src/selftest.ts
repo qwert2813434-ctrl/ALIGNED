@@ -1558,6 +1558,22 @@ async function run(): Promise<void> {
             `框=${f.w.toFixed(0)}→${d.frame.w.toFixed(0)} 欄高=${t.manualHeight} 右緣=${(d.frame.x + d.frame.w).toFixed(1)}（起手 ${(f.x + f.w).toFixed(1)}）`);
     }
 
+    // (k) 空字文字框存檔不帶顏色（2026-09-15：iOS 拒收「空字串帶屬性」的 run，整份專案匯入失敗）
+    {
+      const p = project([{
+        id: "e", frame: { x: 100, y: 100, w: 80, h: 40 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "", alignment: "leading", fontSize: 30, colorHex: "112233" } },
+      }, {
+        id: "f", frame: { x: 100, y: 200, w: 80, h: 40 }, rotation: 0, zIndex: 2, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "有字", alignment: "leading", fontSize: 30, colorHex: "112233" } },
+      }]);
+      const enc = JSON.parse(JSON.stringify(encodeProject(p))) as { blocks: { content: { text: { _0: { text: unknown[] } } } }[] };
+      const emptyRuns = enc.blocks[0].content.text._0.text, fullRuns = enc.blocks[1].content.text._0.text;
+      check("存檔：空字文字框的 runs 不帶顏色（iOS 才讀得回），有字的照舊帶顏色",
+            JSON.stringify(emptyRuns) === '["",{}]' && fullRuns[0] === "有字" && JSON.stringify(fullRuns[1]).includes("SwiftUI.ForegroundColor"),
+            `空=${JSON.stringify(emptyRuns)} 有字=${JSON.stringify(fullRuns).slice(0, 60)}`);
+    }
+
     // (f) 參考線值超出一頁寬（整張畫布座標誤寫進來）：每頁重複時落到最後一頁外面的不畫（2026-09-15）
     {
       const p = { ...project([]), pageHeight: 50, guidesX: [1500] };   // 1080 × 2 頁＝stage 2160
