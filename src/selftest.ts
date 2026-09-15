@@ -884,7 +884,7 @@ async function run(): Promise<void> {
 
   // ── 16. 檢視器的新開關真的接到模型（2026-08-04）────────────────────────
   //    引擎做好但沒有開關＝使用者用不到。這組驗的是「按下去有沒有寫進 block」。
-  {
+  try {   // 這段的舊案例曾因 9/05 檢視器改版（選色器換色票、數字欄）整頁中斷——出錯記一筆 FAIL，後面的段落照跑
     const host = document.createElement("div");
     document.body.append(host);
     const changes = { count: 0 };
@@ -975,12 +975,15 @@ async function run(): Promise<void> {
       const paper = control<HTMLSelectElement>("紙張", "select");
       paper!.value = "c4";
       paper!.dispatchEvent(new Event("change"));
-      const page1 = control<HTMLInputElement>("第 1 頁", "input[type=color]");
-      page1!.value = "#112233";
-      page1!.dispatchEvent(new Event("input"));
+      // 頁底色 2026-09-05 起是紙色色票（不再是原生選色器）：點一顆不是白的
+      const row1 = [...host.querySelectorAll(".row")].find((r) => r.querySelector("label")?.textContent === "第 1 頁");
+      const sw = [...(row1?.querySelectorAll<HTMLButtonElement>("button.texsw:not(.plain)") ?? [])]
+        .find((k) => k.title.toUpperCase() !== "#FFFFFF");
+      const pickHex = sw?.title.replace("#", "").toUpperCase() ?? "";
+      sw?.click();
       check("檢視器：沒選元件時給紙張與逐頁背景",
-            p.paperKey === "c4" && p.pageBackgroundHex?.["0"] === "112233",
-            `paperKey=${p.paperKey} 第1頁=${p.pageBackgroundHex?.["0"]}`);
+            p.paperKey === "c4" && !!pickHex && p.pageBackgroundHex?.["0"]?.toUpperCase() === pickHex,
+            `paperKey=${p.paperKey} 第1頁=${p.pageBackgroundHex?.["0"]}（點了 ${pickHex || "找不到色票"}）`);
     }
 
     // (e) 多選文字批次調整（2026-08-14）：字級混合顯示留空、設定＝套到全部；
@@ -1063,6 +1066,8 @@ async function run(): Promise<void> {
             `solo=(${solo.frame.x},${solo.frame.y}) a.x=${ga.frame.x} b.x=${gb.frame.x} lk=${lk.frame.x} mv=${mv.frame.x}`);
     }
     host.remove();
+  } catch (e) {
+    check("檢視器段落（16）執行中斷：介面改版後舊案例沒跟上", false, (e as Error).message);
   }
 
   // ── 17. 頁面操作（2026-08-04）──────────────────────────────────────────
@@ -1406,6 +1411,67 @@ async function run(): Promise<void> {
       check("長文框手把：下緣 +150＝框高 200→350；縮到底停在地板不縮沒",
             grew && near(t.manualHeight ?? 0, floor, 1) && near(b.frame.h, floor, 1),
             `拉大後=${grew ? "350 ✓" : "錯"}　縮到底=${t.manualHeight}（地板 ${floor}）`);
+    }
+
+    // (d) 短字的尾巴（2026-09-15）：沒旗標的舊文字開檔照舊留 8%；hugWidth 的一個小字框貼字
+    {
+      const mk = (id: string, x: number, hug: boolean): Block => ({
+        id, frame: { x, y: 100, w: 86.4, h: 30 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "字", alignment: "leading", fontSize: 23, colorHex: "000000",
+                                         ...(hug ? { hugWidth: true as const } : {}) } },
+      });
+      const p = project([mk("old", 100, false), mk("hug", 400, true)]);
+      editor.load(p);   // load 會 autoFitText——舊文字就是在這裡最容易被整批收框
+      const [o, h] = p.blocks;
+      check("短字尾巴：沒旗標的舊文字開檔框寬照舊 8%（86.4）", near(o.frame.w, 86.4), `舊=${o.frame.w}`);
+      check("短字尾巴：hugWidth 的一個小字框貼字", h.frame.w > 10 && h.frame.w < 40, `貼字=${h.frame.w}`);
+    }
+
+    // (e) 頁面右半邊的字：手把長在左邊；左下角放大右緣與上緣不動、左緣欄寬右緣不動（2026-09-15）
+    {
+      const p = project([{
+        id: "t", frame: { x: 700, y: 300, w: 200, h: 50 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "靠右的字", alignment: "leading", fontSize: 40, colorHex: "000000" } },
+      }]);
+      editor.load(p);
+      editor.snapStrength = "none";
+      const b = p.blocks[0];
+      tap(b.frame.x + 10, b.frame.y + b.frame.h / 2);
+      const f = { ...b.frame };
+      const off = 7 / v.scale;
+      const keys = (editor as unknown as { handlePoints(): { key: string }[] }).handlePoints().map((k) => k.key);
+      pointer("pointerdown", f.x - off, f.y + f.h + off);
+      pointer("pointermove", f.x - f.w - off, f.y + f.h * 2 + off);   // 往左下沿對角線拉到兩倍
+      pointer("pointerup", f.x - f.w - off, f.y + f.h * 2 + off);
+      const t = textOf(b)!;
+      check("文字手把換邊：右半邊的字手把在左邊，左下角放大字級、右緣與上緣不動",
+            keys.includes("bl") && keys.includes("left") && !keys.includes("br")
+            && near(t.fontSize ?? 0, 80, 1) && near(b.frame.x + b.frame.w, f.x + f.w, 0.5) && near(b.frame.y, f.y, 0.5)
+            && t.hugWidth === true,
+            `keys=${keys.join(",")} fontSize=${t.fontSize} 右緣=${(b.frame.x + b.frame.w).toFixed(1)}（起手 ${(f.x + f.w).toFixed(1)}）`);
+
+      const f2 = { ...b.frame };
+      pointer("pointerdown", f2.x - off, f2.y + f2.h / 2);
+      pointer("pointermove", f2.x + f2.w * 0.5 - off, f2.y + f2.h / 2);   // 從左邊收一半
+      pointer("pointerup", f2.x + f2.w * 0.5 - off, f2.y + f2.h / 2);
+      check("文字手把換邊：左緣欄寬從左邊收窄、換行，右緣不動",
+            near(t.manualWidth ?? 0, Math.round(f2.w * 0.5), 1) && near(b.frame.x + b.frame.w, f2.x + f2.w, 0.5)
+            && b.frame.h > f2.h * 1.5,
+            `manualWidth=${t.manualWidth} 右緣=${(b.frame.x + b.frame.w).toFixed(1)}（起手 ${(f2.x + f2.w).toFixed(1)}）高=${b.frame.h.toFixed(0)}`);
+    }
+
+    // (f) 參考線值超出一頁寬（整張畫布座標誤寫進來）：每頁重複時落到最後一頁外面的不畫（2026-09-15）
+    {
+      const p = { ...project([]), pageHeight: 50, guidesX: [1500] };   // 1080 × 2 頁＝stage 2160
+      const c = document.createElement("canvas");
+      c.width = 2800; c.height = 50;
+      const cx = c.getContext("2d")!;
+      renderStage(cx, p, {}, {});
+      const px = (x: number) => cx.getImageData(x, 25, 1, 1).data;
+      const outside = px(2579)[3] + px(2580)[3];          // 第 2 頁：1080＋1500＝2580，已在畫布外
+      const inside = [px(1499), px(1500)].some((d) => d[2] - d[0] > 40);   // 第 1 頁 1500：藍線
+      check("參考線：超出一頁寬的值不畫到畫布外，畫布內照畫",
+            outside === 0 && inside, `畫布外 alpha=${outside} 畫布內藍=${inside}`);
     }
   }
 

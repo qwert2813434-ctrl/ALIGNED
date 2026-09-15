@@ -465,14 +465,16 @@ export function renderStage(
   ctx.save();
   ctx.strokeStyle = "rgb(38,153,255)";   // iOS guideColor (0.15, 0.6, 1.0)
   ctx.lineWidth = px;
+  // 值超出一頁寬（整張畫布座標誤寫進來，2026-09-15 動物角色填圖表）時，落到最後一頁外面的不畫
+  const stageW = project.canvasWidth * project.pageCount;
   for (const gx of overlay.hideProjectGuides ? [] : project.guidesX ?? []) {
     for (let i = 0; i < project.pageCount; i++) {
       if (opts.viewRect && !intersects(pageRect(project, i), opts.viewRect)) continue;
       const x = i * project.canvasWidth + gx;
+      if (x < 0 || x > stageW) continue;
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, project.pageHeight); ctx.stroke();
     }
   }
-  const stageW = project.canvasWidth * project.pageCount;
   for (const gy of overlay.hideProjectGuides ? [] : project.guidesY ?? []) {
     ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(stageW, gy); ctx.stroke();
   }
@@ -487,6 +489,7 @@ export function renderStage(
       for (let i = 0; i < project.pageCount; i++) {
         if (opts.viewRect && !intersects(pageRect(project, i), opts.viewRect)) continue;
         const x = i * project.canvasWidth + gx;
+        if (x < 0 || x > stageW) continue;
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, project.pageHeight); ctx.stroke();
       }
     }
@@ -1840,7 +1843,7 @@ export function naturalTextSize(
 ): { w: number; h: number } {
   const size = resolvedFontSize(t, canvasWidth);
   const kern = resolvedKerning(t, canvasWidth);
-  const minWidth = canvasWidth * 0.08;
+  const minWidth = t.hugWidth && t.text ? 1 : canvasWidth * 0.08;   // 空字仍留 8%，框才選得到
   ctx.save();
   ctx.font = cssFont(t, size);
   ctx.letterSpacing = `${kern}px`;
@@ -1922,6 +1925,7 @@ export function snugTextWidth(
     ctx.restore();
     t.manualWidth = undefined;
   }
+  t.hugWidth = true;
   t.inkX = true;   // 按過「貼字寬」＝要的就是貼墨跡（第一批 #2；只在自動貼字寬時生效）
 
   const oldW = b.frame.w;

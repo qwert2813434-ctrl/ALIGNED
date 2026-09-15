@@ -29,6 +29,10 @@ export interface TextBlock {
    *  版面穩定鐵則「舊值走舊碼」：沒這個旗標的舊文字，框寬照舊含左右字身空氣，一個 px 都不動。
    *  只在 manualWidth 未設（自動貼字寬）時生效；手動寬度的斷行不能因此改變。 */
   inkX?: true;
+  /** 框貼字寬、不留畫布寬 8% 的最小寬（2026-09-15 小高：字縮小後框拖長尾巴，單一字最明顯）。
+   *  新建的文字、打過字／改過字級／拉過欄寬／按過貼字寬的才帶；沒這個旗標的舊文字照舊留 8%，
+   *  開檔重算也一個 px 都不動（版面穩定鐵則）。iOS 同名同義。 */
+  hugWidth?: true;
   manualHeight?: number;   // 橫排幾乎廢棄；直排時語意變成「欄高」
   verticalAlignment?: VAlign;
   isBodyFrame?: boolean;   // true＝長文框（固定容器、會裁切、吃文繞圖）

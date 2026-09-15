@@ -1345,7 +1345,11 @@ function toggleGuidesHidden(): void {
 const inspector = new Inspector($<HTMLElement>("#inspector"), {
   onChange: (opts) => {
     // 文字內容/樣式動了＝貼字盒要重算（量測要在字型已載入的 ctx 上做）
-    if (opts?.retext && current) autoFitText(measureCtx, current);
+    if (opts?.retext && current) {
+      // 檢視器改了字／樣式＝改過這個字：框從此貼字寬（schema hugWidth）
+      for (const k of editor.selectionBlocks()) if (k.content.type === "text" || k.content.type === "textFlow") k.content.text.hugWidth = true;
+      autoFitText(measureCtx, current);
+    }
     editor.refresh();
     scheduleThumbs();
     commit("inspector");
@@ -1908,7 +1912,7 @@ editor.onContextMenu = (b, at) => {
     const textSel = sel.filter((k) => k.content.type === "text" || k.content.type === "textFlow");
     if (textSel.length) {
       const recase = (fn: (s: string) => string): void => {
-        for (const k of textSel) if (k.content.type === "text" || k.content.type === "textFlow") k.content.text.text = fn(k.content.text.text);
+        for (const k of textSel) if (k.content.type === "text" || k.content.type === "textFlow") { k.content.text.text = fn(k.content.text.text); k.content.text.hugWidth = true; }
         if (current) autoFitText(measureCtx, current);
         editor.refresh(); scheduleThumbs(); commit("recase");
       };
@@ -2910,7 +2914,7 @@ async function addBlock(kind: string): Promise<void> {
     case "text":
       // 預留字與 iOS 同款；黑字放白頁看得見，深色頁自己改——與 iOS 同預設
       b = baseBlock({ type: "text", text: { text: __("雙擊編輯文字"), alignment: "center",
-        fontSize: Math.round(cw * 0.045), colorHex: "000000", fontWeightValue: 3, inkX: true } }, 10, 10);
+        fontSize: Math.round(cw * 0.045), colorHex: "000000", fontWeightValue: 3, inkX: true, hugWidth: true } }, 10, 10);
       break;
     case "rectangle": case "ellipse":
       b = baseBlock({ type: "shape", shape: { kind, colorHex: "3A3A3A" } }, cw * 0.3, cw * 0.3);
@@ -3598,7 +3602,7 @@ function applyAgentUpdates(params: Record<string, unknown>): Record<string, unkn
       }
       if (u.text !== undefined || u.color_hex !== undefined) {
         if (block.content.type !== "text" && block.content.type !== "textFlow") throw new Error(`block 不是文字：${u.id}`);
-        if (u.text !== undefined) block.content.text.text = u.text;
+        if (u.text !== undefined) { block.content.text.text = u.text; block.content.text.hugWidth = true; }
         if (u.color_hex !== undefined) {
           const color = u.color_hex.replace(/^#/, "").toUpperCase();
           if (!/^[0-9A-F]{6}$/.test(color)) throw new Error(`color_hex 無效：${u.id}`);
@@ -3652,7 +3656,7 @@ function addAgentText(params: Record<string, unknown>): Record<string, unknown> 
   const payload: Extract<Block["content"], { type: "text" }>["text"] = {
     text, alignment: alignment as "leading" | "center" | "trailing" | "justified",
     fontSize, fontWeightValue: finiteAgent(params.font_weight) ? params.font_weight : 3,
-    colorHex: color, inkColor: `#${color}`, inkX: true,
+    colorHex: color, inkColor: `#${color}`, inkX: true, hugWidth: true,
     ...(body ? { isBodyFrame: true, manualWidth: width as number, manualHeight: height as number } : {}),
     ...(typeof params.font_name === "string" && params.font_name ? { fontName: params.font_name } : {}),
     ...(finiteAgent(params.kerning_em) ? { kerningEm: params.kerning_em } : {}),

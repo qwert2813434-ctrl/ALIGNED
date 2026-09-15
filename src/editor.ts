@@ -58,6 +58,15 @@ function cornerPoint(f: Rect, rotation: number, nx: number, ny: number): { x: nu
   return { x: cx + dx * c - dy * s, y: cy + dx * s + dy * c };
 }
 
+/** 左側文字把手：拖曳起手時框的右上角（旋轉後畫面上那一點）固定，依新尺寸反推框的位置。 */
+function holdTopRight(b: Block, f0: Rect): void {
+  const a = cornerPoint(f0, b.rotation, 1, 0);
+  const f = b.frame, r = (b.rotation * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
+  const vx = f.w / 2, vy = -f.h / 2;
+  const cx = a.x - (vx * c - vy * s), cy = a.y - (vx * s + vy * c);
+  b.frame = { ...f, x: cx - f.w / 2, y: cy - f.h / 2 };
+}
+
 /** 拉框能改尺寸的型別。文字排除（見上）、鎖定的不給。
  *  3D 跟照片一樣是固定比例內容；Mac 必須能用角把手調整它在版面上的大小。 */
 function resizable(b: Block): boolean {
@@ -112,7 +121,7 @@ export class Editor {
   } | null = null;
   /** 文字手把拖曳：br＝字級縮放、right＝欄寬、bottom＝框高（長文框限定）。 */
   private textSizing: {
-    id: string; key: "br" | "right" | "bottom";
+    id: string; key: "br" | "right" | "bottom" | "bl" | "left";   // bl／left＝左側手把（字在頁面右半邊）
     startFrame: Rect; startFontSize: number;
     startColH: number;                          // 直排下緣用：起手欄高（見 textResizeTo）
     from: { x: number; y: number };
@@ -213,7 +222,7 @@ export class Editor {
       canvas.style.cursor = this.doodle ? "crosshair" : this.contentId ? "grab"
         : this.modelOrbitEnabled && hit?.content.type === "model" ? "grab"
         : g ? (g.axis === "x" ? "ew-resize" : "ns-resize")
-        : hk ? (this.rKey ? "crosshair" : isEdge(hk) ? (hk === "left" || hk === "right" ? "ew-resize" : "ns-resize") : "nwse-resize")
+        : hk ? (this.rKey ? "crosshair" : isEdge(hk) ? (hk === "left" || hk === "right" ? "ew-resize" : "ns-resize") : hk === "bl" || hk === "tr" ? "nesw-resize" : "nwse-resize")
         : hit ? "move" : this.spaceHeld ? "grab" : "default";
     });
     // 空白處拖曳＝框選（Keynote 的語意），平移改成按住空白鍵或中鍵——
@@ -374,8 +383,14 @@ export class Editor {
       const t = b.content.text, f = b.frame;
       const off = 7 / this.view.scale;
       const ox = 1 + off / Math.max(f.w, 1), oy = 1 + off / Math.max(f.h, 1);
-      const out: Handle[] = [{ key: "br", ...cornerPoint(f, b.rotation, ox, oy) }];
-      if (!t.vertical) out.push({ key: "right", ...cornerPoint(f, b.rotation, ox, 0.5), bar: "v" });
+      // 放在頁面右半邊的橫排標題：字級／欄寬手把長在左邊、右緣固定（2026-09-15 小高：字要靠右時
+      // 得先移開再調框）。拖曳中鎖住起手那一邊，字長過頁中線也不跳邊。同 iOS。
+      const left = this.textSizing?.id === b.id
+        ? this.textSizing.key === "bl" || this.textSizing.key === "left"
+        : this.textHandlesLeft(b);
+      const nx = left ? -off / Math.max(f.w, 1) : ox;
+      const out: Handle[] = [{ key: left ? "bl" : "br", ...cornerPoint(f, b.rotation, nx, oy) }];
+      if (!t.vertical) out.push({ key: left ? "left" : "right", ...cornerPoint(f, b.rotation, nx, 0.5), bar: "v" });
       // 下緣：長文框＝容器高；直排標題＝欄高（換行約束，等同橫排右緣壓段落）
       if (t.isBodyFrame || t.vertical) out.push({ key: "bottom", ...cornerPoint(f, b.rotation, 0.5, oy), bar: "h" });
       return out;
@@ -417,6 +432,15 @@ export class Editor {
 
   /** 命中哪個手把。抓取半徑固定在螢幕上（11px），縮小時才不會抓不到。
    *  角先問——小圖時角與邊的抓取範圍會重疊，縮放優先於裁切。 */
+  /** 文字手把要不要長在左邊：頁面右半邊的橫排標題（直排、長文框不換邊）。 */
+  private textHandlesLeft(b: Block): boolean {
+    const p = this.project;
+    if (!p || b.content.type !== "text" || b.content.text.vertical || b.content.text.isBodyFrame) return false;
+    const cx = b.frame.x + b.frame.w / 2;
+    const page = pageRect(p, pageIndexForX(p, cx));
+    return cx > page.x + page.w / 2;
+  }
+
   private hitHandle(p: { x: number; y: number }): HandleKey | null {
     const r = 11 / this.view.scale;
     const near = (h: Handle) => Math.abs(p.x - h.x) <= r && Math.abs(p.y - h.y) <= r;
@@ -685,18 +709,27 @@ export class Editor {
       return rr.value;
     };
 
-    if (s.key === "br") {
+    // 左側手把（bl／left）與 br／right 同語意，只是右上角固定、字往左長
+    const fromLeft = s.key === "bl" || s.key === "left";
+    if (s.key === "br" || s.key === "bl") {
       const diag = Math.max(Math.hypot(f0.w, f0.h), 1);
-      const ratio = Math.max((diag + (dx * f0.w + dy * f0.h) / diag) / diag, 0.1);
+      const ratio = Math.max((diag + ((fromLeft ? -dx : dx) * f0.w + dy * f0.h) / diag) / diag, 0.1);
       t.fontSize = Math.min(Math.max(s.startFontSize * ratio, 8), 500);
+      t.hugWidth = true;   // 改過字級＝框從此貼字寬（schema）
       autoFitText(this.ctx, p);
-    } else if (s.key === "right") {
-      const w = snapEdge(f0.x + f0.w + dx, "vertical") - f0.x;
-      const minW = p.canvasWidth * 0.08;
+      if (fromLeft) holdTopRight(b, f0);
+    } else if (s.key === "right" || s.key === "left") {
+      const w = fromLeft
+        ? f0.x + f0.w - snapEdge(f0.x + dx, "vertical")
+        : snapEdge(f0.x + f0.w + dx, "vertical") - f0.x;
+      if (!t.isBodyFrame) t.hugWidth = true;   // 拉過欄寬＝改過這個字；量測才不含 8% 地板
       const nat = naturalTextSize(this.ctx, { ...t, manualWidth: undefined }, p.canvasWidth, p.pageHeight);
+      // 長文框照舊 8%；標題最窄一個字寬（再窄也只是一字一行）
+      const minW = t.isBodyFrame ? p.canvasWidth * 0.08 : Math.min(resolvedFontSize(t, p.canvasWidth), nat.w);
       t.manualWidth = Math.round(Math.min(Math.max(w, minW), Math.max(nat.w, minW)));
       if (t.isBodyFrame) b.frame = { ...b.frame, w: t.manualWidth };
       else autoFitText(this.ctx, p);
+      if (fromLeft) holdTopRight(b, f0);
     } else if (t.vertical && !t.isBodyFrame) {
       // 直排標題：下緣＝欄高（換行約束）。用「起手欄高＋位移」而不是拿 frame 高回推——
       // frame 高是墨跡結果，回灌當約束就成循環相依，小拖曳會讓欄裂開（columnHeight 註解那顆雷）。
@@ -821,7 +854,7 @@ export class Editor {
         return;
       }
       // 文字的手把是自己的一套語意（字級／欄寬／框高），不進媒體的裁切與等比路徑
-      if (sel.content.type === "text" && (hk === "br" || hk === "right" || hk === "bottom")) {
+      if (sel.content.type === "text" && (hk === "br" || hk === "right" || hk === "bottom" || hk === "bl" || hk === "left")) {
         this.textSizing = {
           id: sel.id, key: hk, startFrame: { ...sel.frame },
           startFontSize: resolvedFontSize(sel.content.text, this.project.canvasWidth),
@@ -1322,6 +1355,7 @@ export class Editor {
     el.addEventListener("input", () => {
       // contenteditable 的 innerText 會帶一個尾端換行，要剪掉才不會多一空行
       t.text = el.innerText.replace(/\u00A0/g, " ").replace(/\n$/, "");
+      t.hugWidth = true;   // 打過字＝框從此貼字寬（schema）
       if (this.project) autoFitText(this.ctx, this.project);   // 貼字盒跟著長，錨點修正在裡面
       this.syncOverlay();
       this.dirty = true;
