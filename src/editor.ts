@@ -13,7 +13,7 @@ import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema"
 import { hex, resolvedFontSize, resolvedKerning } from "./core/schema";
 import { aspectFillCrop, intersects, pageIndexForX, pageRect, stageBounds } from "./core/geometry";
 import { cssFont } from "./core/fonts";
-import { autoFitText, columnHeight, naturalSize, naturalTextSize, renderStage, textPrintLines } from "./core/render";
+import { verticalColumnHeightFitting, autoFitText, columnHeight, naturalSize, naturalTextSize, renderStage, textPrintLines } from "./core/render";
 import { ANIM_STAGGER, defaultDur, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import type { FilterAssets } from "./core/filters";
 import { drawDoodle, doodleGrowDur, speedPress, streamlinePts, packStrokes, rotatedStrokeHit, strokeHit, thinPoints, unpackStrokes, type BrushKind, type DoodleBlock , getSoftPrefs, softSnapshot } from "./core/doodle";
@@ -394,10 +394,9 @@ export class Editor {
       const out: Handle[] = [];
       if (sides.right) out.push({ key: "br", ...cornerPoint(f, b.rotation, ox, oy) });
       if (sides.left) out.push({ key: "bl", ...cornerPoint(f, b.rotation, lx, oy) });
-      if (!t.vertical) {
-        if (sides.right) out.push({ key: "right", ...cornerPoint(f, b.rotation, ox, 0.5), bar: "v" });
-        if (sides.left) out.push({ key: "left", ...cornerPoint(f, b.rotation, lx, 0.5), bar: "v" });
-      }
+      // 直排也有欄寬手把：拉它＝換欄（欄高跟著算），不再只能拉下緣（2026-09-15 小高）
+      if (sides.right) out.push({ key: "right", ...cornerPoint(f, b.rotation, ox, 0.5), bar: "v" });
+      if (sides.left) out.push({ key: "left", ...cornerPoint(f, b.rotation, lx, 0.5), bar: "v" });
       // 下緣：長文框＝容器高；直排標題＝欄高（換行約束，等同橫排右緣壓段落）
       if (t.isBodyFrame || t.vertical) out.push({ key: "bottom", ...cornerPoint(f, b.rotation, 0.5, oy), bar: "h" });
       return out;
@@ -439,11 +438,14 @@ export class Editor {
 
   /** 命中哪個手把。抓取半徑固定在螢幕上（11px），縮小時才不會抓不到。
    *  角先問——小圖時角與邊的抓取範圍會重疊，縮放優先於裁切。 */
-  /** 文字手把出在哪幾邊：橫排文字框（標題、長文框）在螢幕上夠寬左右都出；窄的看對齊（靠右出左邊）；直排只有右邊。 */
+  /** 文字手把出在哪幾邊：文字框在螢幕上夠寬左右都出；窄的橫排看對齊（靠右出左邊），
+   *  窄的直排看欄序（由右到左＝閱讀起點在右，出左邊；由左到右出右邊）。 */
   private textHandleSides(b: Block): { left: boolean; right: boolean } {
-    if (b.content.type !== "text" || b.content.text.vertical) return { left: false, right: true };
+    if (b.content.type !== "text") return { left: false, right: true };
     if (b.frame.w * this.view.scale >= 48) return { left: true, right: true };
-    return b.content.text.alignment === "trailing" ? { left: true, right: false } : { left: false, right: true };
+    const t = b.content.text;
+    if (t.vertical) return t.verticalLeftToRight === true ? { left: false, right: true } : { left: true, right: false };
+    return t.alignment === "trailing" ? { left: true, right: false } : { left: false, right: true };
   }
 
   private hitHandle(p: { x: number; y: number }): HandleKey | null {
@@ -727,6 +729,16 @@ export class Editor {
       const w = fromLeft
         ? f0.x + f0.w - snapEdge(f0.x + dx, "vertical")
         : snapEdge(f0.x + f0.w + dx, "vertical") - f0.x;
+      if (t.vertical && !t.isBodyFrame) {
+        // 直排的欄寬＝換欄：找塞得進這個寬度的最短欄高，框寬照欄數長，字不被裁；拉哪邊對面固定（同 iOS）
+        t.hugWidth = true;
+        delete t.manualWidth;
+        t.manualHeight = verticalColumnHeightFitting(this.ctx, t, p.canvasWidth, p.pageHeight, Math.max(w, 1));
+        autoFitText(this.ctx, p);
+        holdTopCorner(b, f0, fromLeft ? 1 : 0);
+        this.dirty = true;
+        return;
+      }
       if (!t.isBodyFrame) t.hugWidth = true;   // 拉過欄寬＝改過這個字；量測才不含 8% 地板
       const nat = naturalTextSize(this.ctx, { ...t, manualWidth: undefined }, p.canvasWidth, p.pageHeight);
       // 長文框照舊 8%；標題最窄一個字寬（再窄也只是一字一行）

@@ -1523,6 +1523,41 @@ async function run(): Promise<void> {
             `keys=${keys} manualWidth=${t.manualWidth} 右緣=${(b.frame.x + b.frame.w).toFixed(1)}（起手 ${(f.x + f.w).toFixed(1)}）高=${b.frame.h}`);
     }
 
+    // (j) 直排（2026-09-15 小高：「右起拉桿依舊在右，調整拉桿後會直接蓋掉文字，下拉桿也沒使文字換行」）：
+    //     窄的由右到左手把在左邊、由左到右在右邊；左緣欄寬＝換欄（欄變長、框不比拉的寬），右緣不動
+    {
+      const mk = (id: string, x: number, ltr: boolean, size: number, colH: number): Block => ({
+        id, frame: { x, y: 200, w: 60, h: 400 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "直排文字右起測試一二三四五六七八九十", alignment: "leading", fontSize: size,
+                   colorHex: "000000", hugWidth: true, vertical: true, manualHeight: colH,
+                   ...(ltr ? { verticalLeftToRight: true as const } : {}) } },
+      });
+      const p = project([mk("r", 700, false, 30, 1000), mk("l", 200, true, 30, 1000), mk("d", 400, false, 50, 300)]);
+      editor.load(p);
+      editor.snapStrength = "none";
+      const [r, l, d] = p.blocks;
+      const keysOf = (b: Block): string => {
+        editor.select(b.id);
+        return (editor as unknown as { handlePoints(): { key: string }[] }).handlePoints().map((k) => k.key).join(",");
+      };
+      const narrow = r.frame.w * v.scale < 48 && l.frame.w * v.scale < 48;
+      const kr = keysOf(r), kl = keysOf(l);
+      check("直排手把：窄的由右到左在左邊、由左到右在右邊（欄寬＋角＋下緣）",
+            narrow && kr === "bl,left,bottom" && kl === "br,right,bottom", `窄=${narrow} 由右到左=${kr} 由左到右=${kl}`);
+
+      tap(d.frame.x + d.frame.w / 2, d.frame.y + d.frame.h / 2);
+      const f = { ...d.frame };
+      const off = 7 / v.scale;
+      pointer("pointerdown", f.x - off, f.y + f.h / 2);
+      pointer("pointermove", f.x + f.w / 2 - off, f.y + f.h / 2);   // 從左邊收一半
+      pointer("pointerup", f.x + f.w / 2 - off, f.y + f.h / 2);
+      const t = textOf(d)!;
+      check("直排手把：左緣欄寬收窄＝欄變長換欄，右緣與上緣不動、框不比拉的寬",
+            near(d.frame.x + d.frame.w, f.x + f.w, 0.5) && near(d.frame.y, f.y, 0.5) && d.frame.w <= f.w / 2 + 0.5
+            && (t.manualHeight ?? 0) > 300 && t.manualWidth === undefined,
+            `框=${f.w.toFixed(0)}→${d.frame.w.toFixed(0)} 欄高=${t.manualHeight} 右緣=${(d.frame.x + d.frame.w).toFixed(1)}（起手 ${(f.x + f.w).toFixed(1)}）`);
+    }
+
     // (f) 參考線值超出一頁寬（整張畫布座標誤寫進來）：每頁重複時落到最後一頁外面的不畫（2026-09-15）
     {
       const p = { ...project([]), pageHeight: 50, guidesX: [1500] };   // 1080 × 2 頁＝stage 2160

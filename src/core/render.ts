@@ -1742,6 +1742,23 @@ export function columnHeight(t: TextBlock, pageHeight: number): number {
   return t.manualHeight ?? pageHeight * 0.6;
 }
 
+/** 直排：塞得進 `width` 的最短欄高（欄越短欄數越多、框越寬）。欄寬手把用它換欄，字不會被裁（同 iOS）。
+ *  寬度對欄高是遞減階梯，二分找邊界；再窄也至少一欄，停在一欄排完的高度。地板同下緣手把（6% 頁寬）。 */
+export function verticalColumnHeightFitting(
+  ctx: CanvasRenderingContext2D, t: TextBlock, canvasWidth: number, pageHeight: number, width: number,
+): number {
+  const floor = canvasWidth * 0.06;
+  const widthAt = (h: number) => naturalTextSize(ctx, { ...t, manualHeight: h }, canvasWidth, pageHeight).w;
+  if (widthAt(floor) <= width) return Math.ceil(floor);
+  const longest = Math.max(...t.text.split("\n").map((l) => l.length), 1);
+  let lo = floor, hi = Math.max(floor, (longest + 1) * resolvedFontSize(t, canvasWidth) * 3);
+  while (hi - lo > 0.5) {
+    const mid = (lo + hi) / 2;
+    if (widthAt(mid) <= width) hi = mid; else lo = mid;
+  }
+  return Math.ceil(hi);
+}
+
 /**
  * 直排的版面度量。量測與繪製共用同一份，欄數與位置不可能對不上。
  *
