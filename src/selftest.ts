@@ -1499,6 +1499,30 @@ async function run(): Promise<void> {
             `x=${b.frame.x.toFixed(1)}（起手 ${f.x.toFixed(1)}）w=${b.frame.w.toFixed(0)}（起手 ${f.w.toFixed(0)}）`);
     }
 
+    // (i) 長文框也左右都出（2026-09-15 小高：「長文框是需要的」）：左緣欄寬從左邊收窄，右緣與框高不動
+    {
+      const p = project([{
+        id: "t", frame: { x: 500, y: 300, w: 400, h: 200 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "長文框左側手把測試，這段字要夠長才會換行", alignment: "trailing", fontSize: 30,
+                                         colorHex: "000000", isBodyFrame: true, manualWidth: 400, manualHeight: 200 } },
+      }]);
+      editor.load(p);
+      editor.snapStrength = "none";
+      const b = p.blocks[0];
+      tap(b.frame.x + 20, b.frame.y + 20);
+      const f = { ...b.frame };
+      const off = 7 / v.scale;
+      const keys = (editor as unknown as { handlePoints(): { key: string }[] }).handlePoints().map((k) => k.key).join(",");
+      pointer("pointerdown", f.x - off, f.y + f.h / 2);
+      pointer("pointermove", f.x + 100 - off, f.y + f.h / 2);   // 從左邊收 100
+      pointer("pointerup", f.x + 100 - off, f.y + f.h / 2);
+      const t = textOf(b)!;
+      check("長文框手把：左右都有，左緣欄寬從左邊收窄，右緣與框高不動",
+            keys === "br,bl,right,left,bottom" && near(t.manualWidth ?? 0, 300, 1)
+            && near(b.frame.x + b.frame.w, f.x + f.w, 0.5) && near(b.frame.h, f.h, 0.5),
+            `keys=${keys} manualWidth=${t.manualWidth} 右緣=${(b.frame.x + b.frame.w).toFixed(1)}（起手 ${(f.x + f.w).toFixed(1)}）高=${b.frame.h}`);
+    }
+
     // (f) 參考線值超出一頁寬（整張畫布座標誤寫進來）：每頁重複時落到最後一頁外面的不畫（2026-09-15）
     {
       const p = { ...project([]), pageHeight: 50, guidesX: [1500] };   // 1080 × 2 頁＝stage 2160

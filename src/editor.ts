@@ -439,9 +439,9 @@ export class Editor {
 
   /** 命中哪個手把。抓取半徑固定在螢幕上（11px），縮小時才不會抓不到。
    *  角先問——小圖時角與邊的抓取範圍會重疊，縮放優先於裁切。 */
-  /** 文字手把出在哪幾邊：橫排標題框在螢幕上夠寬左右都出；窄的看對齊（靠右出左邊）；直排、長文框只有右邊。 */
+  /** 文字手把出在哪幾邊：橫排文字框（標題、長文框）在螢幕上夠寬左右都出；窄的看對齊（靠右出左邊）；直排只有右邊。 */
   private textHandleSides(b: Block): { left: boolean; right: boolean } {
-    if (b.content.type !== "text" || b.content.text.vertical || b.content.text.isBodyFrame) return { left: false, right: true };
+    if (b.content.type !== "text" || b.content.text.vertical) return { left: false, right: true };
     if (b.frame.w * this.view.scale >= 48) return { left: true, right: true };
     return b.content.text.alignment === "trailing" ? { left: true, right: false } : { left: false, right: true };
   }
