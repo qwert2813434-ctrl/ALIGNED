@@ -204,7 +204,10 @@ func composePage(spec: Spec, baked: [(url: URL, layer: LayerSpecJSON)]) async th
                              stroke: spec0.stroke.flatMap { try? loadCGImage($0) },
                              filterKey: spec0.filter,
                              // 陰影（2026-09-05）：Mac 端由 videoexport.ts 烤成整頁 still 墊在影片底下，這裡不帶
-                             shadow: nil, shadowPad: 0))
+                             shadow: nil, shadowPad: 0,
+                             // 貼紙邊（2026-09-18 iOS 在合成器裡加的）：Mac 的 videoexport.ts 還沒送這層，
+                             // 所以 Mac 輸出 mp4 仍沒有影片的貼紙邊（1.3.7 起同樣）——下一版補，走 still 圖層即可
+                             sticker: nil))
         sourceTrackIDs.append(NSNumber(value: ct.trackID))
 
         // 聲音只取最長那支（不混音）。⚠️ 一定要夾限到 masterDuration——音軌幾乎不會
