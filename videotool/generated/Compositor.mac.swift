@@ -5,7 +5,18 @@ import Foundation
 enum CompositeLayer {
     case still(CGImage)
     case video(trackID: CMPersistentTrackID, origin: CGPoint, mask: CGImage?, stroke: CGImage?, filterKey: String?,
-               shadow: CGImage?, shadowPad: CGFloat)
+               shadow: CGImage?, shadowPad: CGFloat, sticker: VideoStickerImages?)
+}
+
+/// ⚠️ 要留在 CompositeLayer **之後**：Mac 的 videotool/build.sh 從 `enum CompositeLayer {`
+/// 往下整段擷取當 Mac 合成器，放前面會被切掉（2026-09-18 實踩，Mac 建置找不到型別）。
+///
+/// 影片的貼紙邊，烤成比框大一圈（`pad`）的兩張圖：`edge` 墊在影片底下、
+/// `bevel` 疊在影片上面。座標與陰影同規：左上原點（y 向下）畫、擺放原點在 compositor 那邊減 pad。
+struct VideoStickerImages {
+    let edge: CGImage
+    let bevel: CGImage?
+    let pad: CGFloat
 }
 
 /// AVFoundation instantiates the compositor itself, so parameters ride on this
@@ -63,7 +74,7 @@ final class PageOverlayCompositor: NSObject, AVVideoCompositing {
                 switch layer {
                 case .still(let cg):
                     composite = CIImage(cgImage: cg).composited(over: composite)
-                case .video(let trackID, let origin, let mask, let stroke, let filterKey, let shadow, let shadowPad):
+                case .video(let trackID, let origin, let mask, let stroke, let filterKey, let shadow, let shadowPad, let sticker):
                     if let pb = request.sourceFrame(byTrackID: trackID) {
                         // 陰影（2026-09-05）：烤好的影子（比框大一圈 pad）先墊下去，再疊影片——
                         // 影子在框外的部分不會被 mask 裁掉，跟畫布上一樣
@@ -71,6 +82,13 @@ final class PageOverlayCompositor: NSObject, AVVideoCompositing {
                             let sh = CIImage(cgImage: shadow).transformed(by: CGAffineTransform(
                                 translationX: origin.x - shadowPad, y: origin.y - shadowPad))
                             composite = sh.composited(over: composite)
+                        }
+                        // 貼紙邊的外擴實色邊（2026-09-18）：在影片**底下**，框外那一圈不會被
+                        // mask 裁掉——與陰影同一套 pad 位移，也與畫布的 .background 同順序。
+                        if let sticker {
+                            let ed = CIImage(cgImage: sticker.edge).transformed(by: CGAffineTransform(
+                                translationX: origin.x - sticker.pad, y: origin.y - sticker.pad))
+                            composite = ed.composited(over: composite)
                         }
                         var frame = CIImage(cvPixelBuffer: pb)
                         // 濾鏡 (Stage 2) — same FilterEngine chain as the canvas
@@ -93,6 +111,13 @@ final class PageOverlayCompositor: NSObject, AVVideoCompositing {
                         }
                         frame = frame.transformed(by: CGAffineTransform(translationX: origin.x, y: origin.y))
                         composite = frame.composited(over: composite)
+                        // 斜面浮雕在影片**上面**（貼紙的厚度，不是白邊自己的）——
+                        // 與畫布的 .overlay 同順序，蓋在描邊之上。
+                        if let sticker, let bevel = sticker.bevel {
+                            let bv = CIImage(cgImage: bevel).transformed(by: CGAffineTransform(
+                                translationX: origin.x - sticker.pad, y: origin.y - sticker.pad))
+                            composite = bv.composited(over: composite)
+                        }
                     }
                 }
             }
