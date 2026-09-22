@@ -10,10 +10,12 @@ import { callTool, createServer, lanBridgeCall, TOOLS } from "./server.mjs";
 test("builds an official MCP server with the expected tools", () => {
   const server = createServer();
   assert.ok(server);
-  assert.equal(TOOLS.length, 12);
+  assert.equal(TOOLS.length, 14);
   assert.ok(TOOLS.some((item) => item.name === "aligned_add_text"));
   assert.ok(TOOLS.some((item) => item.name === "aligned_add_live_text"));
   assert.ok(TOOLS.some((item) => item.name === "aligned_mobile_connection"));
+  assert.ok(TOOLS.some((item) => item.name === "aligned_live_pages"));
+  assert.ok(TOOLS.some((item) => item.name === "aligned_set_page_count"));
 });
 
 test("connects the mobile MCP tool and routes live canvas calls over LAN", async () => {
@@ -165,6 +167,25 @@ test("create, edit, inspect and validate a project", async () => {
     assert.equal(inspected.blocks[0].page, 2);
     assert.equal(inspected.blocks[0].text, "Hello ALIGNED");
     assert.deepEqual(inspected.validation.errors, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("grows page count on disk and refuses to shrink", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aligned-mcp-test-"));
+  try {
+    const source = join(dir, "source.json");
+    await callTool("aligned_create_project", { output_path: source, name: "Pages", page_count: 2, background_hex: "EFEEE8" });
+    const grown = await callTool("aligned_set_page_count", { path: source, overwrite: true, page_count: 4 });
+    assert.equal(grown.canvas.pages, 4);
+    const project = JSON.parse(await readFile(source, "utf8"));
+    // 新頁沿用最後一頁的紙張顏色（與 App 加頁行為一致）
+    assert.equal(project.pageBackgroundHex["3"], "EFEEE8");
+    await assert.rejects(
+      () => callTool("aligned_set_page_count", { path: source, overwrite: true, page_count: 2 }),
+      /只加頁不減頁/,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

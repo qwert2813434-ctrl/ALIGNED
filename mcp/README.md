@@ -18,6 +18,13 @@ ALIGNED 的本機 MCP server。它不連 OpenAI API、不上傳專案，也不�
 - `aligned_update_live_blocks`：直接修改已開啟畫布；版本不一致就拒絕，並進入 ALIGNED Undo
 - `aligned_add_live_text`：在已開啟畫布加入可編輯標題或長文框，同樣檢查 revision 並進入 Undo
 - `aligned_app_history`：對已開啟畫布執行 Undo／Redo
+- `aligned_live_pages`：對已開啟畫布新增／複製／搬移／刪除整頁（上限 20 頁），進入同一套 Undo；刪頁要 `confirm: true`
+- `aligned_set_page_count`：把磁碟上的專案加長到指定頁數（只加不減，新頁沿用最後一頁紙色）
+
+AI 共編能改到頁數，是 2026-09-21 才補上的。在那之前 agent bridge 沒有任何指令寫得到 `pageCount`，
+所以 AI 只能往既有頁填東西，連「在最後面加一頁」都做不到——對 AI 說「加第八頁」會收到
+`page 必須在 1–7 之間`，看起來像參數錯，其實是能力不存在。`aligned_live_pages` 走的是
+右鍵選單與膠捲同一套 `core/pages` 函式，行為只有一種。iOS 端尚未跟進，連線 iPhone／iPad 時這個工具會回未知方法。
 
 修改工具預設另存 `<原名> AI.<副檔名>`。只有明確傳入 `overwrite: true` 才能覆寫來源；第一次覆寫前會留下 `.bak`。
 預覽沒有指定 `output_path` 時只建立暫存 PNG，回傳圖片後立即清除；需要保留檔案時才指定輸出位置，且不會覆蓋既有檔案。

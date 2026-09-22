@@ -37,6 +37,25 @@ function iconButton(kind: keyof typeof ICON, title: string, fn: () => void): HTM
 export class PageStrip {
   constructor(private el: HTMLElement, private hooks: PageStripHooks) {}
 
+  /** 目前停在哪一頁——只有高亮用途。整張膠捲重畫時要沿用，不然一重烤縮圖就沒了。 */
+  private active = 0;
+
+  /**
+   * 換高亮的那一張（點縮圖卡、畫布滾到別頁都走這裡）。
+   * 只動 class 不重畫——重畫整排縮圖是幾十毫秒起跳的事，換個底色不值得。
+   */
+  setActive(i: number): void {
+    if (i === this.active) return;
+    this.active = i;
+    this.syncActive();
+  }
+
+  private syncActive(): void {
+    const figs = [...this.el.querySelectorAll<HTMLElement>("figure")]
+      .filter((f) => !f.classList.contains("addpage"));
+    figs.forEach((f, k) => f.classList.toggle("current", k === this.active));
+  }
+
   /**
    * 拖著縮圖換頁序。用指標事件不用 HTML5 drag——後者在 WKWebView 裡的拖曳影像
    * 與放置點都不受控，而且我們要的落點提示是「插在哪兩張之間」，不是「放到誰身上」。
@@ -48,7 +67,8 @@ export class PageStrip {
     canvas.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
       const startX = e.clientX, startY = e.clientY;
-      let moved = false;
+      let moved = false;      // 卡片已浮起（長按也算）
+      let shifted = false;    // 真的移動過位置——只有這種才是換頁序，其餘是「點一下」
       let ghost: HTMLElement | null = null;
       let target = index;
       const figs = () => [...this.el.querySelectorAll<HTMLElement>("figure")]
@@ -82,6 +102,7 @@ export class PageStrip {
 
       const onMove = (ev: PointerEvent) => {
         if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
+        shifted = true;
         if (!moved) lift(ev); else follow(ev);
         // 落點＝指標最靠近哪一個縮圖的中心
         const boxes = figs().map((f) => f.getBoundingClientRect());
@@ -98,7 +119,11 @@ export class PageStrip {
         ghost?.remove();
         fig.classList.remove("dragging");
         for (const f of figs()) f.classList.remove("dropleft");
-        if (moved && target !== index) this.hooks.move(index, target);
+        if (shifted && target !== index) this.hooks.move(index, target);
+        // 沒真的拖動＝這一下是「點選」。跳頁走這裡不走 click：整張膠捲常在
+        // 縮圖重烤時被 replaceChildren 換掉，DOM 一換 click 就不會派發，
+        // 於是變成「點了沒反應」（2026-09-23 小高：點縮圖卡要跳過去）。
+        else if (!shifted) this.hooks.pick(index);
       };
       canvas.addEventListener("pointermove", onMove);
       canvas.addEventListener("pointerup", onUp);
@@ -110,12 +135,15 @@ export class PageStrip {
     // CSS 只顯示 64pt 高；過去卻替每頁建立 1080/1350px 畫布，等於為縮圖重烤整本。
     // Retina 取 160px 長邊已足夠，並把它排在目前畫布之後背景處理。
     const thumbScale = Math.min(1, 160 / Math.max(project.canvasWidth, project.pageHeight));
+    this.active = Math.min(Math.max(this.active, 0), project.pageCount - 1);   // 刪頁後別指向不存在的那張
     for (let i = 0; i < project.pageCount; i++) {
       const fig = document.createElement("figure");
       const c = renderPageCanvas(project, i, {
         ...opts, scale: thumbScale, deferStaticDoodles: true, doodlePriority: 1,
       });
-      c.addEventListener("click", () => this.hooks.pick(i));
+      if (i === this.active) fig.classList.add("current");
+      // 頁碼那一條也要能點（卡片本身走 pointerup，見 makeDraggable）
+      fig.addEventListener("click", (e) => { if (e.target !== c) this.hooks.pick(i); });
       c.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         this.hooks.menu(i, { x: e.clientX, y: e.clientY });

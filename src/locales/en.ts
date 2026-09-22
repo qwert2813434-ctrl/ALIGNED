@@ -280,7 +280,11 @@ export const en: Record<string, string> = {
   "在這裡加文字": "Add text here",
   "在這裡加矩形": "Add rectangle here",
   "整台縮到剛好": "Fit whole stage",
-  "搬照片模式：拖曳＝在框內移動照片，Esc 離開": "Reposition mode — drag to move the photo inside its frame, Esc to exit",
+  "搬照片模式：拖曳＝移動、滾輪或捏合（＋／－）＝改框裡的大小，Esc 離開":
+    "Reposition mode — drag to move, scroll or pinch (+/−) to resize the photo inside the frame, Esc to exit",
+  "貼上畫面到這個框": "Paste photo into this frame",
+  "畫面已貼進這個框——大小與邊框照原本的": "Pasted into the frame — its size and border are unchanged",
+  "貼進這個框了，但來源檔找不到（顯示成佔位框）": "Pasted into the frame, but the source file is missing (shown as a placeholder)",
 
   // ── 主畫面：最近專案 ──
   "{n} 分鐘前": "{n} min ago",

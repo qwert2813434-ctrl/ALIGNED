@@ -214,7 +214,11 @@
   #strip canvas { height: 64px; width: auto; display: block; cursor: pointer;
                   box-shadow: 0 1px 3px rgba(0,0,0,.18); border-radius: 2px; }
   #strip figcaption { font-size: 10px; color: var(--ink2); margin-top: 3px; }
-  #strip figure { position: relative; }
+  #strip figure { position: relative; padding: 3px 5px; border-radius: 5px; }
+  /* 目前停的那一頁：底色換掉＋藍框。點縮圖卡、或把畫布滾到別頁，高亮都跟著走 */
+  #strip figure.current { background: color-mix(in srgb, #2F7CF6 16%, transparent); }
+  #strip figure.current canvas { outline: 2px solid #2F7CF6; }
+  #strip figure.current figcaption { color: var(--ink); }
   /* 拖曳中的頁卡：原位留一張淡的，真正被抓著的那張浮在游標上 */
   #strip figure.dragging canvas { opacity: .3; }
   .pageghost { position: fixed; z-index: 30; pointer-events: none;

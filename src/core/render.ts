@@ -1768,21 +1768,79 @@ export function verticalColumnHeightFitting(
  * （黑體 1.5em、宋/明/粉圓 1.0em）。canvas 是自己逐欄擺位的，沒有東西要抵銷，
  * 所以直接用 1.22em 就是正確的最終值，不需要移植那套量測。
  */
+
+/**
+ * 直排裡的半形英數要怎麼排（2026-09-23 小高：「還是橫的」）。
+ *   upright＝逐字直立，每個字母各佔一格（一直以來的行為）
+ *   rotate ＝整串躺下來順著欄走（中文直排的標準做法）
+ *   tcy    ＝縱中橫：整串縮進一格裡、字仍是正的（適合 2–3 個字元的短串）
+ */
+export type VertLatinMode = "upright" | "rotate" | "tcy";
+// 預設 rotate（2026-09-23 定案，小高看三版樣張挑的）：中文直排裡的英文本來就該躺著順欄走，
+// 逐字直立會把 Claude 切成「Cl／aude」、一句話排成三欄。單獨一個字母或數字仍是正的
+//（它自己就是一個單位，不成串）。
+let vertLatinMode: VertLatinMode = "rotate";
+export function setVertLatinMode(m: VertLatinMode): void { vertLatinMode = m; }
+
+/**
+ * 把一段字切成**排版單位**：一個中日文字＝一個單位；連續的半形英數（含夾在中間的空格）
+ * 在 rotate／tcy 模式下整串算一個單位，才不會被換欄切成兩半（他截圖裡的 "Cl / aude"）。
+ */
+function vTokens(para: string): string[] {
+  const chars = Array.from(para);
+  if (vertLatinMode === "upright") return chars;
+  const isL = (c: string): boolean => /[\x21-\x7E]/.test(c);
+  const out: string[] = [];
+  let buf = "";
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i];
+    // 半形可見字元，或「前後都還是半形」的那個空格，都收進同一串
+    if (isL(c) || (c === " " && buf !== "" && isL(chars[i + 1] ?? ""))) { buf += c; continue; }
+    if (buf) { out.push(buf); buf = ""; }
+    out.push(c);
+  }
+  if (buf) out.push(buf);
+  return out;
+}
+
 function verticalMetrics(
   ctx: CanvasRenderingContext2D, t: TextBlock, size: number, kern: number, columnHeight: number,
 ) {
   const advance = size + kern;
+  // 半形空格的進距（2026-09-23 小高：「這個空白鍵離 G 就太遠了」）。
+  // 中英夾雜的直排每個空格都佔一整格，「我用 GPT」的空格就是整整一個字那麼長。
+  // 空格是**字距不是字**：用字型自己的空格寬（思源／蘋方約 0.25em，正是中西文間距的標準值），
+  // 這樣同一句話橫排直排的空隙一樣大，不必猜倍率。全形空格「　」照舊佔整格——那是刻意空一格。
+  const spSpacing = ctx.letterSpacing;
+  ctx.letterSpacing = "0px";   // 量測不能吃到字距，直排的進距是自己逐字推的
+  const spaceAdv = ctx.measureText(" ").width + kern;
+  ctx.letterSpacing = spSpacing;
+  /** 一個排版單位往下走多少。英數串躺下來時＝它橫排的長度；縱中橫＝一整格。 */
+  const advOfChar = (tok: string): number => {
+    if (tok.length > 1) {
+      if (vertLatinMode === "tcy") return advance;
+      const sp2 = ctx.letterSpacing;
+      ctx.letterSpacing = "0px";
+      const w = ctx.measureText(tok).width;
+      ctx.letterSpacing = sp2;
+      return w + kern;
+    }
+    return tok === " " ? spaceAdv : advance;
+  };
   const pitch = size * VERTICAL_PITCH_EM * (t.lineHeightMultiple ?? 1);
-  const perCol = Math.max(1, Math.floor(columnHeight / advance));
 
-  const cols: string[] = [];
+  const cols: string[][] = [];
   const paraEnd: boolean[] = [];   // 段落末欄：上下齊平時照舊靠上（同橫排齊行的末行）
   for (const para of t.text.split("\n")) {
-    if (!para) { cols.push(""); paraEnd.push(true); continue; }
-    for (let i = 0; i < para.length; i += perCol) {
-      cols.push(para.slice(i, i + perCol));
-      paraEnd.push(i + perCol >= para.length);
+    if (!para) { cols.push([]); paraEnd.push(true); continue; }
+    // 逐個單位累加進距切欄。全形時等同以前的 floor(欄高/進距) 個字一欄。
+    let cur: string[] = [], h = 0;
+    for (const tok of vTokens(para)) {
+      const a = advOfChar(tok);
+      if (cur.length && h + a > columnHeight + 0.01) { cols.push(cur); paraEnd.push(false); cur = []; h = 0; }
+      cur.push(tok); h += a;
     }
+    cols.push(cur); paraEnd.push(true);
   }
 
   // 墨跡尺寸逐字量測取最大值——中日文與英數的字身寬高差很多，用 em 猜會鬆。
@@ -1791,29 +1849,49 @@ function verticalMetrics(
   let inkW = 0, inkTop = 0, inkBottom = 0;
   const spacing = ctx.letterSpacing;
   ctx.letterSpacing = "0px";
-  for (const ch of t.text) {
-    if (ch === "\n") continue;
-    const m = ctx.measureText(ch);
-    inkW = Math.max(inkW, m.actualBoundingBoxLeft + m.actualBoundingBoxRight);
-    inkTop = Math.max(inkTop, m.actualBoundingBoxAscent);
-    inkBottom = Math.max(inkBottom, m.actualBoundingBoxDescent);
+  for (const col of cols) {
+    for (const tok of col) {
+      if (tok === "\n") continue;
+      const m = ctx.measureText(tok);
+      if (tok.length > 1 && vertLatinMode === "rotate") {
+        // 躺下來的串：畫面上的「寬」是它的字高，「長」已經算進進距裡了
+        const h = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
+        inkW = Math.max(inkW, h);
+        inkTop = Math.max(inkTop, h / 2);
+        inkBottom = Math.max(inkBottom, h / 2);
+        continue;
+      }
+      inkW = Math.max(inkW, m.actualBoundingBoxLeft + m.actualBoundingBoxRight);
+      inkTop = Math.max(inkTop, m.actualBoundingBoxAscent);
+      inkBottom = Math.max(inkBottom, m.actualBoundingBoxDescent);
+    }
   }
   ctx.letterSpacing = spacing;
   if (!inkW) { inkW = size; inkTop = size * 0.88; inkBottom = 0; }
 
-  const longest = Math.max(...cols.map((c) => c.length), 1);
-  const naturalH = (longest - 1) * advance + inkTop + inkBottom;
+  // 一欄從第一個字的墨頂到最後一個字的墨底有多高（末字後面不再有進距）
+  const runOf = (col: string[]): number => {
+    let h = 0;
+    for (let k = 0; k < col.length - 1; k++) h += advOfChar(col[k]);
+    return h;
+  };
+  const naturalH = Math.max(...cols.map((c) => runOf(c)), 0) + inkTop + inkBottom;
   // 上下齊平：段落末欄以外，字距拉開到末字墨底落在欄高（首字墨頂仍在 0）；字距壓得比墨還緊、
   // 撐不開的就維持原進距。量測（框高）與繪製共用這支，兩邊不會分家。
   const justify = t.verticalJustified === true;
-  const stepOf = (i: number): number => {
-    const n = Array.from(cols[i]).length;
-    if (!justify || paraEnd[i] || n < 2) return advance;
-    return Math.max(advance, (columnHeight - inkTop - inkBottom) / (n - 1));
+  /** 第 i 欄、第 j 個字往下走多少。齊平時把撐開量平均加到每個間隙上。 */
+  const advOf = (i: number, j: number): number => {
+    const cs = cols[i];
+    const base = advOfChar(cs[j] ?? "");
+    const n = cs.length;
+    if (!justify || paraEnd[i] || n < 2) return base;
+    const extra = (columnHeight - inkTop - inkBottom - runOf(cols[i])) / (n - 1);
+    return extra > 0 ? base + extra : base;
   };
-  const stretched = justify && cols.some((_, i) => stepOf(i) > advance);
+  const stepOf = (i: number): number => advOf(i, 0);
+  const stretched = justify && cols.some((c, i) => c.length > 1 && advOf(i, 0) > advOfChar(c[0] ?? ""));
   return {
-    cols, pitch, advance, inkW, stepOf,
+    cols, pitch, advance, inkW, stepOf, advOf,
     // 貼字盒＝真實墨跡涵蓋範圍。最後一個字後面不再有進距（與橫排的
     // 「尾字字距要減掉」是同一回事，只是換到縱軸）。齊平撐開的欄＝欄高。
     extentW: (cols.length - 1) * pitch + inkW,
@@ -2096,8 +2174,15 @@ function drawHorizontal(
 //   轉 90°＝括號、書名號、破折號、刪節號、波浪、底線（順時針轉即是直排形）；
 //   頂右位＝句逗頓號（直排的點座落在字格右上，不轉）。
 // ！？：；照台灣直排慣例維持直立。半形英數維持現狀（逐字直立）。
-const VERT_ROTATE = new Set([..."（）「」『』《》〈〉【】〔〕〖〗﹙﹚()[]{}＜＞<>—–―ー～〜…‥＝=＿_￣"]);
+// 斜線／反斜線／豎線（2026-09-23 小高：「GPT 的斜槓沒有被轉向，看起來像 GPT 下面掛一個斜槓」）：
+// 它們在直排是**分隔符**，直立擺會被讀成一個字。轉 90° 後回到「橫過去」的語意。
+const VERT_ROTATE = new Set([..."（）「」『』《》〈〉【】〔〕〖〗﹙﹚()[]{}＜＞<>—–―ー～〜…‥＝=＿_￣|｜"]);
+// 斜線／反斜線（2026-09-23 小高：「GPT 的斜槓沒有被轉向……應該是橫槓」）：
+// 轉 90° 的話還是一條斜線，只是換個方向，看起來仍像「GPT 下面掛一個斜槓」。
+// 直排裡它要的是**橫過去的分隔**，所以直接畫成全形橫槓（只是畫法，存檔仍是 /）。
+const VERT_DASH = new Set([..."/／\\＼"]);
 const VERT_SHIFT  = new Set([..."、。，．"]);
+
 
 function drawVertical(
   ctx: CanvasRenderingContext2D,
@@ -2120,10 +2205,33 @@ function drawVertical(
     // 長文框：整欄放不下容器就不排（RTL 溢出在左、LTR 在右，一條件兩向都蓋）
     if (wholeColumnsOnly && (cx - v.inkW / 2 < -0.5 || cx + v.inkW / 2 > w + 0.5)) return;
     let y = 0;
-    const step = v.stepOf(i);   // 上下齊平撐開的欄進距較大，其餘＝v.advance
+    let j = 0;                  // 逐個單位：英數串與單字的進距不一樣
     for (const ch of col) {
+      const step = v.advOf(i, j++);
       const m = ctx.measureText(ch);
-      if (VERT_ROTATE.has(ch)) {
+      if (ch.length > 1) {
+        // 整串半形英數（2026-09-23 小高：「還是橫的」）
+        ctx.save();
+        if (vertLatinMode === "tcy") {
+          // 縱中橫：字還是正的，整串縮進一格裡
+          const sc = Math.min(1, (size * 0.92) / (m.width || 1));
+          ctx.translate(cx, y + size / 2);
+          ctx.scale(sc, sc);
+          ctx.fillText(ch, -m.width / 2, (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2);
+        } else {
+          // 躺下來順著欄走：轉 90°，墨跡橫向置中在欄裡
+          ctx.translate(cx, y);
+          ctx.rotate(Math.PI / 2);
+          ctx.fillText(ch, 0, (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2);
+        }
+        ctx.restore();
+      } else if (VERT_DASH.has(ch)) {
+        // 橫槓置中在字格裡（畫的是全形減號，資料仍是斜線）
+        const d = "－";
+        const dm = ctx.measureText(d);
+        ctx.fillText(d, cx - dm.width / 2,
+          y + size / 2 + (dm.actualBoundingBoxAscent - dm.actualBoundingBoxDescent) / 2);
+      } else if (VERT_ROTATE.has(ch)) {
         // 繞字格中心順時針轉 90°；轉完把墨跡置中（括號的墨在 em 裡偏一側，不置中會歪）
         ctx.save();
         ctx.translate(cx, y + size / 2);
@@ -2132,8 +2240,22 @@ function drawVertical(
           (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2);
         ctx.restore();
       } else if (VERT_SHIFT.has(ch)) {
-        // 句逗頓號：墨跡從字格左下搬到右上（直排排版慣例），位移半個字格
-        ctx.fillText(ch, cx - m.width / 2 + size * 0.5, y + m.actualBoundingBoxAscent - size * 0.5);
+        // 句逗頓號：墨跡從字格左下搬到**自己這一格的右上**（直排排版慣例）。
+        //
+        // 舊寫法是「一般字的基線算式再推半格」，等於把墨頂推到 y − 0.5em＝**上一格的下半**，
+        // 看起來就是標點掛在兩個字中間的欄外（2026-09-23 小高：「怎麼不是在字的中間，是在字的旁邊」）。
+        // 改成直接對位墨跡盒：不管字型把點畫在 em 的哪個角落，都放到格內右上那一格四分之一的中心。
+        const inkW = m.actualBoundingBoxRight + m.actualBoundingBoxLeft;
+        const inkH = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
+        if (inkW > 0 && inkH > 0) {
+          // 目標＝墨跡中心落在 (格心 + 0.25em, 格頂 + 0.25em)
+          ctx.fillText(ch,
+            cx + size * 0.25 - (m.actualBoundingBoxRight - m.actualBoundingBoxLeft) / 2,
+            y + size * 0.25 + (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2);
+        } else {
+          // 量不到墨跡盒（少數字型回 0）＝退回一般字的排法，至少不會跑到欄外
+          ctx.fillText(ch, cx - m.width / 2, y + m.actualBoundingBoxAscent);
+        }
       } else {
         ctx.fillText(ch, cx - m.width / 2, y + m.actualBoundingBoxAscent);
       }

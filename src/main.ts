@@ -26,9 +26,9 @@ import { attachedCanvas, autoFitText, naturalSize, renderPageCanvas } from "./co
 import { Inspector } from "./inspector";
 import { PageStrip, type PageAction } from "./pagestrip";
 import { pageIndexForX, pageRect } from "./core/geometry";
-import { addPage, deletePage, duplicatePage, retargetToPage, stripToTemplate, swapAdjacentPages } from "./core/pages";
+import { MAX_PAGES, addPage, deletePage, duplicatePage, retargetToPage, stripToTemplate, swapAdjacentPages } from "./core/pages";
 import { alignGroup, applyLayerOrder, distributeGroup, type GroupAlign, type GroupAxis } from "./core/group";
-import { buildClipboard, pasteBlocks, type BlockClipboard } from "./core/clipboard";
+import { buildClipboard, canPasteInto, clipIsSingleMedia, pasteBlocks, pasteMediaInto, type BlockClipboard } from "./core/clipboard";
 import { CANVAS_PRESETS, canvasSize, changeCanvasRatio, newProject, simplifiedRatio } from "./core/canvas";
 import { VideoPool, hiddenHost } from "./videopool";
 import { ModelPool } from "./modelpool";
@@ -510,7 +510,13 @@ if (inApp) {
 const measureCtx = attachedCanvas().getContext("2d")!;
 
 const strip = new PageStrip($<HTMLDivElement>("#strip"), {
-  pick: (i) => editor.focusPage(i),
+  // 點縮圖卡＝跳到那一頁，高亮當下就換（不等下一幀的 onPageInView，手感才跟得上手指）；
+  // 右邊面板也要跟著換頁——沒選元件時那裡是「頁面背景 第 N 頁」，不刷新就會改到剛剛那一頁
+  pick: (i) => {
+    editor.focusPage(i);
+    strip.setActive(i);
+    if (!editor.getSelected()) inspector.show(current, null);
+  },
   add: () => {
     if (!current || !addPage(current)) { meta.textContent = __("頁數上限 20 頁"); return; }
     afterPageChange(current.pageCount - 1);
@@ -537,15 +543,21 @@ function doPageAct(action: PageAction, i: number): void {
                   : action === "duplicate" ? i + 1 : Math.min(i, current.pageCount - 1));
 }
 
-/** 頁面結構動過之後的共同收尾：畫布／膠捲／檢視器都要跟上，並記一步 undo。 */
-function afterPageChange(focus: number): void {
+/**
+ * 頁面結構動過之後的共同收尾：畫布／膠捲／檢視器都要跟上，並記一步 undo。
+ * AI 共編走 `tag="agent"`、`scheduleSave=false`——跟 AI 改字一樣，
+ * 先讓使用者看到與可 Undo，存不存由他按（不啟動 2.5 秒自動存檔）。
+ */
+function afterPageChange(focus: number, tag = "page", scheduleSave = true): void {
   if (!current) return;
   editor.swapProject(current);          // 保留視野與選取，只是換內容
   editor.select(null);
+  const to = Math.max(0, Math.min(focus, current.pageCount - 1));
+  strip.setActive(to);
   strip.render(current, renderOpts());
-  editor.focusPage(Math.max(0, Math.min(focus, current.pageCount - 1)));
+  editor.focusPage(to);
   inspector.show(current, null);
-  commit("page");
+  commit(tag, scheduleSave);
 }
 
 /** 確保某個媒體 block 的「素材×濾鏡」變體已在快取（沒有就從原圖生）。 */
@@ -1907,6 +1919,14 @@ editor.onContextMenu = (b, at) => {
     if (sel.length === 1 && (b.content.type === "image" || b.content.type === "video") && b.content.media.assetFileName) {
       items.push({ label: __("調整框內畫面"), key: __("雙擊"), run: () => { editor.enterContentMode(b); } });
     }
+    // 貼進這個框（2026-09-23 小高「快速搬欄位」）：拷了一張照片、又點著另一個框時才出現。
+    // 跟 ⌘V 同一條路——選單只是讓人知道有這回事，不必先猜 ⌘V 會貼成新的還是貼進來。
+    if (sel.length === 1 && canPasteInto(b) && clipIsSingleMedia(clipboardPeek())) {
+      items.push({
+        label: __("貼上畫面到這個框"), key: keys("⌘V"),
+        run: () => { pasteClipboard().catch((x) => { meta.textContent = __f("貼上失敗：{msg}", { msg: x.message ?? x }); }); },
+      });
+    }
     // 大小寫（2026-09-05 第一批 #1）：排英文標題常要試三種形狀（SHE BOUGHT／she bought／She bought），
     // 之前只能重打。改完照檢視器改文字那條路：重貼字盒→重畫→縮圖→undo 一步。
     const textSel = sel.filter((k) => k.content.type === "text" || k.content.type === "textFlow");
@@ -2004,7 +2024,7 @@ editor.onGuidesChanged = () => {
 };
 
 editor.onContentMode = (on) => {
-  meta.textContent = on ? __("搬照片模式：拖曳＝在框內移動照片，Esc 離開") : "";
+  meta.textContent = on ? __("搬照片模式：拖曳＝移動、滾輪或捏合（＋／－）＝改框裡的大小，Esc 離開") : "";
 };
 editor.onDoodleMode = (on) => {
   $<HTMLButtonElement>("#doodleBtn").classList.toggle("on", on);
@@ -2978,9 +2998,14 @@ editor.onZoom = (z) => {
   $<HTMLButtonElement>("#zoomfit").textContent = `${Math.round(z * 100)}%`;
   tourNotify("zoom");   // 導覽第 2 步「縮放一下試試」的訊號
 };
-// 平移到別頁時，圖層清單跟著換頁（不換的話會一直停在剛開面板的那一頁）
-editor.onPageInView = () => {
-  if (inspector.activePanel === "layers") inspector.show(current, editor.getSelected());
+// 平移到別頁時，圖層清單跟著換頁（不換的話會一直停在剛開面板的那一頁）；
+// 膠捲的「目前這一頁」也跟著換，畫布跟縮圖卡永遠指同一頁
+editor.onPageInView = (i) => {
+  strip.setActive(i);
+  // 沒選元件時右邊是專案面板（含「頁面背景 第 N 頁」），滾到哪一頁就要顯示哪一頁
+  if (inspector.activePanel === "layers" || !editor.getSelected()) {
+    inspector.show(current, editor.getSelected());
+  }
 };
 
 /** 對目前選取的整組套一個純函式，然後重畫＋記一步 undo。 */
@@ -3047,11 +3072,18 @@ function copySelection(): void {
   meta.textContent = __f("已拷貝 {n} 個元件——⌘V 貼上，開另一份專案貼也行", { n: blocks.length });
 }
 
+/** 讀一眼剪貼簿（壞值當空）。右鍵選單要據此決定「貼上畫面到這個框」出不出現。 */
+function clipboardPeek(): BlockClipboard | null {
+  try {
+    const c = JSON.parse(localStorage.getItem(CLIP_KEY) ?? "null") as BlockClipboard | null;
+    return c?.blocks?.length ? c : null;
+  } catch { return null; }
+}
+
 async function pasteClipboard(): Promise<void> {
   if (!current) return;
-  let clip: BlockClipboard | null = null;
-  try { clip = JSON.parse(localStorage.getItem(CLIP_KEY) ?? "null") as BlockClipboard | null; } catch { /* 壞值當空 */ }
-  if (!clip?.blocks?.length) return;
+  const clip = clipboardPeek();
+  if (!clip) return;
 
   // 有媒體才需要 assets/（純文字連存檔位置都不用有）；拿不到時 assetsDir 已把原因寫在 meta
   const needsAssets = clip.blocks.some((b) =>
@@ -3108,20 +3140,21 @@ async function pasteClipboard(): Promise<void> {
     }
   }
 
-  const copies = pasteBlocks(clip, current, pageIndexForX(current, editor.centerPoint().x), renamed, newId);
-  current.blocks.push(...copies);
-
+  // 素材先載進素材表——貼進既有框那條路要量原圖尺寸（裁切區得照目標框的比例收），
+  // 等到貼完才載就只能給哨兵值，第一眼會是滿版置中而不是他拷的那一塊。
   if (dir) {
     // 新專案的第一支影片可能還沒接影片池（與 importMediaFromPath 同一個補接）
-    if (!videoUrl && copies.some((b) => b.content.type === "video")) {
+    if (!videoUrl && clip.blocks.some((b) => b.content.type === "video")) {
       const base = await mediaBaseOnce();
       videoUrl = (f) => `${base}/${encodeURIComponent(`${dir}/${f}`)}`;
       videos.attach(videoUrl);
       editor.setVideos(videos.frames);
     }
-    // 搬進來的素材載進素材表（影片載海報）＋補濾鏡變體
-    const isVid = new Set(copies.filter((b) => b.content.type === "video")
-                                .map((b) => b.content.type === "video" ? b.content.media.assetFileName : ""));
+    // 搬進來的素材載進素材表（影片載海報）
+    const isVid = new Set(clip.blocks
+      .filter((b) => b.content.type === "video")
+      .map((b) => (b.content.type === "video" ? b.content.media.assetFileName : ""))
+      .map((f) => renamed.get(f) ?? f));
     for (const newName of renamed.values()) {
       if (glbs.has(newName)) continue;                 // .glb 走 modelpool，不是圖
       const assetKey = isVid.has(newName) ? `${newName}.poster.jpg` : newName;
@@ -3132,7 +3165,20 @@ async function pasteClipboard(): Promise<void> {
         assets.variants.set(assetKey, img);
       } catch { /* 載不進來＝佔位框 */ }
     }
-    for (const nb of copies) {
+  }
+
+  // 選著一個框按 ⌘V＝**把畫面貼進那個框**：位置、大小、邊框全照目標的，只換裡面那張
+  // （2026-09-23 小高：「這樣可以快速地移動欄位」）。拷的是一整組、選的不是圖框、
+  // 或就是拷貝來源自己，一律照舊貼成新元件。
+  const sel = editor.selectionBlocks();
+  const into = clipIsSingleMedia(clip) && sel.length === 1 && canPasteInto(sel[0])
+               && sel[0].id !== clip.blocks[0].id ? sel[0] : null;
+  const copies = into ? [] : pasteBlocks(clip, current, pageIndexForX(current, editor.centerPoint().x), renamed, newId);
+  if (into) pasteMediaInto(into, clip, renamed, naturalOfClip(clip, renamed));
+  else current.blocks.push(...copies);
+
+  if (dir) {
+    for (const nb of into ? [into] : copies) {
       if ((nb.content.type === "image" || nb.content.type === "video") && nb.content.media.filterKey) {
         await ensureVariantFor(nb).catch(() => { /* 變體生失敗照樣有原圖 */ });
       }
@@ -3140,12 +3186,28 @@ async function pasteClipboard(): Promise<void> {
   }
 
   editor.refresh();
-  editor.selectMany(copies.map((c) => c.id));
+  if (into) editor.select(into.id); else editor.selectMany(copies.map((c) => c.id));
+  inspector.show(current, editor.getSelected());   // 框裡換了東西，右邊面板要跟著換
   scheduleThumbs();
   commit("paste");
-  meta.textContent = missing
-    ? __f("貼上了 {n} 個，{m} 個素材的來源檔找不到（顯示成佔位框）", { n: copies.length, m: missing })
-    : __f("貼上了 {n} 個元件", { n: copies.length });
+  meta.textContent = into
+    ? (missing ? __("貼進這個框了，但來源檔找不到（顯示成佔位框）")
+               : __("畫面已貼進這個框——大小與邊框照原本的"))
+    : missing
+      ? __f("貼上了 {n} 個，{m} 個素材的來源檔找不到（顯示成佔位框）", { n: copies.length, m: missing })
+      : __f("貼上了 {n} 個元件", { n: copies.length });
+}
+
+/** 剪貼簿那一張搬進來之後的原圖尺寸——貼進既有框時要拿它把裁切區收成框的比例。 */
+function naturalOfClip(clip: BlockClipboard, renamed: Map<string, string>): { w: number; h: number } | null {
+  const b = clip.blocks[0];
+  if (!b || (b.content.type !== "image" && b.content.type !== "video")) return null;
+  const src = b.content.media.assetFileName;
+  const name = renamed.get(src) ?? src;
+  const img = assets.raw.get(b.content.type === "video" ? `${name}.poster.jpg` : name);
+  if (!img) return null;
+  const n = naturalSize(img);
+  return n.w && n.h ? n : null;
 }
 
 // ── 存檔 ──────────────────────────────────────────────────────────────
@@ -3680,11 +3742,67 @@ function addAgentText(params: Record<string, unknown>): Record<string, unknown> 
   return agentState();
 }
 
+/**
+ * AI 共編的頁面結構操作——新增／複製／搬移／刪除整頁。
+ *
+ * 這是 2026-09-21 補的洞：在此之前整個 agent bridge **沒有任何指令寫得到 `pageCount`**，
+ * 所以 AI 只能往既有頁填東西，連「在後面加一頁」都做不到（小高要第八頁時撞到）。
+ * 走的是與右鍵選單、膠捲完全同一套 `core/pages` 函式，行為不會有第二種。
+ *
+ * 刪頁會連同該頁元件一起刪掉，所以要求明確 `confirm: true`——其餘不設限。
+ */
+function applyAgentPages(params: Record<string, unknown>): Record<string, unknown> {
+  const project = requireAgentContext(params);
+  const pageArg = (key: string): number => {
+    const raw = params[key];
+    if (!Number.isInteger(raw) || (raw as number) < 1 || (raw as number) > project.pageCount) {
+      throw new Error(`${key} 必須在 1–${project.pageCount} 之間`);
+    }
+    return raw as number;
+  };
+  const action = String(params.action ?? "");
+  const before = snapshot();
+  let focus = 0;
+  try {
+    if (action === "add") {
+      if (!addPage(project)) throw new Error(`頁數上限 ${MAX_PAGES} 頁`);
+      focus = project.pageCount - 1;
+    } else if (action === "duplicate") {
+      const i = pageArg("page") - 1;
+      if (!duplicatePage(project, i, newId)) throw new Error(`頁數上限 ${MAX_PAGES} 頁`);
+      focus = i + 1;
+    } else if (action === "move") {
+      const from = pageArg("page") - 1;
+      const to = pageArg("to") - 1;
+      const step = from < to ? 1 : -1;
+      for (let i = from; i !== to; i += step) swapAdjacentPages(project, i, i + step);
+      focus = to;
+    } else if (action === "delete") {
+      if (params.confirm !== true) throw new Error("刪頁會一併刪掉該頁的元件；確定要刪請帶 confirm: true");
+      const i = pageArg("page") - 1;
+      if (!deletePage(project, i)) throw new Error("專案至少要留一頁");
+      focus = Math.min(i, project.pageCount - 1);
+    } else {
+      throw new Error("action 必須是 add、duplicate、move 或 delete");
+    }
+  } catch (error) {
+    current = JSON.parse(before) as Project;
+    editor.swapProject(current);
+    throw error;
+  }
+  afterPageChange(focus, "agent", false);
+  scheduleThumbs();
+  buildSelbar(); selbarFollow();
+  meta.textContent = __f("AI 已調整頁面，目前 {n} 頁（尚未自動儲存，可復原）", { n: project.pageCount });
+  return agentState();
+}
+
 function handleAgentRequest(request: AgentRequest): Record<string, unknown> {
   const params = (request.params && typeof request.params === "object" ? request.params : {}) as Record<string, unknown>;
   if (request.method === "get_state") return agentState();
   if (request.method === "update_blocks") return applyAgentUpdates(params);
   if (request.method === "add_text") return addAgentText(params);
+  if (request.method === "pages") return applyAgentPages(params);
   if (request.method === "history") {
     requireAgentContext(params);
     if (params.action === "undo") undo(false);

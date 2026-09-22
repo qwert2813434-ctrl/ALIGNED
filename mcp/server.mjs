@@ -152,6 +152,20 @@ export const TOOLS = [
     expected_revision: { type: "string" },
     action: { type: "string", enum: ["undo", "redo"] },
   }, ["expected_project_id", "expected_revision", "action"]),
+  tool("aligned_live_pages", "在 ALIGNED App 已開啟的畫布新增、複製、搬移或刪除整頁，並進入同一套 Undo。頁數上限 20；add 直接加在最後面。delete 會連同該頁元件一起刪掉，必須另外帶 confirm=true。", {
+    expected_project_id: { type: "string" },
+    expected_revision: { type: "string" },
+    action: { type: "string", enum: ["add", "duplicate", "move", "delete"] },
+    page: { type: "integer", minimum: 1, description: "duplicate／move／delete 的目標頁，1 起算；add 不需要" },
+    to: { type: "integer", minimum: 1, description: "move 專用：要搬到第幾頁" },
+    confirm: { type: "boolean", default: false, description: "delete 專用；沒帶 true 一律拒絕" },
+  }, ["expected_project_id", "expected_revision", "action"]),
+  tool("aligned_set_page_count", "把磁碟上的 .alignproj／project.json 加長到指定頁數（只加不減，上限 20）。新頁沿用最後一頁的紙張顏色。要改正在編輯中的畫布請改用 aligned_live_pages。", {
+    path: { type: "string" },
+    page_count: { type: "integer", minimum: 1, maximum: 20 },
+    output_path: { type: "string" },
+    overwrite: { type: "boolean", default: false },
+  }, ["path", "page_count"]),
 ];
 
 const pathSchema = z.string().min(1).describe("project.json 或 .alignproj 的絕對路徑");
@@ -242,6 +256,17 @@ const TOOL_SCHEMAS = {
   aligned_app_history: z.object({
     expected_project_id: z.string().min(1), expected_revision: z.string().min(1),
     action: z.enum(["undo", "redo"]),
+  }),
+  aligned_live_pages: z.object({
+    expected_project_id: z.string().min(1), expected_revision: z.string().min(1),
+    action: z.enum(["add", "duplicate", "move", "delete"]),
+    page: z.number().int().min(1).optional(),
+    to: z.number().int().min(1).optional(),
+    confirm: z.boolean().optional().default(false),
+  }),
+  aligned_set_page_count: z.object({
+    ...writeSchema,
+    page_count: z.number().int().min(1).max(20),
   }),
 };
 
@@ -583,6 +608,22 @@ export async function callTool(name, args = {}) {
   if (name === "aligned_update_live_blocks") return bridgeCall("update_blocks", args);
   if (name === "aligned_add_live_text") return bridgeCall("add_text", args);
   if (name === "aligned_app_history") return bridgeCall("history", args);
+  if (name === "aligned_live_pages") return bridgeCall("pages", args);
+  if (name === "aligned_set_page_count") {
+    return mutate(args, async (project) => {
+      const target = args.page_count;
+      const now = project.pageCount ?? 1;
+      if (target < now) throw new Error(`這個工具只加頁不減頁（目前 ${now} 頁）；要刪頁請在 App 裡做，或用 aligned_live_pages`);
+      if (target === now) return;
+      // 沿用最後一頁的紙張顏色，跟 App 的加頁行為一致（core/pages.addPage）
+      const hex = project.pageBackgroundHex?.[String(now - 1)];
+      project.pageCount = target;
+      if (hex) {
+        project.pageBackgroundHex = { ...project.pageBackgroundHex };
+        for (let i = now; i < target; i += 1) project.pageBackgroundHex[String(i)] = hex;
+      }
+    });
+  }
   if (name === "aligned_inspect_project" || name === "aligned_validate_project") {
     const loaded = await loadProject(args.path);
     try {
@@ -722,7 +763,8 @@ export function createServer() {
       inputSchema: TOOL_SCHEMAS[spec.name],
       annotations: {
         readOnlyHint: readOnly,
-        destructiveHint: spec.name === "aligned_update_live_blocks" || spec.name === "aligned_add_live_text" || spec.name === "aligned_app_history",
+        destructiveHint: spec.name === "aligned_update_live_blocks" || spec.name === "aligned_add_live_text"
+        || spec.name === "aligned_app_history" || spec.name === "aligned_live_pages" || spec.name === "aligned_set_page_count",
         idempotentHint: readOnly,
         openWorldHint: false,
       },

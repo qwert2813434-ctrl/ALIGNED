@@ -16,7 +16,7 @@ import { Inspector } from "./inspector";
 import { PageStrip } from "./pagestrip";
 import { addPage, deletePage, duplicatePage, retargetToPage, stripToTemplate, swapAdjacentPages } from "./core/pages";
 import { alignGroup, alignToPage, applyLayerOrder, distributeGroup } from "./core/group";
-import { buildClipboard, pasteBlocks } from "./core/clipboard";
+import { buildClipboard, canPasteInto, clipIsSingleMedia, pasteBlocks, pasteMediaInto, refitCrop } from "./core/clipboard";
 import { defaultParams, generateGuides, replaceBatch } from "./core/guidegen";
 import { canvasSize, changeCanvasRatio, newProject, simplifiedRatio } from "./core/canvas";
 import { buildPageSpec, pageHasVideo } from "./videoexport";
@@ -1701,6 +1701,278 @@ async function run(): Promise<void> {
           `x=${p2[0].frame.x},${p2[1].frame.x}`);
   }
 
+  // ── 18d2. 貼進既有的框（2026-09-23）：換的是照片，版面一格都不准動 ──────────
+  {
+    const src = project([]);
+    src.id = "A";
+    src.blocks.push({
+      id: "photo", frame: { x: 0, y: 0, w: 400, h: 500 }, rotation: 0, zIndex: 3, locked: false, opacity: 1,
+      content: { type: "image", media: {
+        assetFileName: "new.jpg", cropRect: { x: 0.2, y: 0.1, w: 0.6, h: 0.6 },
+        filterKey: "a1", adjExposure: 0.4,
+        strokeHex: "ff0000", strokeWidth: 0.02, maskCornerRadius: 0.5,
+      } },
+    });
+    const clip = buildClipboard(src, [src.blocks[0]], "/tmp/A/assets");
+    const slot = (w: number, h: number): Block => ({
+      id: "slot", frame: { x: 100, y: 100, w, h }, rotation: 12, zIndex: 9, locked: false, opacity: 1,
+      content: { type: "image", media: {
+        assetFileName: "old.jpg", cropRect: { x: 0, y: 0, w: 1, h: 1 },
+        strokeHex: "000000", strokeWidth: 0.01,
+      } },
+    });
+    const renamed = new Map([["new.jpg", "new-2.jpg"]]);
+
+    // (a) 同比例的框：框／旋轉／圖層順序一動不動，只換裡面那張
+    {
+      const t = slot(300, 300);
+      const ok = pasteMediaInto(t, clip, renamed, { w: 1000, h: 1000 });
+      const m = t.content.type === "image" ? t.content.media : null;
+      check("貼進框：框、旋轉、圖層順序都不動，只換照片",
+            ok && near(t.frame.x, 100) && near(t.frame.w, 300) && t.rotation === 12 && t.zIndex === 9
+            && m?.assetFileName === "new-2.jpg",
+            `frame=${t.frame.x}/${t.frame.w} rot=${t.rotation} z=${t.zIndex} asset=${m?.assetFileName}`);
+      check("貼進框：邊框照目標的（來源的紅框與圓角不跟過來）",
+            m?.strokeHex === "000000" && near(m?.strokeWidth ?? 0, 0.01) && m?.maskCornerRadius === undefined,
+            `stroke=${m?.strokeHex}/${m?.strokeWidth} 圓角=${m?.maskCornerRadius}`);
+      check("貼進框：濾鏡與調整跟著照片走",
+            m?.filterKey === "a1" && near(m?.adjExposure ?? 0, 0.4),
+            `濾鏡=${m?.filterKey} 曝光=${m?.adjExposure}`);
+      check("貼進框：同比例的框，裁切區照抄不變形",
+            near(m!.cropRect.w, 0.6, 0.001) && near(m!.cropRect.h, 0.6, 0.001),
+            `crop ${m!.cropRect.w.toFixed(3)}×${m!.cropRect.h.toFixed(3)}`);
+    }
+
+    // (b) 比例不同的框：裁切區收成框的比例（只收不放，所以不會露白）
+    {
+      const t = slot(300, 150);
+      pasteMediaInto(t, clip, renamed, { w: 1000, h: 1000 });
+      const c = t.content.type === "image" ? t.content.media.cropRect : null;
+      const ar = c ? (c.w * 1000) / (c.h * 1000) : 0;
+      check("貼進框：2:1 的框＝裁切區收成 2:1、中心不動、不露白",
+            near(ar, 2, 0.01) && near(c!.w, 0.6, 0.001) && near(c!.h, 0.3, 0.001)
+            && near(c!.y + c!.h / 2, 0.4, 0.001) && c!.x >= 0 && c!.x + c!.w <= 1.0001,
+            `crop ${c!.x.toFixed(3)},${c!.y.toFixed(3)} ${c!.w.toFixed(3)}×${c!.h.toFixed(3)} 比例=${ar.toFixed(2)}`);
+    }
+
+    // (c) 裁切區貼著素材邊緣時，收完仍夾在 0–1 內
+    {
+      const edge = refitCrop({ x: 0.7, y: 0, w: 0.3, h: 0.3 }, { w: 1000, h: 1000 }, { x: 0, y: 0, w: 300, h: 150 });
+      check("貼進框：裁切區貼著素材右緣也不會溢出",
+            edge.x >= 0 && edge.x + edge.w <= 1.0001 && near(edge.h, 0.15, 0.001),
+            `crop ${edge.x.toFixed(3)} w=${edge.w.toFixed(3)} h=${edge.h.toFixed(3)}`);
+    }
+
+    // (d) 守門：多選、鎖定的框、文字框都不走這條路（照舊貼成新元件）
+    {
+      const two = buildClipboard(src, [src.blocks[0], src.blocks[0]], null);
+      const locked = slot(300, 300); locked.locked = true;
+      const text: Block = {
+        id: "t", frame: { x: 0, y: 0, w: 100, h: 40 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "字", alignment: "leading" } },
+      };
+      check("貼進框：多選、鎖住的框、文字框都不收（照舊貼成新元件）",
+            clipIsSingleMedia(two) === false && clipIsSingleMedia(clip) === true
+            && canPasteInto(locked) === false && canPasteInto(text) === false && canPasteInto(slot(300, 300)) === true,
+            `多選=${clipIsSingleMedia(two)} 鎖定=${canPasteInto(locked)} 文字=${canPasteInto(text)}`);
+    }
+  }
+
+  // ── 18d3. 框內縮放（2026-09-23 小高：「外框不變，直接改裡面的大小跟位置」）──────
+  {
+    const wide = (): HTMLCanvasElement => {
+      const c = document.createElement("canvas");
+      c.width = 800; c.height = 400;
+      const x = c.getContext("2d")!;
+      x.fillStyle = "#4488cc"; x.fillRect(0, 0, 800, 400);
+      return c;
+    };
+    const images = new Map<string, CanvasImageSource>([["wide.png", wide()]]);
+    const mk = (): Project => {
+      const p = project([]);
+      p.blocks.push({
+        id: "img", frame: { x: 100, y: 100, w: 400, h: 400 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "image", media: { assetFileName: "wide.png", cropRect: { x: 0, y: 0, w: 1, h: 1 } } },
+      });
+      return p;
+    };
+    const cropOf = (p: Project): Rect => (p.blocks[0].content as { media: { cropRect: Rect } }).media.cropRect;
+
+    // (a) 放大一倍：框一動不動，裁切區各邊減半、以框心為錨
+    {
+      const p = mk();
+      editor.load(p, images); editor.select("img");
+      editor.enterContentMode(p.blocks[0]);
+      editor.zoomContent(2);
+      const c = cropOf(p), f = p.blocks[0].frame;
+      check("框內縮放：放大一倍＝框不動、裁切區減半、以框心為錨",
+            near(f.x, 100) && near(f.w, 400) && near(c.w, 0.25, 0.001) && near(c.h, 0.5, 0.001)
+            && near(c.x + c.w / 2, 0.5, 0.001) && near(c.y + c.h / 2, 0.5, 0.001),
+            `frame=${f.x}/${f.w} crop ${c.x.toFixed(3)},${c.y.toFixed(3)} ${c.w.toFixed(3)}×${c.h.toFixed(3)}`);
+      editor.exitContentMode();
+    }
+
+    // (b) 縮小到底：停在素材邊緣，不會露白（aspect-fill 那一格就是下限）
+    {
+      const p = mk();
+      editor.load(p, images); editor.select("img");
+      editor.enterContentMode(p.blocks[0]);
+      editor.zoomContent(0.01);
+      const c = cropOf(p);
+      check("框內縮放：縮到底停在素材邊緣，不露白",
+            near(c.w, 0.5, 0.001) && near(c.h, 1, 0.001) && c.x >= 0 && c.x + c.w <= 1.0001,
+            `crop ${c.x.toFixed(3)},${c.y.toFixed(3)} ${c.w.toFixed(3)}×${c.h.toFixed(3)}`);
+      editor.exitContentMode();
+    }
+
+    // (c) 以指標為錨：滑鼠底下那一點放大後還在同一個相對位置
+    {
+      const p = mk();
+      editor.load(p, images); editor.select("img");
+      editor.enterContentMode(p.blocks[0]);
+      editor.zoomContent(2);                             // 先縮一次：裁切區攤成真值（哨兵 0,0,1,1 沒有錨可言）
+      const at = { x: 200, y: 200 };                     // 框內左上區（相對 0.25, 0.25）
+      const b4 = { ...cropOf(p) };
+      const u = (at.x - 100) / 400, v = (at.y - 100) / 400;
+      const px = b4.x + u * b4.w, py = b4.y + v * b4.h;   // 指標指著素材上的這一點
+      editor.zoomContent(2, at);
+      const c = cropOf(p);
+      check("框內縮放：以指標為錨，游標底下那一點不動",
+            near(c.x + u * c.w, px, 0.002) && near(c.y + v * c.h, py, 0.002),
+            `錨點 ${(c.x + u * c.w).toFixed(3)},${(c.y + v * c.h).toFixed(3)} 應為 ${px.toFixed(3)},${py.toFixed(3)}`);
+      editor.exitContentMode();
+    }
+
+    // (d) 沒進搬照片模式時，滾輪縮放不該動到任何人的照片
+    {
+      const p = mk();
+      editor.load(p, images); editor.select("img");
+      const moved = editor.zoomContent(2);
+      check("框內縮放：沒進搬照片模式就不生效", moved === false, `回傳 ${moved}`);
+    }
+
+    // (e) 中文輸入法開著時按「−」：e.key 會變成全形「－」，只有認 e.code 才縮得動
+    //     （2026-09-23 小高實踩：「我按減它不會縮」，他自己猜到跟繁中有關）
+    {
+      const p = mk();
+      editor.load(p, images); editor.select("img");
+      editor.enterContentMode(p.blocks[0]);
+      editor.zoomContent(2);                       // 先放大，才有得縮回去
+      const before = { ...cropOf(p) };
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "－", code: "Minus", bubbles: true }));
+      const after = { ...cropOf(p) };
+      check("框內縮放：中文輸入法下按減號也縮得動（認實體鍵不認字元）",
+            after.w > before.w + 0.001,
+            `前 ${before.w.toFixed(3)} → 後 ${after.w.toFixed(3)}`);
+      editor.exitContentMode();
+    }
+  }
+
+  // ── 18d5. 直排標點的位置（2026-09-23 小高：「逗點怎麼在字的旁邊不是中間」）──────
+  //    句逗頓號在中文直排要待在**自己那一格的右上角**：不能掛到上一格、也不能凸出欄外。
+  //    量法＝拿同一個位置的「口」當參考格，看標點的墨跡有沒有落在它的右上象限裡面。
+  {
+    const mkv = (text: string): Project => {
+      const p = project([]);
+      p.blocks.push({
+        id: "v", frame: { x: 300, y: 400, w: 160, h: 400 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: {
+          text, alignment: "leading", fontSize: 120, vertical: true, isBodyFrame: true, manualHeight: 400,
+        } },
+      });
+      return p;
+    };
+    // 掃描框的上方也一起掃進來（舊寫法會把標點推到上一格，掃不到就看不出錯）
+    const ink = (text: string): Rect | null => {
+      const c = renderAllPages(mkv(text), { images: new Map() })[0].canvas;
+      const W = 300, H = 600;
+      const d = c.getContext("2d")!.getImageData(250, 250, W, H).data;
+      let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = (y * W + x) * 4;
+          if (d[i + 3] > 10 && d[i] < 128) {
+            if (x < x0) x0 = x; if (x > x1) x1 = x;
+            if (y < y0) y0 = y; if (y > y1) y1 = y;
+          }
+        }
+      }
+      return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+    };
+    const box = ink("口"), dot = ink("。");
+    if (!box || !dot) {
+      check("直排標點：樣張掃得到墨跡", false, `口=${JSON.stringify(box)} 句號=${JSON.stringify(dot)}`);
+    } else {
+      const bc = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+      const dc = { x: dot.x + dot.w / 2, y: dot.y + dot.h / 2 };
+      check("直排標點：句號落在同一格的右上象限",
+            dc.x > bc.x && dc.y < bc.y,
+            `格心 ${bc.x.toFixed(0)},${bc.y.toFixed(0)}　點心 ${dc.x.toFixed(0)},${dc.y.toFixed(0)}`);
+      check("直排標點：整顆點不出格（不掛到上一格、不凸出欄外）",
+            dot.x >= box.x - 2 && dot.x + dot.w <= box.x + box.w + 2
+            && dot.y >= box.y - 2 && dot.y + dot.h <= box.y + box.h + 2,
+            `格 ${box.x},${box.y} ${box.w}×${box.h}　點 ${dot.x},${dot.y} ${dot.w}×${dot.h}`);
+    }
+
+    // 半形空格（2026-09-23 小高：「這個空白鍵離 G 就太遠了」）：
+    // 空格是字距不是字。舊行為佔一整格（字級 120 → 多 120px），新行為＝字型的空格寬（約 30px）。
+    {
+      const hOf = (text: string): number => { const b = ink(text); return b ? b.h : -1; };
+      const tight = hOf("字字"), spaced = hOf("字 字");
+      const gap = spaced - tight;
+      check("直排空格：半形空格只佔字型自己的空格寬，不是一整格",
+            tight > 0 && gap > 4 && gap < 60, `兩字高 ${tight}　夾空格高 ${spaced}　空格佔 ${gap}px（一整格＝120）`);
+    }
+
+    // 斜線（同日）：直排要畫成橫槓（扁的），不是一條斜線、也不是直立的斜槓
+    {
+      const dash = ink("/");
+      check("直排斜線：畫成橫槓（寬遠大於高）",
+            !!dash && dash.w > dash.h * 2.5, dash ? `${dash.w}×${dash.h}` : "掃不到墨跡");
+    }
+
+    // 英數串躺著順欄走（2026-09-23 小高：「還是橫的」）。
+    // 量貼字盒：字級 120 的 "Claude" 躺下來＝一欄約 380 長；逐字直立＝6 格 720 長。
+    {
+      const p = project([]);
+      p.blocks.push({
+        id: "lat", frame: { x: 300, y: 200, w: 100, h: 100 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "Claude", alignment: "leading", fontSize: 120, vertical: true } },
+      });
+      editor.load(p);   // load 內部會跑 autoFitText，框會收到貼著字
+      const f = p.blocks[0].frame;
+      check("直排英數：整串躺著順欄走（欄長＝它橫排的長度，不是每個字母各佔一格）",
+            f.h < 520 && f.w < 160, `貼字盒 ${f.w.toFixed(0)}×${f.h.toFixed(0)}（逐字直立會是 6 格約 720 長）`);
+    }
+  }
+
+  // ── 18d4. 直排文字的行內編輯：欄序跟著「欄序左起」走（2026-09-23）──────────
+  {
+    const mk = (ltr: boolean): Project => {
+      const p = project([]);
+      p.blocks.push({
+        id: "v", frame: { x: 100, y: 100, w: 120, h: 400 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: {
+          text: "直排兩行\n第二欄", alignment: "leading", fontSize: 40, vertical: true,
+          ...(ltr ? { verticalLeftToRight: true as const } : {}),
+        } },
+      });
+      return p;
+    };
+    const modeOf = (ltr: boolean): string => {
+      const p = mk(ltr);
+      editor.load(p);
+      editor.startEdit(p.blocks[0]);
+      const el = document.querySelector<HTMLElement>(".textedit");
+      const mode = el?.style.writingMode ?? "沒有編輯層";
+      editor.endEdit(false);
+      return mode;
+    };
+    const ltr = modeOf(true), rtl = modeOf(false);
+    check("直排編輯：勾了「欄序左起」就從左邊排，沒勾的照舊從右邊排",
+          ltr === "vertical-lr" && rtl === "vertical-rl", `左起=${ltr}　右起=${rtl}`);
+  }
+
   // ── 18e. 絕對對齊（2026-08-14）：框＝墨跡、貼字寬一鍵、吸附咬印刷線 ────────
   //    驗收標準用「像素真相」：透明渲染後掃 alpha 得到墨跡外接框，
   //    量使用者看到的那層，不量自己的計數器。
@@ -2451,6 +2723,57 @@ async function run(): Promise<void> {
     check("膠捲：拖曳時卡片浮起跟著游標，放開後收乾淨並回報新順序",
           lifted === 1 && cleaned === 0 && moved === "0→2",
           `浮起 ${lifted} 張　放開後剩 ${cleaned} 張　回報 ${moved ?? "無"}`);
+    host.remove();
+  }
+
+  // 膠捲：點一下＝跳到那一頁、目前頁換底色（2026-09-23 小高：「點縮圖卡要跳過去、背景要換色」）
+  {
+    const host = document.createElement("div");
+    host.style.cssText = "position:fixed;left:0;top:0;width:600px;visibility:hidden;display:flex";
+    document.body.append(host);
+    const picked: number[] = [];
+    let movedTo: string | null = null;
+    const strip = new PageStrip(host, {
+      pick: (i) => picked.push(i), act: () => {}, add: () => {}, menu: () => {},
+      move: (from, to) => { movedTo = `${from}→${to}`; },
+    });
+    const p = project([]);
+    p.pageCount = 3;
+    strip.render(p, {});
+    const cvs = [...host.querySelectorAll<HTMLCanvasElement>("figure canvas")];
+    const figs = [...host.querySelectorAll<HTMLElement>("figure")].filter((f) => !f.classList.contains("addpage"));
+    const boxes = cvs.map((c) => c.getBoundingClientRect());
+    const fire = (el: HTMLElement, type: string, x: number) => el.dispatchEvent(new PointerEvent(type, {
+      pointerId: 6, isPrimary: true, bubbles: true, cancelable: true,
+      clientX: x, clientY: boxes[0].top + 10,
+    }));
+    // (a) 原地按一下放開＝點選那一頁（不是換頁序）
+    fire(cvs[1], "pointerdown", boxes[1].left + 10);
+    fire(cvs[1], "pointerup", boxes[1].left + 10);
+    check("膠捲：點縮圖卡＝跳到那一頁（沒移動就不是換順序）",
+          picked.length === 1 && picked[0] === 1 && movedTo === null,
+          `pick=${picked.join(",") || "無"}　move=${movedTo ?? "無"}`);
+
+    // (b) 高亮跟著走，而且只有一張亮著
+    strip.setActive(2);
+    const on = figs.map((f) => f.classList.contains("current"));
+    check("膠捲：目前這一頁換底色，而且只有一張",
+          on[2] === true && on.filter(Boolean).length === 1, `亮著的＝${on.map((v, i) => (v ? i : "")).join("")}`);
+
+    // (c) 整排重畫（縮圖重烤）之後還記得停在哪一頁——這是「點了沒反應」的另一半
+    strip.render(p, {});
+    const after = [...host.querySelectorAll<HTMLElement>("figure")]
+      .filter((f) => !f.classList.contains("addpage")).map((f) => f.classList.contains("current"));
+    check("膠捲：重畫整排縮圖後，高亮還在同一頁",
+          after[2] === true && after.filter(Boolean).length === 1, `亮著的＝${after.map((v, i) => (v ? i : "")).join("")}`);
+
+    // (d) 刪到剩兩頁時，高亮不會指到不存在的第 3 張
+    p.pageCount = 2;
+    strip.render(p, {});
+    const clamped = [...host.querySelectorAll<HTMLElement>("figure")]
+      .filter((f) => !f.classList.contains("addpage")).map((f) => f.classList.contains("current"));
+    check("膠捲：頁數變少時高亮夾回最後一頁",
+          clamped.length === 2 && clamped[1] === true, `亮著的＝${clamped.map((v, i) => (v ? i : "")).join("")}`);
     host.remove();
   }
 

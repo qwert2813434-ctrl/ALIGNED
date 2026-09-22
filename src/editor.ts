@@ -232,6 +232,18 @@ export class Editor {
       if (e.code === "Space") this.spaceHeld = true;
       if (e.code === "KeyR" && !e.metaKey && !e.ctrlKey) { this.rKey = true; this.dirty = true; }
       if (e.key === "Escape" && this.contentId) this.exitContentMode();
+      // 搬照片模式的 ＋／－＝以框心縮放框裡的畫面（觸控板不順手時的第二條路）。
+      // 認 e.code 不認 e.key：**中文輸入法開著時 `-` 的 e.key 會變成全形「－」**，
+      // 比對 "-" 就永遠不成立（2026-09-23 小高：「我按減它不會縮」，他自己猜到是繁中的關係）。
+      // 同理排除組字中與正在打字的欄位。
+      const zoomKey = e.code === "Minus" || e.code === "NumpadSubtract" ? -1
+        : e.code === "Equal" || e.code === "NumpadAdd" ? 1 : 0;
+      const el = document.activeElement as HTMLElement | null;
+      const typing = !!el && (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable);
+      if (this.contentId && zoomKey && !e.metaKey && !e.ctrlKey && !e.isComposing && !typing) {
+        e.preventDefault();
+        this.zoomContent(zoomKey < 0 ? 1 / 1.1 : 1.1);
+      }
       if (e.key === "Escape" && this.doodle) this.endDoodle();
     });
     window.addEventListener("keyup", (e) => {
@@ -1435,8 +1447,10 @@ export class Editor {
     const sx = f.x * v.scale + v.tx, sy = f.y * v.scale + v.ty;
     el.style.lineHeight = `${lineH}px`;
     if (t.vertical) {
-      // 直排交給瀏覽器的直書排版當編輯體驗——與畫布的欄排有细微差，收筆時就會對回去
-      el.style.writingMode = "vertical-rl";
+      // 直排交給瀏覽器的直書排版當編輯體驗——與畫布的欄排有细微差，收筆時就會對回去。
+      // 欄序要跟著 verticalLeftToRight 走：一律 vertical-rl 的話，勾了「欄序左起」的框
+      // 一進編輯就整段跳到右邊排（2026-09-23 小高：「選從左起，修改時變成從右起」）。
+      el.style.writingMode = t.verticalLeftToRight === true ? "vertical-lr" : "vertical-rl";
       el.style.whiteSpace = "pre";
       el.style.left = `${sx}px`; el.style.top = `${sy}px`;
       el.style.width = `${f.w * v.scale}px`;
@@ -1524,6 +1538,51 @@ export class Editor {
     };
     this.dirty = true;
   }
+
+  /**
+   * 在框內縮放照片（2026-09-23 小高：「外框不變，直接改裡面的大小跟位置」）——
+   * frame 一動不動，動的是 cropRect 的**大小**：裁切區縮小＝畫面放大。
+   *
+   * k > 1 ＝畫面放大。兩軸用同一個倍率，裁切區與框的比例才不會走鐘（走鐘＝畫面被拉扁）。
+   * 上限是裁切區撞到素材邊緣（w、h 都不能超過 1，再放就要露白），
+   * 下限 MIN_CROP 是「別把整張圖縮到剩一點點、拉不回來」的保險。
+   * at＝指標的專案座標，給了就以它為錨（游標底下的那一點不動，同畫布縮放的語意）。
+   */
+  zoomContent(k: number, at?: { x: number; y: number }): boolean {
+    const p = this.project;
+    if (!p || !this.contentId || k === 1) return false;
+    const b = p.blocks.find((x) => x.id === this.contentId);
+    if (!b || (b.content.type !== "image" && b.content.type !== "video")) return false;
+    const c0 = this.materializeCrop(b);   // 沒裁過的先攤成真的 aspect-fill 區域才有得縮
+    if (!c0) return false;
+    const MIN_CROP = 0.05;
+    // f＝裁切區的倍率（畫面倍率的倒數）。先夾在「不超出素材」與「不小於 MIN_CROP」之間。
+    const fMax = Math.min(1 / c0.w, 1 / c0.h);
+    const fMin = Math.max(MIN_CROP / c0.w, MIN_CROP / c0.h);
+    if (fMin > fMax) return false;        // 素材比框極端得多，縮無可縮
+    const f = Math.min(Math.max(1 / k, fMin), fMax);
+    if (Math.abs(f - 1) < 1e-6) return false;
+    const w = c0.w * f, h = c0.h * f;
+    const u = at ? Math.min(Math.max((at.x - b.frame.x) / b.frame.w, 0), 1) : 0.5;
+    const v = at ? Math.min(Math.max((at.y - b.frame.y) / b.frame.h, 0), 1) : 0.5;
+    const m = b.content.media;
+    m.cropRect = {
+      x: Math.min(Math.max(c0.x + u * c0.w - u * w, 0), Math.max(0, 1 - w)),
+      y: Math.min(Math.max(c0.y + v * c0.h - v * h, 0), Math.max(0, 1 - h)),
+      w, h,
+    };
+    this.dirty = true;
+    // 滾輪會連發好幾十次，每一格都走一次 onCommit 等於每格重畫檢視器與縮圖。
+    // 停手 120ms 才記一步——undo 的合併窗在殼層，這裡只負責不洗版。
+    if (this.contentZoomTimer) clearTimeout(this.contentZoomTimer);
+    this.contentZoomTimer = setTimeout(() => {
+      this.contentZoomTimer = undefined;
+      this.onCommit?.();
+    }, 120) as unknown as number;
+    return true;
+  }
+
+  private contentZoomTimer?: number;
 
   /** 進入內容平移模式時，把哨兵值 (0,0,1,1) 攤成真的 aspect-fill 區域才有得搬。 */
   private materializeCrop(b: Block): Rect | null {
@@ -1685,6 +1744,13 @@ export class Editor {
 
   // Mac 觸控板：兩指捲動＝平移、捏合（會帶 ctrlKey）＝縮放。這是 macOS 的標準語意。
   private wheel = (e: WheelEvent): void => {
+    // 搬照片模式：滾輪／捏合改成**縮放框裡的畫面**（框一動不動）。人在調框內那張照片時，
+    // 滾輪的意思就是「這張大一點／小一點」；畫布縮放 Esc 出來再做（2026-09-23 小高）。
+    if (this.contentId) {
+      e.preventDefault();
+      this.zoomContent(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0035)), this.at(e as unknown as PointerEvent));
+      return;   // 縮不動（已撞到素材邊緣）也不順手把畫布捲走，不然框會跑出畫面
+    }
     this.pickedPage = null;   // 滾輪平移／縮放也是自由瀏覽
     e.preventDefault();
     if (e.ctrlKey) {

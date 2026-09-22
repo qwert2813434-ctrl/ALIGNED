@@ -706,13 +706,17 @@ export class Inspector {
     this.row(bgSec, __f("第 {n} 頁", { n: i + 1 })).append(
       // 紙色六顆＋自訂（2026-09-05）：以前只有一顆原生選色器，點開是 WebKit 的螢光色格
       this.swatches(p.pageBackgroundHex?.[String(i)] ?? "FFFFFF", (hexNoHash) => {
-        p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [String(i)]: hexNoHash };
+        // ⚠️ 按下去的當下**重新問一次是第幾頁**，不能用建面板時捕捉的 i：
+        // 點頁縮圖卡換頁不會重建這個面板，用舊的 i 就會把顏色刷到剛剛那一頁
+        // （2026-09-23 小高：「沒點選畫布時改背景色，還是沒跳過去」）。
+        const k = this.hooks.layers.currentPage();
+        p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [String(k)]: hexNoHash };
         this.emit();
       }, QUICK_PAPERS),
     );
     // 一鍵把這一頁的底色刷到全部頁——輪播通常整本同一個底色，一頁一頁點是折磨
     this.row(bgSec, "").append(this.btn(__("全部頁套用"), () => {
-      const hex = p.pageBackgroundHex?.[String(i)] ?? "FFFFFF";
+      const hex = p.pageBackgroundHex?.[String(this.hooks.layers.currentPage())] ?? "FFFFFF";
       const all: Record<string, string> = {};
       for (let k = 0; k < p.pageCount; k++) all[String(k)] = hex;
       p.pageBackgroundHex = all;
