@@ -2226,11 +2226,17 @@ function drawVertical(
         }
         ctx.restore();
       } else if (VERT_DASH.has(ch)) {
-        // 橫槓置中在字格裡（畫的是全形減號，資料仍是斜線）
+        // 畫成一條**順著欄走的線**（2026-09-23 小高第二輪：「那個條紋～跟橫槓，它們還是橫的」
+        // ——線狀符號在直排要轉 90°，第一版做成水平的橫槓是錯的；iOS 同日一起改成一樣）。
+        // 畫的是全形減號轉 90°，資料仍是斜線。
         const d = "－";
         const dm = ctx.measureText(d);
-        ctx.fillText(d, cx - dm.width / 2,
-          y + size / 2 + (dm.actualBoundingBoxAscent - dm.actualBoundingBoxDescent) / 2);
+        ctx.save();
+        ctx.translate(cx, y + size / 2);
+        ctx.rotate(Math.PI / 2);
+        ctx.fillText(d, -dm.width / 2,
+          (dm.actualBoundingBoxAscent - dm.actualBoundingBoxDescent) / 2);
+        ctx.restore();
       } else if (VERT_ROTATE.has(ch)) {
         // 繞字格中心順時針轉 90°；轉完把墨跡置中（括號的墨在 em 裡偏一側，不置中會歪）
         ctx.save();

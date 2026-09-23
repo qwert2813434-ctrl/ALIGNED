@@ -1927,8 +1927,8 @@ async function run(): Promise<void> {
     // 斜線（同日）：直排要畫成橫槓（扁的），不是一條斜線、也不是直立的斜槓
     {
       const dash = ink("/");
-      check("直排斜線：畫成橫槓（寬遠大於高）",
-            !!dash && dash.w > dash.h * 2.5, dash ? `${dash.w}×${dash.h}` : "掃不到墨跡");
+      check("直排斜線：畫成順著欄走的線（高遠大於寬）",
+            !!dash && dash.h > dash.w * 2.5, dash ? `${dash.w}×${dash.h}` : "掃不到墨跡");
     }
 
     // 英數串躺著順欄走（2026-09-23 小高：「還是橫的」）。
