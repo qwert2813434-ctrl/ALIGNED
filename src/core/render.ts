@@ -414,6 +414,9 @@ export interface StageOverlay {
   hideProjectGuides?: boolean;
   /** 參考線產生器的預覽（虛線、淡一階）——「按下生成會長出什麼」畫在整個版面上，不只縮圖。 */
   previewGuides?: { x: number[]; y: number[] };
+  /** 散字預覽（2026-10-01）：這輪的欄線、每個詞的框（虛線＝還在抽、實線＝釘住）、左緣與基線的延伸線。
+   *  專案座標；不是專案資料，確定就清掉。 */
+  scatter?: { page: Rect; gridX: number[]; boxes: (Rect & { pinned: boolean })[] };
   /** 手把（專案座標，旋轉後的真實位置），固定螢幕尺寸。
    *  無 bar＝圓點（角，等比縮放）；bar＝長條（邊，裁切）——兩種角色不同，長相就要不同。 */
   handles?: { x: number; y: number; bar?: "v" | "h" }[];
@@ -494,6 +497,29 @@ export function renderStage(
       }
     }
     for (const gy of pg.y) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(stageW, gy); ctx.stroke(); }
+    ctx.restore();
+  }
+
+  if (overlay.scatter) {
+    const sc = overlay.scatter, pg = sc.page;
+    ctx.save();
+    ctx.lineWidth = px;
+    ctx.strokeStyle = "rgba(38,153,255,0.18)";
+    for (const gx of sc.gridX) { ctx.beginPath(); ctx.moveTo(pg.x + gx, pg.y); ctx.lineTo(pg.x + gx, pg.y + pg.h); ctx.stroke(); }
+    ctx.strokeStyle = "rgba(38,153,255,0.32)";
+    for (const b of sc.boxes) {
+      ctx.beginPath();
+      ctx.moveTo(b.x, pg.y); ctx.lineTo(b.x, pg.y + pg.h);
+      ctx.moveTo(pg.x, b.y + b.h); ctx.lineTo(pg.x + pg.w, b.y + b.h);
+      ctx.stroke();
+    }
+    const pad = 6 * px;
+    for (const b of sc.boxes) {
+      ctx.strokeStyle = b.pinned ? "rgba(38,153,255,1)" : "rgba(38,153,255,0.85)";
+      ctx.lineWidth = (b.pinned ? 2.5 : 1.5) * px;
+      ctx.setLineDash(b.pinned ? [] : [6 * px, 4 * px]);
+      ctx.strokeRect(b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2);
+    }
     ctx.restore();
   }
 

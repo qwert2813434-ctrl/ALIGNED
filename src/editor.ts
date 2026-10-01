@@ -13,7 +13,7 @@ import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema"
 import { hex, resolvedFontSize, resolvedKerning } from "./core/schema";
 import { aspectFillCrop, intersects, pageIndexForX, pageRect, stageBounds } from "./core/geometry";
 import { cssFont } from "./core/fonts";
-import { verticalColumnHeightFitting, autoFitText, columnHeight, naturalSize, naturalTextSize, renderStage, textPrintLines } from "./core/render";
+import { verticalColumnHeightFitting, autoFitText, columnHeight, naturalSize, naturalTextSize, renderStage, textPrintLines, type StageOverlay } from "./core/render";
 import { ANIM_STAGGER, defaultDur, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import type { FilterAssets } from "./core/filters";
 import { drawDoodle, doodleGrowDur, speedPress, streamlinePts, packStrokes, rotatedStrokeHit, strokeHit, thinPoints, unpackStrokes, type BrushKind, type DoodleBlock , getSoftPrefs, softSnapshot } from "./core/doodle";
@@ -162,6 +162,8 @@ export class Editor {
   guidesHidden = false;
   /** 參考線產生器的預覽（虛線）——不是專案資料，換專案就清。 */
   previewGuides: { x: number[]; y: number[] } | null = null;
+  /** 散字預覽（main.ts 的散字面板設定）——不是專案資料，確定／取消就清。 */
+  scatterOverlay: StageOverlay["scatter"] | null = null;
   private dirty = true;
   private images?: Map<string, CanvasImageSource>;
   private videos?: Map<string, CanvasImageSource>;
@@ -1998,6 +2000,7 @@ export class Editor {
         viewRect: this.visibleRect(), deferStaticDoodles: true, doodlePriority: 0, ...animOpts }, {
       hideProjectGuides: this.guidesHidden,
       previewGuides: this.previewGuides ?? undefined,
+      scatter: this.scatterOverlay ?? undefined,
       // 多選時多畫一圈群組外框——手把長在它的右下角，沒有框就看不出那顆在管什麼
       selection: [
         ...this.selectionBlocks().map((b) => rotatedBounds(b.frame, b.rotation)),

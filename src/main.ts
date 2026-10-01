@@ -12,6 +12,8 @@ import { loadFonts, registerSystemFonts, registerUserFont, type DynamicFont } fr
 import { restoreStoreFonts, unresolvedNames, repairable, downloadStoreFont } from "./core/fontstore";
 import { openFontStore } from "./fontstoreui";
 import { isTextLibraryOpen, openTextLibrary, textLibraryIcon, type TextLibraryHost } from "./textlibui";
+import { startScatter, type ScatterHost } from "./scatterui";
+import { scatterWords } from "./core/scatter";
 import { TextLibraryStore, localTextLibPrefs, memoryTextLibBackend, tauriTextLibBackend } from "./textlib";
 import { canCollectText, collectCells, memoTextBlock, type TextMemo } from "./core/textmemo";
 import { initSoftPrefs, openBrushPrefs } from "./brushprefs";
@@ -1848,6 +1850,10 @@ const textLibraryHost: TextLibraryHost = {
   inApp,
   canPlace: () => !!current && !home.classList.contains("on") && !sheet.classList.contains("on"),
   place: (memo, cells) => placeTextMemo(memo, cells),
+  scatter: (memo) => {
+    startScatter(scatterHost, scatterWords(memo.body));
+    if (current) void textLibrary.markUsed(memo.id, current.name).catch(() => undefined);
+  },
   pickFolder: async () => {
     if (!inApp) return null;
     const picked = await openDialog({ directory: true, title: __("選文字庫資料夾"), defaultPath: lastDir("textLibrary") });
@@ -1876,6 +1882,108 @@ function placeTextMemo(memo: TextMemo, cells: number): void {
   commit("add");
   meta.textContent = __f("已排進第 {n} 頁", { n: page + 1 });
   void textLibrary.markUsed(memo.id, current.name).catch(() => undefined);
+}
+
+/** 散字（2026-10-01）：文字庫一篇的每一行變一個文字塊落在當頁，位置由 scatterui 管（參考線、重抽、釘住、規則）。
+ *  建字時不記復原，按「確定」才記一步——取消就整組拿掉，專案回到散字前。 */
+const scatterHost: ScatterHost = {
+  create(words) {
+    if (!current) return null;
+    const page = editor.currentPageIndex();
+    const pr = pageRect(current, page);
+    const cw = current.canvasWidth;
+    const bg = current.pageBackgroundHex?.[String(page)] ?? "FFFFFF";
+    const n = parseInt(bg.replace("#", "").slice(0, 6), 16) || 0xffffff;
+    const dark = (0.299 * (n >> 16 & 255) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) / 255 < 0.5;
+    const ids = words.map((w) => {
+      const b = baseBlock({ type: "text", text: { text: w, alignment: "leading", fontSize: Math.round(cw * 0.028),
+        colorHex: dark ? "FFFFFF" : "1A1A1A", fontWeightValue: 3, inkX: true, hugWidth: true } }, 10, 10,
+        { x: pr.x + pr.w / 2, y: pr.y + pr.h / 2 });
+      current!.blocks.push(b);
+      return b.id;
+    });
+    autoFitText(measureCtx, current);
+    editor.selectMany(ids);
+    editor.refresh();
+    return { ids, page: { x: pr.x, y: pr.y, w: pr.w, h: pr.h } };
+  },
+  frames(ids) {
+    if (!current) return null;
+    const out = ids.map((id) => current!.blocks.find((b) => b.id === id)?.frame);
+    return out.every(Boolean) ? out.map((f) => ({ x: f!.x, y: f!.y, w: f!.w, h: f!.h })) : null;
+  },
+  move(ids, origins) {
+    if (!current) return;
+    ids.forEach((id, i) => {
+      const b = current!.blocks.find((k) => k.id === id);
+      if (b && origins[i]) { b.frame.x = origins[i].x; b.frame.y = origins[i].y; }
+    });
+    editor.refresh();
+  },
+  overlay(o) { editor.scatterOverlay = o; editor.refresh(); },
+  finish(ids, keep) {
+    if (!current) return;
+    if (!keep) {
+      const gone = new Set(ids);
+      current.blocks = current.blocks.filter((b) => !gone.has(b.id));
+      editor.select(null);
+    }
+    editor.refresh();
+    scheduleThumbs();
+    commit(keep ? "scatter" : "scatter-cancel");
+  },
+};
+
+async function scatterSelfTest(full: boolean): Promise<void> {
+  if (!current) return;
+  const out: string[] = [];
+  const check = (ok: boolean, name: string) => out.push(`${ok ? "PASS" : "FAIL"} ${name}`);
+  const before = current.blocks.length;
+  const words = scatterWords("Nature grounds us.\nIt heals us.\nIt sets us free.\nCreate from here.");
+  startScatter(scatterHost, words);
+  const ids = current.blocks.slice(before).map((b) => b.id);
+  const page = pageRect(current, editor.currentPageIndex());
+  const verify = (tag: string) => {
+    const f = scatterHost.frames(ids)!;
+    check(f.length === 4, `${tag}: 4 words`);
+    check(f.every((b) => b.x >= page.x - 0.5 && b.y >= page.y - 0.5 && b.x + b.w <= page.x + page.w + 0.5 && b.y + b.h <= page.y + page.h + 0.5), `${tag}: inside page`);
+    let ov = 0;
+    for (let i = 0; i < f.length; i++) for (let j = i + 1; j < f.length; j++) {
+      const a = f[i], b = f[j];
+      if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) ov++;
+    }
+    check(ov === 0, `${tag}: no overlap (${ov})`);
+    check(f.every((b, i) => i === 0 || b.y >= f[i - 1].y), `${tag}: reading order`);
+    check(!!editor.scatterOverlay && editor.scatterOverlay.boxes.length === 4, `${tag}: preview boxes drawn`);
+    return f;
+  };
+  const f0 = verify("first");
+  check(!!document.getElementById("scatterpanel"), "panel shown");
+  if (full) {
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    const f1 = verify("space reroll");
+    check(JSON.stringify(f0) !== JSON.stringify(f1), "space moves words");
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    check(JSON.stringify(scatterHost.frames(ids)) === JSON.stringify(f0), "← restores first try");
+    const undoDepth = undoStack.length;
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    check(current.blocks.length === before && !editor.scatterOverlay && !document.getElementById("scatterpanel"), "Esc cancels: words, guides, panel gone");
+    check(undoStack.length === undoDepth, `cancel leaves no undo step (${undoDepth}→${undoStack.length})`);
+    startScatter(scatterHost, words);
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    check(current.blocks.length === before + 4 && !editor.scatterOverlay, "Enter keeps words, clears guides");
+    check(undoStack.length === undoDepth + 1, `confirm = one undo step (${undoDepth}→${undoStack.length})`);
+    undo();
+    check(current.blocks.length === before, "one undo removes the scatter");
+  }
+  const failed = out.filter((l) => l.startsWith("FAIL")).length;
+  out.push(failed ? `SCATTER FAIL ${failed}` : `SCATTER PASS ${out.length}`);
+  const pre = document.createElement("pre");
+  pre.id = "scatter-report";
+  pre.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:99;background:#fff;color:#000;font:11px monospace;padding:6px;opacity:.9";
+  pre.textContent = out.join("\n");
+  if (full) document.body.append(pre);
+  console.log(out.join("\n"));
 }
 
 /** 收進文字庫（同 iOS）：一框一篇、長文框連每排格數一起記，佔位字與庫裡已有的不收；收完打開文字庫。 */
@@ -3977,6 +4085,14 @@ function handleNativeMenu(id: string): void {
     } catch { localStorage.removeItem(DRAFT_KEY); }
   }
   // ?export=1／?new=1 ＝載入後直接開該面板（截圖驗證用，不牽動 App 的正常路徑）
+  // ?scatter=1＝開完樣本直接散字（截圖用）；?scatter=test＝黑盒自測：按鍵重抽、取消，結果寫在頁面 #scatter-report（dev 限定）
+  if (location.port === "5173" && q.has("scatter")) {
+    // 等開機流程跑完（樣本開完會再刷一次檢視器），跟真的從文字庫按「散字」同一個時機
+    await new Promise((r) => setTimeout(r, 1500));
+    try { await scatterSelfTest(q.get("scatter") === "test"); } catch (e) {
+      const pre = document.createElement("pre"); pre.id = "scatter-report"; pre.textContent = "ERROR " + String((e as Error)?.stack ?? e); document.body.append(pre);
+    }
+  }
   if (q.has("export")) {
     $<HTMLButtonElement>("#export").click();
     const m = q.get("export");

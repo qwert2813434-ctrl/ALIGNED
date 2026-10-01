@@ -21,6 +21,8 @@ export interface TextLibraryHost {
   canPlace(): boolean;
   /** 排成新的長文框（呼叫前面板已關）。 */
   place(memo: TextMemo, cellsPerRow: number): void;
+  /** 散字（2026-10-01）：每一行變一個文字塊散在當頁（呼叫前面板已關）。沒給就不出那顆鈕。 */
+  scatter?(memo: TextMemo): void;
   pickFolder(): Promise<string | null>;
   confirm(message: string): Promise<boolean>;
 }
@@ -260,7 +262,7 @@ function buildSplit(main: HTMLElement): void {
           <button class="tl-step" data-step="1" title="${__("增加")}" aria-label="${__("增加")}">＋</button>
           <span class="tl-rows"></span>
         </div>
-        <button class="tl-place"></button>
+        <div class="tl-placerow"><button class="tl-place"></button><button class="tl-scatter">${__("散字")}</button></div>
       </div>
     </div>`;
   el<HTMLInputElement>(".tl-search").addEventListener("input", (e) => {
@@ -278,6 +280,7 @@ function buildSplit(main: HTMLElement): void {
   el(".tl-copy").addEventListener("click", () => void copyAll());
   el(".tl-del").addEventListener("click", () => void deleteCurrent());
   el(".tl-place").addEventListener("click", () => void placeNow());
+  el(".tl-scatter").addEventListener("click", () => void scatterNow());
   resizeObs?.disconnect();
   resizeObs = new ResizeObserver(() => { if (mode === "grid") renderGrid(); });
   resizeObs.observe(el(".tl-grid"));
@@ -445,6 +448,9 @@ function updateButtons(): void {
   const place = el<HTMLButtonElement>(".tl-place");
   place.style.display = host.canPlace() ? "" : "none";
   place.disabled = noBody;
+  const scatter = el<HTMLButtonElement>(".tl-scatter");
+  scatter.style.display = host.canPlace() && host.scatter ? "" : "none";
+  scatter.disabled = noBody;
   el<HTMLButtonElement>(".tl-copy").disabled = !ed || (noBody && trimWS(ed.draft.title) === "");
   el<HTMLButtonElement>(".tl-del").disabled = !ed || ed.isNew;
 }
@@ -647,6 +653,16 @@ async function placeNow(): Promise<void> {
   if (!overlay) h.place(memo, n);
 }
 
+async function scatterNow(): Promise<void> {
+  const ed = editing;
+  const h = host;
+  if (!ed || !h?.scatter || !h.canPlace() || trimWS(ed.draft.body) === "") return;
+  await saveNow();
+  const memo = { ...ed.draft };
+  await close();
+  if (!overlay) h.scatter(memo);
+}
+
 async function pickFolder(): Promise<void> {
   const h = host;
   if (!h) return;
@@ -747,6 +763,10 @@ function injectStyle(): void {
   #textlib .tl-step { width: 26px; height: 26px; border-radius: 999px; border: none; cursor: pointer; font-size: 14px; line-height: 1;
     background: color-mix(in srgb, var(--ink) 9%, transparent); }
   #textlib .tl-cells { color: var(--ink); font-weight: 500; min-width: 66px; text-align: center; }
+  #textlib .tl-placerow { display: flex; gap: 8px; }
+  #textlib .tl-placerow .tl-place { flex: 1; }
+  #textlib .tl-scatter { border: none; border-radius: 10px; padding: 11px 22px; cursor: pointer; font-size: 14px; font-weight: 600;
+    background: color-mix(in srgb, var(--tl-accent) 14%, transparent); color: var(--tl-accent); }
   #textlib .tl-place { border: none; border-radius: 10px; padding: 11px; background: var(--tl-accent); color: #fff;
     font-size: 14px; font-weight: 600; cursor: pointer; }
   #textlib .tl-foot { display: flex; align-items: center; gap: 10px; padding: 9px 18px; border-top: 1px solid var(--line);
