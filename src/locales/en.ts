@@ -805,4 +805,13 @@ export const en: Record<string, string> = {
   "刪除「{name}」？iPhone、iPad 上的也會一起刪掉。": "Delete “{name}”? It will also be removed from your iPhone and iPad.",
   "瀏覽器預覽：文字庫只存在這個分頁": "Browser preview: the Text Library only lives in this tab.",
   "還沒存好，再按一次關閉會放棄這次的修改": "Not saved yet—close again to discard these edits.",
+  "AI 已加入文字（尚未自動儲存，可復原）": "AI added text (not saved yet—you can undo).",
+  "AI 已更新畫布（尚未自動儲存，可復原）": "AI updated the canvas (not saved yet—you can undo).",
+  "AI 已調整頁面，目前 {n} 頁（尚未自動儲存，可復原）": "AI adjusted the pages—now {n} pages (not saved yet—you can undo).",
+  "完成視角調整": "Done Adjusting View",
+  "已復原 AI／使用者上一步": "Undid the last AI or user step",
+  "已重做下一步": "Redid the next step",
+  "拖曳調整視角": "Drag to Adjust View",
+  "直接操作": "Direct Control",
+  "齊": "Justify",
 };
