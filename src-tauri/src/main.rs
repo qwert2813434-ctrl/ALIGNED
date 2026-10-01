@@ -2,7 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
@@ -27,6 +27,63 @@ fn aa(args: &[&str]) -> Result<(), String> {
 fn aa(_args: &[&str]) -> Result<(), String> {
     Err("這個平台還不支援 .alignproj（Apple Archive 容器）——請改用 project.json 專案資料夾".into())
 }
+
+/// 把資料夾裡每個檔的存取／修改時間刷成現在。
+/// macOS 每天 03:35 跑 dirhelper，清掉系統暫存夾裡三天沒碰的檔（CLEAN_FILES_OLDER_THAN_DAYS=3）；
+/// aa 解出來的素材帶著原本的舊時間，不刷的話專案開著過一夜，素材就從解包夾裡被清掉。
+fn touch_tree(dir: &Path) {
+    let now = SystemTime::now();
+    let times = fs::FileTimes::new().set_accessed(now).set_modified(now);
+    let Ok(rd) = fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            touch_tree(&p);
+        } else if let Ok(f) = fs::File::options().write(true).open(&p) {
+            let _ = f.set_times(times);
+        }
+    }
+}
+
+/// 存回 .alignproj 前，把「上一版有、解包夾裡卻不見了」的檔補回來，回傳補了幾個。
+/// 桌面版從不刪素材，解包夾少掉的檔只會是被系統清掉的（見 touch_tree）——
+/// 2026-09-23《研究算圖對比集》03:36 存檔就這樣丟了 10 個 mp4／png，檔案從 110 MB 掉到 55.8 MB。
+/// 只補缺的、不覆蓋現有的：先解到旁邊的暫存夾（-include-path 是前綴比對，會多解），再逐檔搬進來。
+#[cfg(target_os = "macos")]
+fn restore_missing(dir: &Path, archive: &str) -> Result<usize, String> {
+    let out = Command::new("aa").args(["list", "-i", archive, "-list-format", "json"]).output()
+        .map_err(|e| format!("呼叫 aa 失敗：{e}"))?;
+    if !out.status.success() { return Err(String::from_utf8_lossy(&out.stderr).into_owned()); }
+    let entries: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    let missing: Vec<String> = entries.iter()
+        .filter(|e| e["TYP"] == "F")
+        .filter_map(|e| e["PAT"].as_str())
+        .filter(|p| !p.is_empty() && !p.contains('\n') && !dir.join(p).exists())
+        .map(String::from)
+        .collect();
+    if missing.is_empty() { return Ok(0); }
+    let stage = PathBuf::from(format!("{}.restore", dir.to_string_lossy()));
+    let list = PathBuf::from(format!("{}.restore-list", dir.to_string_lossy()));
+    let _ = fs::remove_dir_all(&stage);
+    fs::create_dir_all(&stage).map_err(|e| e.to_string())?;
+    fs::write(&list, missing.join("\n") + "\n").map_err(|e| e.to_string())?;
+    let r = aa(&["extract", "-i", archive, "-d", &stage.to_string_lossy(),
+                 "-include-path-list", &list.to_string_lossy()]);
+    let mut n = 0;
+    if r.is_ok() {
+        for p in &missing {
+            let (from, to) = (stage.join(p), dir.join(p));
+            if let Some(parent) = to.parent() { let _ = fs::create_dir_all(parent); }
+            if fs::rename(&from, &to).is_ok() || fs::copy(&from, &to).is_ok() { n += 1; }
+        }
+    }
+    let _ = fs::remove_dir_all(&stage);
+    let _ = fs::remove_file(&list);
+    r.map(|_| n)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restore_missing(_dir: &Path, _archive: &str) -> Result<usize, String> { Ok(0) }
 
 #[derive(serde::Serialize)]
 struct LoadedProject {
@@ -54,6 +111,7 @@ fn load_project(path: String) -> Result<LoadedProject, String> {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         aa(&["extract", "-i", &path, "-d", &dir.to_string_lossy()])
             .map_err(|e| format!("解包失敗：{e}"))?;
+        touch_tree(&dir);
         let json = fs::read_to_string(dir.join("project.json")).map_err(|e| e.to_string())?;
         let assets = dir.join("assets");
         if assets.exists() { mediaserv::register_root(&assets.to_string_lossy()); }
@@ -105,9 +163,19 @@ fn save_text(path: String, contents: String) -> Result<(), String> {
 /// 第一次覆寫前留一份 .bak——存檔把人家的檔弄壞是不可原諒的。
 #[tauri::command]
 fn pack_alignproj(dir: String, dest: String) -> Result<(), String> {
+    let src = PathBuf::from(&dir);
+    let ours = src.file_name().and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("aligned-export-"));
     let bak = format!("{dest}.bak");
-    if PathBuf::from(&dest).exists() && !PathBuf::from(&bak).exists() {
-        fs::copy(&dest, &bak).map_err(|e| e.to_string())?;
+    if PathBuf::from(&dest).exists() {
+        if !PathBuf::from(&bak).exists() {
+            fs::copy(&dest, &bak).map_err(|e| e.to_string())?;
+        }
+        // 存回原檔（不是另存匯出）：先把被系統清掉的素材從上一版補回來，見 restore_missing
+        if !ours {
+            if let Err(e) = restore_missing(&src, &dest) { eprintln!("存檔前補素材失敗：{e}"); }
+            touch_tree(&src);
+        }
     }
     let tmp = format!("{dest}.tmp");
     aa(&["archive", "-d", &dir, "-o", &tmp, "-a", "lzfse"])
@@ -117,9 +185,6 @@ fn pack_alignproj(dir: String, dest: String) -> Result<(), String> {
     // 不收就一直留在 /tmp。⚠️ 條件卡死在「系統暫存夾裡、而且是 aligned-export- 開頭」——
     // 另一個呼叫點傳進來的是**已開啟專案的 root**（aligned-mac-* 或使用者資料夾），
     // 兩者都不符合，絕不會被刪到。
-    let src = PathBuf::from(&dir);
-    let ours = src.file_name().and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with("aligned-export-"));
     if ours && src.starts_with(std::env::temp_dir()) {
         let _ = fs::remove_dir_all(&src);
     }
@@ -389,6 +454,48 @@ fn open_url(url: String) -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     Command::new("open").arg(&url).status().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod save_tests {
+    use std::fs;
+
+    /// 重現 2026-09-23：開著的專案素材被系統清掉，存檔不能跟著丟。
+    #[test]
+    fn 存檔補回被清掉的素材() {
+        let root = std::env::temp_dir().join(format!("aligned-savetest-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let src = root.join("src");
+        fs::create_dir_all(src.join("assets")).unwrap();
+        fs::write(src.join("project.json"), "{}").unwrap();
+        fs::write(src.join("assets/影片 a.mp4"), "A").unwrap();
+        fs::write(src.join("assets/b.png"), "B").unwrap();
+        fs::write(src.join("assets/b.png.poster.jpg"), "P").unwrap();
+        let dest = root.join("p.alignproj").to_string_lossy().into_owned();
+        super::pack_alignproj(src.to_string_lossy().into(), dest.clone()).unwrap();
+
+        // 開檔（解包）→ 系統清掉兩個 → 使用者新加一個、改了 project.json → 存檔
+        let r = super::load_project(dest.clone()).unwrap();
+        let open = std::path::PathBuf::from(&r.root_dir);
+        fs::remove_file(open.join("assets/影片 a.mp4")).unwrap();
+        fs::remove_file(open.join("assets/b.png")).unwrap();
+        fs::write(open.join("assets/new.png"), "N").unwrap();
+        fs::write(open.join("project.json"), "{\"v\":2}").unwrap();
+        super::pack_alignproj(r.root_dir.clone(), dest.clone()).unwrap();
+
+        let back = super::load_project(dest).unwrap();
+        let d = std::path::PathBuf::from(&back.root_dir);
+        assert_eq!(fs::read_to_string(d.join("assets/影片 a.mp4")).unwrap(), "A");
+        assert_eq!(fs::read_to_string(d.join("assets/b.png")).unwrap(), "B");
+        assert_eq!(fs::read_to_string(d.join("assets/b.png.poster.jpg")).unwrap(), "P");
+        assert_eq!(fs::read_to_string(d.join("assets/new.png")).unwrap(), "N");
+        assert_eq!(back.json, "{\"v\":2}");
+        assert!(!std::path::PathBuf::from(format!("{}.restore", r.root_dir)).exists());
+        // 解包出來的檔時間要是現在，系統才不會清
+        let m = fs::metadata(d.join("assets/b.png")).unwrap().modified().unwrap();
+        assert!(m.elapsed().unwrap().as_secs() < 60);
+        for p in [&root, &open, &d] { let _ = fs::remove_dir_all(p); }
+    }
 }
 
 #[cfg(test)]
