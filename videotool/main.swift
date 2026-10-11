@@ -39,6 +39,8 @@ struct LayerSpecJSON: Decodable {
     let filter: String?
     let mask: String?
     let stroke: String?
+    /// 度、順時針為正（同 Block.rotation）；缺＝0
+    let rotation: Double?
 }
 
 struct CropJSON: Decodable { let x: Double; let y: Double; let w: Double; let h: Double }
@@ -206,7 +208,8 @@ func composePage(spec: Spec, baked: [(url: URL, layer: LayerSpecJSON)]) async th
                              // 陰影（2026-09-05）：Mac 端由 videoexport.ts 烤成整頁 still 墊在影片底下，這裡不帶
                              shadow: nil, shadowPad: 0,
                              // 貼紙邊：Mac 端由 videoexport.ts 烤成整頁 still（邊在影片下、浮雕在上，2026-10-12），這裡不帶
-                             sticker: nil))
+                             sticker: nil,
+                             rotation: CGFloat((spec0.rotation ?? 0) * .pi / 180)))
         sourceTrackIDs.append(NSNumber(value: ct.trackID))
 
         // 聲音只取最長那支（不混音）。⚠️ 一定要夾限到 masterDuration——音軌幾乎不會

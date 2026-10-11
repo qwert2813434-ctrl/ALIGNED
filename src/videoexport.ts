@@ -23,6 +23,8 @@ export interface VideoLayerSpec {
   filter?: string;
   mask?: string;
   stroke?: string;
+  /** 度、順時針為正（同 Block.rotation），合成器以框中心轉（2026-10-12） */
+  rotation?: number;
 }
 
 export interface VideoPageSpec {
@@ -273,6 +275,7 @@ export async function buildPageSpec(
       x: (b.frame.x - page.x) * S, y: (b.frame.y - page.y) * S, w, h,
       crop: { ...m.cropRect },
       filter: filterSig(m),   // c5＝代號＋參數（alignvideo 端解析）
+      ...(b.rotation ? { rotation: b.rotation } : {}),
     };
     if (mask) {
       layer.mask = `${dir}/mask-${file++}.png`;

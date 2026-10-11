@@ -5,7 +5,10 @@ import Foundation
 enum CompositeLayer {
     case still(CGImage)
     case video(trackID: CMPersistentTrackID, origin: CGPoint, mask: CGImage?, stroke: CGImage?, filterKey: String?,
-               shadow: CGImage?, shadowPad: CGFloat, sticker: VideoStickerImages?)
+               shadow: CGImage?, shadowPad: CGFloat, sticker: VideoStickerImages?,
+               /// 旋轉（2026-10-12，Mac 先用）：弧度、畫面上順時針為正（同 Block.rotation），以框中心轉。
+               /// 預設 0＝原本的行為；iOS 呼叫端目前沒帶，轉過的影片在 iOS 匯出仍是正的。
+               rotation: CGFloat = 0)
 }
 
 /// ⚠️ 要留在 CompositeLayer **之後**：Mac 的 videotool/build.sh 從 `enum CompositeLayer {`
@@ -74,20 +77,28 @@ final class PageOverlayCompositor: NSObject, AVVideoCompositing {
                 switch layer {
                 case .still(let cg):
                     composite = CIImage(cgImage: cg).composited(over: composite)
-                case .video(let trackID, let origin, let mask, let stroke, let filterKey, let shadow, let shadowPad, let sticker):
+                case .video(let trackID, let origin, let mask, let stroke, let filterKey, let shadow, let shadowPad, let sticker, let rotation):
                     if let pb = request.sourceFrame(byTrackID: trackID) {
+                        // 擺放：圖的本地中心對到框中心，中間繞框中心轉。帶 pad 的影子／貼紙邊
+                        // 本地中心多 pad。CI 是 y 向上，畫面順時針＝CI 的負角度。
+                        let clip = CIImage(cvPixelBuffer: pb).extent.size
+                        let center = CGPoint(x: origin.x + clip.width / 2, y: origin.y + clip.height / 2)
+                        func place(_ img: CIImage, pad: CGFloat) -> CIImage {
+                            let t = CGAffineTransform(translationX: -(clip.width / 2 + pad), y: -(clip.height / 2 + pad))
+                                .concatenating(CGAffineTransform(rotationAngle: -rotation))
+                                .concatenating(CGAffineTransform(translationX: center.x, y: center.y))
+                            return img.transformed(by: t)
+                        }
                         // 陰影（2026-09-05）：烤好的影子（比框大一圈 pad）先墊下去，再疊影片——
                         // 影子在框外的部分不會被 mask 裁掉，跟畫布上一樣
                         if let shadow {
-                            let sh = CIImage(cgImage: shadow).transformed(by: CGAffineTransform(
-                                translationX: origin.x - shadowPad, y: origin.y - shadowPad))
+                            let sh = place(CIImage(cgImage: shadow), pad: shadowPad)
                             composite = sh.composited(over: composite)
                         }
                         // 貼紙邊的外擴實色邊（2026-09-18）：在影片**底下**，框外那一圈不會被
                         // mask 裁掉——與陰影同一套 pad 位移，也與畫布的 .background 同順序。
                         if let sticker {
-                            let ed = CIImage(cgImage: sticker.edge).transformed(by: CGAffineTransform(
-                                translationX: origin.x - sticker.pad, y: origin.y - sticker.pad))
+                            let ed = place(CIImage(cgImage: sticker.edge), pad: sticker.pad)
                             composite = ed.composited(over: composite)
                         }
                         var frame = CIImage(cvPixelBuffer: pb)
@@ -109,13 +120,12 @@ final class PageOverlayCompositor: NSObject, AVVideoCompositing {
                         if let stroke = stroke {
                             frame = CIImage(cgImage: stroke).composited(over: frame)
                         }
-                        frame = frame.transformed(by: CGAffineTransform(translationX: origin.x, y: origin.y))
+                        frame = place(frame, pad: 0)
                         composite = frame.composited(over: composite)
                         // 斜面浮雕在影片**上面**（貼紙的厚度，不是白邊自己的）——
                         // 與畫布的 .overlay 同順序，蓋在描邊之上。
                         if let sticker, let bevel = sticker.bevel {
-                            let bv = CIImage(cgImage: bevel).transformed(by: CGAffineTransform(
-                                translationX: origin.x - sticker.pad, y: origin.y - sticker.pad))
+                            let bv = place(CIImage(cgImage: bevel), pad: sticker.pad)
                             composite = bv.composited(over: composite)
                         }
                     }
