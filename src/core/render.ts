@@ -21,6 +21,7 @@ import { applyPaper, applyPaperGPU } from "./paper";
 import { animStateAt, carouselAt, maskWipeState, revealText, type BlockAnim } from "./anim";
 import { doodleCacheGeneration, drawDoodle } from "./doodle";
 import { freeIntervals, wrapHoles } from "./textwrap";
+import { blockGradientSize, gradientCanvas, gradientInteractive, type PageGradient } from "./gradient";
 
 /** 直排的預設欄距（em）。iOS：baseline 1.5em 減掉 defaultVerticalLineSpacing 0.28em。 */
 const VERTICAL_PITCH_EM = 1.22;
@@ -177,6 +178,9 @@ function pageSig(project: Project, index: number, opts: RenderOptions, S: number
     h = fnv(`|dg:${doodleCacheGeneration()}`, h);
   }
   h = fnv(`${JSON.stringify(project.pageBackgroundHex ?? null)}`, h);
+  // 頁面漸層（2026-10-12）：這一頁的漸層＋草稿旗標（拖拉桿中烤 1/3 寬，放手要換回全尺寸，不能共用一格）
+  const pg = project.pageBackgroundGradient?.[String(index)];
+  if (pg) h = fnv(`|pg:${JSON.stringify(pg)}|${gradientInteractive()}`, h);
   for (const b of blocks) h = fnv(`|${blockSig(b, opts)}`, h);
   return String(h);
 }
@@ -333,6 +337,13 @@ export function renderPage(
   if (!opts.transparent) {
     ctx.fillStyle = hex(bg);
     ctx.fillRect(0, 0, page.w, page.h);
+    // 設計漸層（2026-10-12）：烤頁寬像素（顆粒是 1:1 設計的，iOS 同），拖拉桿中烤 1/3 寬草稿。
+    // 純色先鋪著當底——漸層不透明，只是保底（烤圖失敗也還有平均色）。
+    const pg = project.pageBackgroundGradient?.[String(index)];
+    if (pg?.stops?.length) {
+      const gw = Math.max(1, Math.round(gradientInteractive() ? page.w / 3 : page.w));
+      ctx.drawImage(gradientCanvas(pg, gw, Math.max(1, Math.round(gw * page.h / page.w))), 0, 0, page.w, page.h);
+    }
   }
   // 頁底亮暗——空欄位框的墨色依所在頁切換（iOS emptySlotPlaceholder 同款）
   const n = parseInt(bg, 16);
@@ -667,33 +678,39 @@ function drawBlock(
 
 function drawShape(ctx: CanvasRenderingContext2D, s: ShapeBlock, w: number, h: number): void {
   ctx.fillStyle = hex(s.colorHex);
+  ctx.beginPath();
   switch (s.kind) {
     case "rectangle": {
       const r = Math.min(s.cornerRadius ?? 0, Math.min(w, h) / 2);
-      ctx.beginPath();
       ctx.roundRect(0, 0, w, h, r);
-      ctx.fill();
       break;
     }
     case "ellipse":
-      ctx.beginPath();
       if (s.isCircle) {
         // 正圓：框被拉成長方形也畫短邊正圓置中（iOS ShapeBlockView 同一套防禦）
         ctx.arc(w / 2, h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);
       } else {
         ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
       }
-      ctx.fill();
       break;
     case "line": {
       // 水平膠囊，垂直置中；未設粗細時給一個跟框高綁定的預設，clamp 不溢出框。
       const t = Math.max(1, Math.min(s.lineWidth ?? Math.max(2, h * 0.5), h));
-      ctx.beginPath();
       ctx.roundRect(0, (h - t) / 2, w, t, t / 2);
-      ctx.fill();
       break;
     }
   }
+  if (s.gradient?.stops?.length && w > 0 && h > 0) {
+    // 漸層（2026-10-12）：同一個形狀當遮罩，底下鋪整框的漸層（iOS ShapeBlockView.gradientFill：
+    // 烤圖照框寬以 64 為級距、比例照框——放射漸層的圓才是圓；正圓／線條一樣是整框鋪再裁）
+    const gs = blockGradientSize(w, h);
+    ctx.save();
+    ctx.clip();
+    ctx.drawImage(gradientCanvas(s.gradient, gs.w, gs.h), 0, 0, w, h);
+    ctx.restore();
+    return;
+  }
+  ctx.fill();
 }
 
 /** 遮罩路徑。maskCornerRadius 存的是「短邊一半」的分數，strokeWidth 是短邊的分數。 */
@@ -1480,85 +1497,89 @@ function drawBodyFrame(
   drawTextBackground(ctx, t, w, h, size);
   applyTextShadow(ctx, t, size);
 
-  const holes = b.rotation === 0 ? wrapHoles(b, project.blocks) : [];
-  const m = ctx.measureText("字");
-  const natural = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent;
-  const rowH = natural * (t.lineHeightMultiple ?? 1) + (t.lineSpacing ?? 0);
-  const ascent = m.fontBoundingBoxAscent + (rowH - natural) / 2;   // 行高撐開時字垂直置中
-  const paraGap = (t.paragraphSpacingEm ?? 0) * size;
-  const minSeg = size * 1.05;      // 窄過一個字的段塞不了字
-  // 段落 → 斷行單位序列（"\n" 自成一個單位當段落界）。逐字元會剖開英文單字與
-  // 版本號，跟 iOS 對不上（見 breakUnits 的說明）
-  const units: BreakUnit[] = [];
-  t.text.split("\n").forEach((para, pi) => {
-    if (pi) units.push({ text: "\n", trail: "" });
-    units.push(...breakUnits(para));
-  });
+  const ink = (c: CanvasRenderingContext2D): void => {
+    const holes = b.rotation === 0 ? wrapHoles(b, project.blocks) : [];
+    const m = c.measureText("字");
+    const natural = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent;
+    const rowH = natural * (t.lineHeightMultiple ?? 1) + (t.lineSpacing ?? 0);
+    const ascent = m.fontBoundingBoxAscent + (rowH - natural) / 2;   // 行高撐開時字垂直置中
+    const paraGap = (t.paragraphSpacingEm ?? 0) * size;
+    const minSeg = size * 1.05;      // 窄過一個字的段塞不了字
+    // 段落 → 斷行單位序列（"\n" 自成一個單位當段落界）。逐字元會剖開英文單字與
+    // 版本號，跟 iOS 對不上（見 breakUnits 的說明）
+    const units: BreakUnit[] = [];
+    t.text.split("\n").forEach((para, pi) => {
+      if (pi) units.push({ text: "\n", trail: "" });
+      units.push(...breakUnits(para));
+    });
 
-  let y0 = 0;
-  if (!holes.length && t.verticalAlignment && t.verticalAlignment !== "top") {
-    const lines = wrap(ctx, t.text, w, kern);
-    const paras = (t.text.match(/\n/g) ?? []).length;
-    const total = lines.length * rowH + paras * paraGap;
-    y0 = t.verticalAlignment === "middle" ? (h - total) / 2 : h - total;
-  }
-
-  let i = 0;
-  let yTop = y0;
-  while (i < units.length && yTop + rowH <= h + 0.5) {
-    const segs = freeIntervals(yTop, yTop + rowH, w, holes, minSeg);
-    const widest = segs.length ? Math.max(...segs.map((s) => s.width)) : 0;
-    let endedParagraph = false;
-    for (const seg of segs) {
-      if (i >= units.length) break;
-      if (units[i].text === "\n") { i++; endedParagraph = true; break; }
-      // 先量再收：一個單位都塞不下＝這段留空，**不消耗字**（否則字會滲進洞）
-      let acc = "", pending = "", count = 0;
-      while (i + count < units.length && units[i + count].text !== "\n") {
-        const u = units[i + count];
-        const next = acc + pending + u.text;
-        if (count > 0 && lineWidth(ctx, next, kern) > seg.width) break;
-        acc = next; pending = u.trail; count++;
-      }
-      if (!count) continue;
-      let lw = lineWidth(ctx, acc, kern);     // 行尾空白不計寬
-      let consume = count;
-      if (count === 1 && lw > seg.width + 1) {
-        // 這一段塞不下這個單位。它若還窄過本行最寬的那一段，就留白讓更寬的段／下一行去接。
-        // 🔴 但**連本行最寬的段都放不下**（超長網址、長英數字串）就會永遠卡在同一個
-        // 單位上：i 不前進、yTop 一路加到框底，**這個單位以後的字整段消失**
-        // （2026-09-01 發版審查抓到的回歸——逐字元那版天生不會卡）。
-        // CoreText 這時是在字內硬斷，照做。
-        if (seg.width < widest - 0.5) continue;
-        const chars = [...units[i].text];
-        let take = 1;
-        while (take < chars.length
-               && lineWidth(ctx, chars.slice(0, take + 1).join(""), kern) <= seg.width) take++;
-        if (take < chars.length) {
-          acc = chars.slice(0, take).join("");
-          lw = lineWidth(ctx, acc, kern);
-          units[i] = { text: chars.slice(take).join(""), trail: units[i].trail };
-          consume = 0;                        // 這個單位還剩一截，下一段／下一行接著畫
-        }
-        // take 已經是整串＝連一個字元都比這段寬（字級大到爆框）：照畫讓它溢出，
-        // 但 consume 維持 1 一定要前進，否則又是同一個「後面全部不見」的死結。
-      }
-      i += consume;
-      // 段落最後一行不撐滿；只有後面仍有同段文字時才左右齊行，與書籍排版／iOS 一致。
-      const paragraphContinues = i < units.length && units[i].text !== "\n";
-      let x = seg.x;
-      if (t.alignment === "center") x = seg.x + (seg.width - lw) / 2;
-      else if (t.alignment === "trailing") x = seg.x + seg.width - lw;
-      if (t.alignment === "justified" && paragraphContinues
-          && [...acc].length > 1 && lw > seg.width * 0.55) {
-        drawJustifiedLine(ctx, acc, seg.x, yTop + ascent, seg.width, kern);
-      } else {
-        ctx.fillText(acc, x, yTop + ascent);
-      }
-      if (i < units.length && units[i].text === "\n") { i++; endedParagraph = true; break; }
+    let y0 = 0;
+    if (!holes.length && t.verticalAlignment && t.verticalAlignment !== "top") {
+      const lines = wrap(c, t.text, w, kern);
+      const paras = (t.text.match(/\n/g) ?? []).length;
+      const total = lines.length * rowH + paras * paraGap;
+      y0 = t.verticalAlignment === "middle" ? (h - total) / 2 : h - total;
     }
-    yTop += rowH + (endedParagraph ? paraGap : 0);
-  }
+
+    let i = 0;
+    let yTop = y0;
+    while (i < units.length && yTop + rowH <= h + 0.5) {
+      const segs = freeIntervals(yTop, yTop + rowH, w, holes, minSeg);
+      const widest = segs.length ? Math.max(...segs.map((s) => s.width)) : 0;
+      let endedParagraph = false;
+      for (const seg of segs) {
+        if (i >= units.length) break;
+        if (units[i].text === "\n") { i++; endedParagraph = true; break; }
+        // 先量再收：一個單位都塞不下＝這段留空，**不消耗字**（否則字會滲進洞）
+        let acc = "", pending = "", count = 0;
+        while (i + count < units.length && units[i + count].text !== "\n") {
+          const u = units[i + count];
+          const next = acc + pending + u.text;
+          if (count > 0 && lineWidth(c, next, kern) > seg.width) break;
+          acc = next; pending = u.trail; count++;
+        }
+        if (!count) continue;
+        let lw = lineWidth(c, acc, kern);     // 行尾空白不計寬
+        let consume = count;
+        if (count === 1 && lw > seg.width + 1) {
+          // 這一段塞不下這個單位。它若還窄過本行最寬的那一段，就留白讓更寬的段／下一行去接。
+          // 🔴 但**連本行最寬的段都放不下**（超長網址、長英數字串）就會永遠卡在同一個
+          // 單位上：i 不前進、yTop 一路加到框底，**這個單位以後的字整段消失**
+          // （2026-09-01 發版審查抓到的回歸——逐字元那版天生不會卡）。
+          // CoreText 這時是在字內硬斷，照做。
+          if (seg.width < widest - 0.5) continue;
+          const chars = [...units[i].text];
+          let take = 1;
+          while (take < chars.length
+                 && lineWidth(c, chars.slice(0, take + 1).join(""), kern) <= seg.width) take++;
+          if (take < chars.length) {
+            acc = chars.slice(0, take).join("");
+            lw = lineWidth(c, acc, kern);
+            units[i] = { text: chars.slice(take).join(""), trail: units[i].trail };
+            consume = 0;                        // 這個單位還剩一截，下一段／下一行接著畫
+          }
+          // take 已經是整串＝連一個字元都比這段寬（字級大到爆框）：照畫讓它溢出，
+          // 但 consume 維持 1 一定要前進，否則又是同一個「後面全部不見」的死結。
+        }
+        i += consume;
+        // 段落最後一行不撐滿；只有後面仍有同段文字時才左右齊行，與書籍排版／iOS 一致。
+        const paragraphContinues = i < units.length && units[i].text !== "\n";
+        let x = seg.x;
+        if (t.alignment === "center") x = seg.x + (seg.width - lw) / 2;
+        else if (t.alignment === "trailing") x = seg.x + seg.width - lw;
+        if (t.alignment === "justified" && paragraphContinues
+            && [...acc].length > 1 && lw > seg.width * 0.55) {
+          drawJustifiedLine(c, acc, seg.x, yTop + ascent, seg.width, kern);
+        } else {
+          c.fillText(acc, x, yTop + ascent);
+        }
+        if (i < units.length && units[i].text === "\n") { i++; endedParagraph = true; break; }
+      }
+      yTop += rowH + (endedParagraph ? paraGap : 0);
+    }
+  };
+  if (t.gradient?.stops?.length) drawGradientInk(ctx, t.gradient, w, h, size, ink);
+  else ink(ctx);
   ctx.restore();
 }
 
@@ -1632,20 +1653,69 @@ function drawText(
   drawTextBackground(ctx, t, w, h, size);
   applyTextShadow(ctx, t, size);
 
-  if (t.vertical) {
-    if (t.isBodyFrame === true) {
-      // 直排長文框＝固定容器（與橫排 drawBodyFrame 同義）：整欄放不下就不排
-      // （對齊橫排「整行放不下就停」的規矩），再裁切保底擋住殘餘墨跡。
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, 0, w, h);
-      ctx.clip();
-      drawVertical(ctx, t, w, size, kern, columnHeight(t, pageHeight), true);
-      ctx.restore();
-    } else {
-      drawVertical(ctx, t, w, size, kern, columnHeight(t, pageHeight));
-    }
-  } else drawHorizontal(ctx, t, w, h, size, kern);
+  const ink = (c: CanvasRenderingContext2D): void => {
+    if (t.vertical) {
+      if (t.isBodyFrame === true) {
+        // 直排長文框＝固定容器（與橫排 drawBodyFrame 同義）：整欄放不下就不排
+        // （對齊橫排「整行放不下就停」的規矩），再裁切保底擋住殘餘墨跡。
+        c.save();
+        c.beginPath();
+        c.rect(0, 0, w, h);
+        c.clip();
+        drawVertical(c, t, w, size, kern, columnHeight(t, pageHeight), true);
+        c.restore();
+      } else {
+        drawVertical(c, t, w, size, kern, columnHeight(t, pageHeight));
+      }
+    } else drawHorizontal(c, t, w, h, size, kern);
+  };
+  if (t.gradient?.stops?.length) drawGradientInk(ctx, t.gradient, w, h, size, ink);
+  else ink(ctx);
+}
+
+/** 漸層字的離屏墨跡層（重用，掛在隱形 host——畫字的離屏畫布必掛 DOM，見 attachedCanvas）。 */
+let _inkScratch: HTMLCanvasElement | null = null;
+const INK_MAX_PIXELS = 16_000_000;
+
+/**
+ * 漸層字（2026-10-12，iOS `textGradient`）：字形當遮罩、上面鋪漸層。
+ *
+ * 做法：同樣的字先用原色畫在離屏層（照目前的縮放倍率，不含旋轉）→ `source-atop` 把漸層鋪在框上
+ * （框外溢出的墨跡維持原色，同 iOS overlay 只蓋框內）→ 整層貼回主畫布。
+ * **陰影在貼回時才發生**：canvas 的影子取來源的 alpha、填 shadowColor，所以影子顏色不會被漸層染到；
+ * 底色在呼叫前已畫在下面——順序同 iOS（漸層字之後才疊陰影／底色）。
+ */
+function drawGradientInk(
+  ctx: CanvasRenderingContext2D, g: PageGradient, w: number, h: number, size: number,
+  ink: (c: CanvasRenderingContext2D) => void,
+): void {
+  const m = ctx.getTransform();
+  const pad = size * 1.5;                       // 墨跡會溢出框（字身、直排標點、斜體），留一圈
+  const lw = w + pad * 2, lh = h + pad * 2;
+  let k = Math.max(0.05, Math.hypot(m.a, m.b));  // 一個本地單位＝幾個裝置像素
+  if (lw * lh * k * k > INK_MAX_PIXELS) k = Math.sqrt(INK_MAX_PIXELS / (lw * lh));
+  const W = Math.max(1, Math.ceil(lw * k)), H = Math.max(1, Math.ceil(lh * k));
+  if (!_inkScratch || !_inkScratch.isConnected) _inkScratch = attachedCanvas();
+  const c = _inkScratch;
+  if (c.width < W || c.height < H) { c.width = Math.max(c.width, W); c.height = Math.max(c.height, H); }
+  const x = c.getContext("2d")!;
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  x.globalAlpha = 1;
+  x.globalCompositeOperation = "source-over";
+  x.shadowColor = "transparent";
+  x.clearRect(0, 0, W, H);
+  x.setTransform(k, 0, 0, k, pad * k, pad * k);
+  x.font = ctx.font;
+  x.fillStyle = ctx.fillStyle;
+  x.textBaseline = ctx.textBaseline;
+  x.textAlign = ctx.textAlign;
+  x.letterSpacing = ctx.letterSpacing;
+  ink(x);
+  const gs = blockGradientSize(w, h);
+  x.globalCompositeOperation = "source-atop";
+  x.drawImage(gradientCanvas(g, gs.w, gs.h), 0, 0, w, h);
+  x.globalCompositeOperation = "source-over";
+  ctx.drawImage(c, 0, 0, W, H, -pad, -pad, W / k, H / k);
 }
 
 /**

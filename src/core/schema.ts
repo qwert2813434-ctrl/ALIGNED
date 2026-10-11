@@ -17,6 +17,8 @@ export type VAlign = "top" | "middle" | "bottom";
 export type ShapeKind = "rectangle" | "ellipse" | "line";
 
 import type { BlockAnim } from "./anim";
+import type { PageGradient } from "./gradient";
+export type { PageGradient, GradientStop } from "./gradient";
 import type { DoodleBlock } from "./doodle";
 export type { DoodleBlock, DoodleStroke, BrushKind, DoodleWobble } from "./doodle";
 
@@ -53,6 +55,9 @@ export interface TextBlock {
   shadowStyle?: string;
   shadowColorHex?: string;
   backgroundColorHex?: string;
+  /** 漸層字（2026-10-12，iOS TextBlock.gradient 同名同義）：字形當遮罩鋪漸層；陰影與底色維持原色。
+   *  colorHex 不動（不懂漸層的舊版照舊用它）。⚠️ 跨平台欄位，三平台同發。 */
+  gradient?: PageGradient;
 }
 
 export interface MediaBlock {
@@ -141,6 +146,9 @@ export interface ShapeBlock {
   /** 正圓（2026-09-15，iOS ShapeBlock.isCircle 同義）：基礎仍是 ellipse，另用 optional flag 區分既有橢圓
    *  （同 maskIsCircle）。拉角維持 1:1；畫的時候以短邊正圓防禦，舊版把框拉成長方形也還是圓。 */
   isCircle?: boolean;
+  /** 漸層填色（2026-10-12，iOS ShapeBlock.gradient 同名同義）。設了＝colorHex 同步寫平均色
+   *  （舊版後備、單色預覽）；設純色＝清掉它。⚠️ 跨平台欄位，三平台同發。 */
+  gradient?: PageGradient;
 }
 
 /** 3D 物件（2026-08-16）。專案裡它永遠是「活的物件」（.glb 進 assets/，這裡只存
@@ -204,6 +212,9 @@ export interface Project {
   blocks: Block[];
   group?: string;
   pageBackgroundHex?: Record<string, string>;  // key 是頁 index 的字串 "0","1"…
+  /** 頁面底色的漸層（2026-10-12，iOS Project.pageBackgroundGradient 同名同義），鍵同 pageBackgroundHex。
+   *  設漸層時 pageBackgroundHex 同步寫平均色（舊版後備＋亮暗判斷）；設純色＝清掉該頁漸層。 */
+  pageBackgroundGradient?: Record<string, PageGradient>;
   guidesX?: number[];    // 頁內座標，每頁重複繪製
   guidesY?: number[];    // 絕對座標（y 全頁共用）
   guidesLocked?: boolean;   // 鎖住＝畫布上滑鼠碰不到（線還在、吸附照舊）

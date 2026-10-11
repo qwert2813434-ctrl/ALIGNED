@@ -15,27 +15,38 @@ export const MAX_PAGES = 20;
 const centerPage = (p: Project, i: number): number =>
   pageIndexForX(p, p.blocks[i].frame.x + p.blocks[i].frame.w / 2);
 
-/** 背景色字典重新編號。map 回 null＝那一頁被刪掉。 */
-function remapBackgrounds(p: Project, map: (page: number) => number | null): void {
-  const dict = p.pageBackgroundHex;
-  if (!dict) return;
-  const out: Record<string, string> = {};
+/** 背景字典重新編號（純色、漸層兩張表同一套；iOS removePageBackground／swapPageBackgrounds）。
+ *  map 回 null＝那一頁被刪掉。 */
+function remapDict<V>(dict: Record<string, V> | undefined, map: (page: number) => number | null): Record<string, V> | undefined {
+  if (!dict) return undefined;
+  const out: Record<string, V> = {};
   for (const [key, value] of Object.entries(dict)) {
     const k = Number(key);
     if (!Number.isFinite(k)) continue;
     const to = map(k);
     if (to != null) out[String(to)] = value;
   }
-  p.pageBackgroundHex = Object.keys(out).length ? out : undefined;
+  return Object.keys(out).length ? out : undefined;
+}
+function remapBackgrounds(p: Project, map: (page: number) => number | null): void {
+  if (p.pageBackgroundHex) p.pageBackgroundHex = remapDict(p.pageBackgroundHex, map);
+  if (p.pageBackgroundGradient) p.pageBackgroundGradient = remapDict(p.pageBackgroundGradient, map);
 }
 
-/** 在最後面加一頁。**繼承前一頁的背景色**——一整串同色頁不必逐頁重挑（iOS 的使用者回饋）。 */
+/** 新頁沿用 from 頁的底色（純色＋漸層一起；iOS Project.inheritPageBackground 同義）。 */
+export function inheritPageBackground(p: Project, from: number, to: number): void {
+  const hex = p.pageBackgroundHex?.[String(from)];
+  if (hex) p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [String(to)]: hex };
+  const g = p.pageBackgroundGradient?.[String(from)];
+  if (g) p.pageBackgroundGradient = { ...(p.pageBackgroundGradient ?? {}), [String(to)]: structuredClone(g) };
+}
+
+/** 在最後面加一頁。**繼承前一頁的背景**（純色＋漸層）——一整串同色頁不必逐頁重挑（iOS 的使用者回饋）。 */
 export function addPage(p: Project): boolean {
   if (p.pageCount >= MAX_PAGES) return false;
   const prev = p.pageCount - 1;
-  const hex = p.pageBackgroundHex?.[String(prev)];
   p.pageCount += 1;
-  if (hex) p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [String(p.pageCount - 1)]: hex };
+  inheritPageBackground(p, prev, p.pageCount - 1);
   return true;
 }
 
@@ -88,8 +99,7 @@ export function duplicatePage(p: Project, index: number, newId: () => string): b
     : b));
   p.blocks = [...p.blocks, ...copies];
   remapBackgrounds(p, (k) => (k > index ? k + 1 : k));
-  const hex = p.pageBackgroundHex?.[String(index)];
-  if (hex) p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [String(index + 1)]: hex };
+  inheritPageBackground(p, index, index + 1);
   p.pageCount += 1;
   return true;
 }

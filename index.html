@@ -166,6 +166,15 @@
   #inspector .gp svg { display: block; }
   #inspector .gp .pg { fill: var(--chrome); stroke: var(--line); }
   #inspector .gp line { stroke: #2F7CF6; stroke-width: 1; }
+  /* 設計漸層（2026-10-12）：預設縮圖沿用 .gp 卡片樣式，縮圖是渲染器真的烤出來的 */
+  #inspector .gradpre { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+  #inspector .gradpre .gp { width: 52px; }
+  #inspector .gradpre canvas { width: 44px; height: 55px; border-radius: 6px; display: block; }
+  #inspector input.huebar { -webkit-appearance: none; appearance: none; height: 10px; border-radius: 5px;
+    background: linear-gradient(to right, hsl(0 60% 70%), hsl(60 60% 70%), hsl(120 60% 70%), hsl(180 60% 70%),
+                hsl(240 60% 70%), hsl(300 60% 70%), hsl(360 60% 70%)); }
+  #inspector input.huebar::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; border: 1px solid rgba(0,0,0,.35); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
   #inspector button.icon { display: inline-flex; align-items: center; justify-content: center; padding: 4px 0; }
   #inspector button.icon svg { display: block; }
   /* 純 icon 但要有正常的點擊面積（圖層那三顆） */

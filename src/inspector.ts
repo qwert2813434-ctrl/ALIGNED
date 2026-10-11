@@ -19,6 +19,10 @@ import { GUIDE_PRESETS, MODULAR_COMBOS, defaultParams, generateGuides, replaceBa
 import type { GuideGenParams, GuidePreset } from "./core/guidegen";
 import { QUICK, QUICK_PAPERS } from "./palette";
 import { openColorPop } from "./colorpop";
+import {
+  GRADIENT_PRESETS, averageHex, cloneGradient, effectiveStops, gradientCanvas, lastUsedGradient, presetName,
+  sameGradient, setGradientInteractive, setLastUsedGradient, startingGradient, stopHexFromPicked, type PageGradient,
+} from "./core/gradient";
 
 /** 產生器每個專案「上次生成的那批」——重生成時只換這批，手動線不動。
  *  存記憶體就好：關掉 App 後舊批就當手動線看待，頂多多按一次刪除。 */
@@ -271,6 +275,7 @@ export class Inspector {
   show(project: Project | null, block: Block | null): void {
     // 換選取／重建＝上一輪填顏色的收斂 timer 作廢——它抓的是舊 block，開火只會出事
     window.clearTimeout(this.fillSettle);
+    setGradientInteractive(false);   // 漸層拉桿的草稿旗標不能卡住（拖到一半換選取＝回全尺寸）
     this.project = project;
     this.block = block;
     // .pin 是自己的捲動容器（max-height 46vh）——重畫會整個換新，捲動位置要
@@ -703,23 +708,60 @@ export class Inspector {
     this.holdRow(a);
     const i = this.hooks.layers.currentPage();
     const bgSec = this.section(__("頁面背景"));
-    this.row(bgSec, __f("第 {n} 頁", { n: i + 1 })).append(
+    // ⚠️ 按下去的當下**重新問一次是第幾頁**，不能用建面板時捕捉的 i：
+    // 點頁縮圖卡換頁不會重建這個面板，用舊的 i 就會把顏色刷到剛剛那一頁
+    // （2026-09-23 小高：「沒點選畫布時改背景色，還是沒跳過去」）。
+    const pageNow = (): string => String(this.hooks.layers.currentPage());
+    /** 選純色＝這頁不再是漸層（iOS applyPageBackground 同義） */
+    const dropGradient = (k: string): void => {
+      if (!p.pageBackgroundGradient?.[k]) return;
+      const { [k]: _gone, ...rest } = p.pageBackgroundGradient;
+      void _gone;
+      p.pageBackgroundGradient = Object.keys(rest).length ? rest : undefined;
+    };
+    /** 設漸層：pageBackgroundHex 同步寫平均色（舊版後備＋亮暗判斷，iOS applyPageGradient） */
+    const setGradient = (k: string, g: PageGradient): void => {
+      p.pageBackgroundGradient = { ...(p.pageBackgroundGradient ?? {}), [k]: g };
+      p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [k]: averageHex(g) };
+    };
+    const curGrad = p.pageBackgroundGradient?.[String(i)];
+    this.row(bgSec, __f("第 {n} 頁", { n: i + 1 })).append(this.fillTabs(!!curGrad, (on) => {
+      const k = pageNow();
+      if (on) setGradient(k, p.pageBackgroundGradient?.[k] ?? startingGradient());
+      else dropGradient(k);   // 純色＝回到目前的後備色（平均色），一步 undo
+      this.rebuild(); this.emit();
+    }));
+    if (curGrad) {
+      this.gradientEditor(bgSec, curGrad, (g) => { setGradient(pageNow(), g); this.emit(); });
+      // 全部頁套用此漸層（一步 undo）
+      this.row(bgSec, "").append(this.btn(__("全部頁套用此漸層"), () => {
+        const g = p.pageBackgroundGradient?.[pageNow()];
+        if (!g) return;
+        const avg = averageHex(g);
+        const gs: Record<string, PageGradient> = {}, hs: Record<string, string> = {};
+        for (let k = 0; k < p.pageCount; k++) { gs[String(k)] = cloneGradient(g); hs[String(k)] = avg; }
+        p.pageBackgroundGradient = gs;
+        p.pageBackgroundHex = hs;
+        this.emit();
+      }));
+      return;
+    }
+    this.row(bgSec, "").append(
       // 紙色六顆＋自訂（2026-09-05）：以前只有一顆原生選色器，點開是 WebKit 的螢光色格
       this.swatches(p.pageBackgroundHex?.[String(i)] ?? "FFFFFF", (hexNoHash) => {
-        // ⚠️ 按下去的當下**重新問一次是第幾頁**，不能用建面板時捕捉的 i：
-        // 點頁縮圖卡換頁不會重建這個面板，用舊的 i 就會把顏色刷到剛剛那一頁
-        // （2026-09-23 小高：「沒點選畫布時改背景色，還是沒跳過去」）。
-        const k = this.hooks.layers.currentPage();
-        p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [String(k)]: hexNoHash };
+        const k = pageNow();
+        dropGradient(k);
+        p.pageBackgroundHex = { ...(p.pageBackgroundHex ?? {}), [k]: hexNoHash };
         this.emit();
       }, QUICK_PAPERS),
     );
     // 一鍵把這一頁的底色刷到全部頁——輪播通常整本同一個底色，一頁一頁點是折磨
     this.row(bgSec, "").append(this.btn(__("全部頁套用"), () => {
-      const hex = p.pageBackgroundHex?.[String(this.hooks.layers.currentPage())] ?? "FFFFFF";
+      const hex = p.pageBackgroundHex?.[pageNow()] ?? "FFFFFF";
       const all: Record<string, string> = {};
       for (let k = 0; k < p.pageCount; k++) all[String(k)] = hex;
       p.pageBackgroundHex = all;
+      p.pageBackgroundGradient = undefined;   // 全部純色＝全部不是漸層（iOS applyBackgroundToAllPages）
       this.emit();
     }));
   }
@@ -1341,11 +1383,20 @@ export class Inspector {
         this.emit(true);
       }));
     }
-    this.row(s, __("顏色")).append(this.swatches(t.colorHex ?? "000000", (hex) => {
-      t.colorHex = hex;
-      t.inkColor = undefined;   // 渲染以 run 屬性優先，改色要把它清掉才吃 colorHex
-      this.emit(true);
+    // 字色：純色／漸層（2026-10-12，iOS TextEffectsSheet 同）。漸層＝t.gradient，colorHex 不動
+    this.row(s, __("顏色")).append(this.fillTabs(!!t.gradient, (on) => {
+      t.gradient = on ? (t.gradient ?? startingGradient()) : undefined;
+      this.rebuild(); this.emit();
     }));
+    if (t.gradient) {
+      this.gradientEditor(s, t.gradient, (g) => { t.gradient = g; this.emit(); });
+    } else {
+      this.row(s, "").append(this.swatches(t.colorHex ?? "000000", (hex) => {
+        t.colorHex = hex;
+        t.inkColor = undefined;   // 渲染以 run 屬性優先，改色要把它清掉才吃 colorHex
+        this.emit(true);
+      }));
+    }
 
     // ── 長文框：固定容器（會裁切、吃文繞圖），與貼字盒是兩種語意 ──
     const bs = this.section(__("長文框"), "body", true);
@@ -1438,7 +1489,17 @@ export class Inspector {
         this.emit();
       },
     ));
-    this.row(s, __("顏色")).append(this.swatches(sh.colorHex, (hex) => { sh.colorHex = hex; this.emit(); }));
+    // 填色：純色／漸層（2026-10-12，iOS ShapePanel 同）。漸層時 colorHex 寫平均色（舊版後備）；設純色清漸層
+    this.row(s, __("顏色")).append(this.fillTabs(!!sh.gradient, (on) => {
+      if (on) { sh.gradient = sh.gradient ?? startingGradient(); sh.colorHex = averageHex(sh.gradient); }
+      else sh.gradient = undefined;
+      this.rebuild(); this.emit();
+    }));
+    if (sh.gradient) {
+      this.gradientEditor(s, sh.gradient, (g) => { sh.gradient = g; sh.colorHex = averageHex(g); this.emit(); });
+    } else {
+      this.row(s, "").append(this.swatches(sh.colorHex, (hex) => { sh.colorHex = hex; sh.gradient = undefined; this.emit(); }));
+    }
     if (sh.kind === "rectangle") {
       this.row(s, __("圓角")).append(
         // 數值＋拉桿（2026-09-05 小高：「拉圓角要看得到數值，不然每次拉的不一樣大」）
@@ -2019,6 +2080,112 @@ export class Inspector {
       m.tornSeed = ((m.tornSeed ?? TORN_DEFAULTS.seed) + 1) % 9999;
       this.emit();
     }));
+  }
+
+  /** 純色／漸層分頁（頁面背景、圖形、文字三處共用）。點目前那一顆＝無操作。 */
+  private fillTabs(gradientOn: boolean, set: (gradient: boolean) => void): HTMLDivElement {
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    const solid = this.btn(__("純色"), () => { if (gradientOn) set(false); });
+    const grad = this.btn(__("漸層"), () => { if (!gradientOn) set(true); });
+    solid.classList.toggle("on", !gradientOn);
+    grad.classList.toggle("on", gradientOn);
+    seg.append(solid, grad);
+    return seg;
+  }
+
+  /**
+   * 漸層編輯器（2026-10-12，iOS GradientEditor 同內容）：預設列（含「上次」）、整體色相、色深、飽和度、
+   * 個別色點、角度（linear）／停留區／轉折長度／顆粒。
+   * apply＝把新的一份寫回模型並 emit；undo 走 commit("inspector") 的 900ms 合併——一次拖曳一步。
+   * 拖拉桿中頁面底色烤 1/3 寬草稿（setGradientInteractive），放手回全尺寸。每次放手／選定都記成「上次」。
+   */
+  private gradientEditor(parent: HTMLElement, cur: PageGradient, apply: (g: PageGradient) => void): void {
+    const g = cloneGradient(cur);
+    const box = document.createElement("div");
+    box.className = "gradbox";
+    parent.append(box);
+    const chips: HTMLButtonElement[] = [];
+    const paintChips = (): void => {
+      effectiveStops(g).forEach((st, i) => { if (chips[i]) { chips[i].style.background = `#${st.hex}`; chips[i].title = `#${st.hex}`; } });
+    };
+    const live = (): void => { setGradientInteractive(true); paintChips(); apply(cloneGradient(g)); };
+    const commit = (): void => {
+      setGradientInteractive(false);
+      paintChips();
+      const out = cloneGradient(g);
+      setLastUsedGradient(out);
+      apply(out);
+    };
+
+    // 預設列：縮圖是同一支渲染器烤的（小尺寸），不是示意圖
+    const last = lastUsedGradient();
+    const presetExact = GRADIENT_PRESETS.some((p) => sameGradient(p.gradient, cur));
+    const grid = document.createElement("div");
+    grid.className = "gradpre";
+    const thumb = (pg: PageGradient, name: string, on: boolean): void => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "gp" + (on ? " on" : "");
+      b.title = name;
+      const c = document.createElement("canvas");
+      c.width = 88; c.height = 110;
+      c.getContext("2d")!.drawImage(gradientCanvas(pg, 88, 110), 0, 0);
+      const lab = document.createElement("span");
+      lab.textContent = name;
+      b.append(c, lab);
+      b.addEventListener("click", () => {
+        const next = cloneGradient(pg);
+        setGradientInteractive(false);
+        setLastUsedGradient(next);
+        apply(next);
+        this.rebuild();
+      });
+      grid.append(b);
+    };
+    if (last) thumb(last, __("上次"), !presetExact && sameGradient(last, cur));
+    for (const p of GRADIENT_PRESETS) thumb(p.gradient, presetName(p.key), presetExact ? sameGradient(p.gradient, cur) : cur.preset === p.key && !(last && sameGradient(last, cur)));
+    box.append(grid);
+
+    // 整體色相：一拉全部色點一起轉（OKLab 繞色相、深淺不變）
+    const hue = this.numSlider(g.hue ?? 0, { min: -180, max: 180, step: 1 },
+      (v) => { g.hue = v === 0 ? undefined : v; live(); }, (v) => { g.hue = v === 0 ? undefined : v; commit(); });
+    hue.querySelector("input[type=range]")?.classList.add("huebar");
+    this.row(box, __("整體色相")).append(hue);
+    // 色深：整片一起變深／變淺，色相不動
+    const setDepth = (v: number): void => { g.depth = Math.abs(v) < 0.005 ? undefined : v; };
+    this.row(box, __("色深")).append(this.numSlider(g.depth ?? 0, { min: -0.3, max: 0.3, step: 0.01 },
+      (v) => { setDepth(v); live(); }, (v) => { setDepth(v); commit(); }));
+    // 飽和度：拉到最左＝灰階漸層（面板顯示 %，存倍率）
+    const setSat = (v: number): void => { g.saturation = Math.abs(v / 100 - 1) < 0.01 ? undefined : v / 100; };
+    this.row(box, __("飽和度")).append(this.numSlider(Math.round((g.saturation ?? 1) * 100), { min: 0, max: 200, step: 1 },
+      (v) => { setSat(v); live(); }, (v) => { setSat(v); commit(); }));
+
+    // 個別色點：顯示的是調整後的實際色；存回去扣掉整體調整
+    const sr = this.row(box, __("色點"));
+    const stops = document.createElement("div");
+    stops.className = "swgrid";
+    effectiveStops(g).forEach((st, i) => {
+      const chip = this.colorChip(st.hex, (hex) => {
+        if (!g.stops[i]) return;
+        g.stops[i] = { ...g.stops[i], hex: stopHexFromPicked(g, hex) };
+        apply(cloneGradient(g));
+      }, () => commit());
+      chips.push(chip);
+      stops.append(chip);
+    });
+    sr.append(stops);
+
+    if (g.kind !== "radial") {
+      this.row(box, __("角度")).append(this.numSlider(g.angle ?? 0, { min: 0, max: 360, step: 1 },
+        (v) => { g.angle = v; live(); }, (v) => { g.angle = v; commit(); }));
+    }
+    this.row(box, __("停留區")).append(this.numSlider(g.start, { min: 0, max: 0.9, step: 0.01 },
+      (v) => { g.start = v; live(); }, (v) => { g.start = v; commit(); }));
+    this.row(box, __("轉折長度")).append(this.numSlider(g.length, { min: 0.05, max: 1, step: 0.01 },
+      (v) => { g.length = v; live(); }, (v) => { g.length = v; commit(); }));
+    this.row(box, __("顆粒")).append(this.numSlider(g.grain, { min: 0, max: 0.12, step: 0.001 },
+      (v) => { g.grain = v; live(); }, (v) => { g.grain = v; commit(); }));
   }
 
   private row(parent: HTMLElement, label: string): HTMLDivElement {

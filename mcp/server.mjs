@@ -622,6 +622,12 @@ export async function callTool(name, args = {}) {
         project.pageBackgroundHex = { ...project.pageBackgroundHex };
         for (let i = now; i < target; i += 1) project.pageBackgroundHex[String(i)] = hex;
       }
+      // 漸層底色一起沿用（core/pages.inheritPageBackground 同義）
+      const grad = project.pageBackgroundGradient?.[String(now - 1)];
+      if (grad) {
+        project.pageBackgroundGradient = { ...project.pageBackgroundGradient };
+        for (let i = now; i < target; i += 1) project.pageBackgroundGradient[String(i)] = structuredClone(grad);
+      }
     });
   }
   if (name === "aligned_inspect_project" || name === "aligned_validate_project") {

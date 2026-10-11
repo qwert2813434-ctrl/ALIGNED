@@ -26,6 +26,7 @@ import { nextRange } from "./trim";
 import { isNewer } from "./updatecheck";
 import { intersects } from "./core/geometry";
 import { Gallery } from "./gallery";
+import { GRADIENT_PRESETS, averageHex, effectiveStops, gradientCanvas, gradientCounters, gradientPixels, type PageGradient } from "./core/gradient";
 
 const results: { name: string; ok: boolean; detail: string }[] = [];
 function check(name: string, ok: boolean, detail = ""): void {
@@ -40,6 +41,117 @@ const near = (a: number, b: number, eps = 0.01) => Math.abs(a - b) < eps;
     check(`撕紙邊換算 ${deg}°：畫布${"上右下左"[c]}＝物件${"上右下左"[l]}`, tornLocalSide(c, deg) === l, `得到 ${tornLocalSide(c, deg)}`);
   t(0, 0, 0); t(90, 1, 0); t(180, 0, 2); t(-90, 2, 3); t(270, 2, 3); t(45, 1, 0); t(44, 1, 1); t(135, 0, 2); t(360, 3, 3);
   check("撕紙邊換算：位元遮罩轉回畫布（−90°，物件下＝畫布右）", tornCanvasSides(4, -90) === 2, `得到 ${tornCanvasSides(4, -90)}`);
+}
+
+// 設計漸層（2026-10-12，iOS PageGradient.swift 移植）：放在最前面的同步段——後面的非同步案例卡住也擋不到這裡。
+// Swift 端數值由 swiftc -O 編 PageGradient.swift 實跑取得（6 預設 432×540 逐像素比對＝0 差）。
+{
+  const SWIFT_AVG: Record<string, string> = {
+    greenSide: "A5C6A7", mistBlue: "E1EDF0", amberDark: "783B17",
+    horizon: "619DC3", darkroomTop: "111011", ricePaperSun: "EFE6D8",
+  };
+  for (const p of GRADIENT_PRESETS) {
+    const a = averageHex(p.gradient);
+    check(`漸層：${p.key} 平均色與 iOS 一致`, a === SWIFT_AVG[p.key], `得到 ${a}，iOS ${SWIFT_AVG[p.key]}`);
+  }
+  const want = ["D8D4D5", "E9D1D4", "FEA2A5", "DA6156", "9C3F31", "883729"];
+  const eff = effectiveStops({ ...GRADIENT_PRESETS[0].gradient, hue: -120 }).map((x) => x.hex);
+  const ch = (h: string, i: number) => parseInt(h.slice(i * 2, i * 2 + 2), 16);
+  const within = eff.length === want.length
+    && eff.every((h, k) => [0, 1, 2].every((i) => Math.abs(ch(h, i) - ch(want[k], i)) <= 1));
+  check("漸層：綠側光 hue−120 的色點與 iOS 一致（±1）", within, eff.join(","));
+
+  const g0 = GRADIENT_PRESETS[1].gradient;
+  const A = gradientPixels(g0, 120, 150), B = gradientPixels(g0, 120, 150);
+  check("漸層：同參數同尺寸＝同一張圖（顆粒固定種子）", A.length === B.length && A.every((v, i) => v === B[i]));
+  const before = gradientCounters.hit;
+  const c1 = gradientCanvas(g0, 120, 150), c2 = gradientCanvas({ ...g0, stops: g0.stops.map((x) => ({ ...x })) }, 120, 150);
+  check("漸層：同一個漸層第二次走快取", c1 === c2 && gradientCounters.hit === before + 1, `hit=${gradientCounters.hit - before}`);
+
+  // 存檔 round-trip：三處欄位原樣穿透、型別不變、不污染 colorHex
+  const pg: PageGradient = { ...GRADIENT_PRESETS[2].gradient, hue: 30, depth: 0.1, saturation: 0.5 };
+  const proj: Project = {
+    id: "g", name: "g", createdAt: "", updatedAt: "", canvasWidth: 1080, pageHeight: 1350, pageCount: 2,
+    pageBackgroundHex: { "0": averageHex(pg) }, pageBackgroundGradient: { "0": pg },
+    blocks: [
+      { id: "s", frame: { x: 100, y: 100, w: 300, h: 200 }, rotation: 0, zIndex: 0, locked: false, opacity: 1,
+        content: { type: "shape", shape: { kind: "rectangle", colorHex: "123456", gradient: GRADIENT_PRESETS[0].gradient } } },
+      { id: "t", frame: { x: 100, y: 400, w: 300, h: 80 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,
+        content: { type: "text", text: { text: "漸層", alignment: "leading", colorHex: "000000", gradient: GRADIENT_PRESETS[3].gradient } } },
+    ],
+  };
+  const enc = JSON.parse(JSON.stringify(encodeProject(proj))) as Record<string, any>;
+  const dec = decodeProject(enc);
+  const enc2 = JSON.parse(JSON.stringify(encodeProject(dec))) as Record<string, any>;
+  const sh = enc2.blocks[0].content.shape._0, tx = enc2.blocks[1].content.text._0;
+  check("漸層：存檔 round-trip 三處欄位原樣（頁面／圖形／文字）",
+        JSON.stringify(enc2.pageBackgroundGradient) === JSON.stringify(proj.pageBackgroundGradient)
+        && JSON.stringify(sh.gradient) === JSON.stringify(GRADIENT_PRESETS[0].gradient)
+        && JSON.stringify(tx.gradient) === JSON.stringify(GRADIENT_PRESETS[3].gradient)
+        && sh.colorHex === "123456" && tx.colorHex === "000000",
+        JSON.stringify(enc2.pageBackgroundGradient?.["0"])?.slice(0, 80));
+  check("漸層：欄位型別照 iOS Codable（數字是數字、kind／ease 是字串、stops 是 {p,hex}）",
+        typeof sh.gradient.start === "number" && typeof sh.gradient.grain === "number"
+        && typeof sh.gradient.kind === "string" && typeof sh.gradient.ease === "string"
+        && sh.gradient.stops.every((x: any) => typeof x.p === "number" && typeof x.hex === "string")
+        && enc2.pageBackgroundGradient["0"].hue === 30 && !("inkColor" in tx));
+
+  // 頁面操作：漸層跟著純色一起搬（iOS inheritPageBackground／removePageBackground／swapPageBackgrounds）
+  const q = structuredClone(proj);
+  q.pageBackgroundGradient = { "0": GRADIENT_PRESETS[0].gradient, "1": GRADIENT_PRESETS[1].gradient };
+  q.pageBackgroundHex = { "0": "AAAAAA", "1": "BBBBBB" };
+  addPage(q);
+  const k = (x: Project, i: number) => x.pageBackgroundGradient?.[String(i)]?.preset;
+  check("漸層：加頁沿用上一頁的漸層", q.pageCount === 3 && k(q, 2) === "mistBlue" && q.pageBackgroundHex?.["2"] === "BBBBBB",
+        `p2=${k(q, 2)}`);
+  swapAdjacentPages(q, 0, 1);
+  check("漸層：換頁＝漸層一起換", k(q, 0) === "mistBlue" && k(q, 1) === "greenSide", `${k(q, 0)},${k(q, 1)}`);
+  deletePage(q, 0);
+  check("漸層：刪頁＝後面的漸層往前補", q.pageCount === 2 && k(q, 0) === "greenSide" && k(q, 1) === "mistBlue" && k(q, 2) === undefined,
+        `${k(q, 0)},${k(q, 1)},${k(q, 2)}`);
+  duplicatePage(q, 0, () => "dup");
+  check("漸層：複製頁＝漸層一起複製、後面往後推", q.pageCount === 3 && k(q, 0) === "greenSide" && k(q, 1) === "greenSide" && k(q, 2) === "mistBlue",
+        `${k(q, 0)},${k(q, 1)},${k(q, 2)}`);
+  check("漸層：複製出來的是獨立一份（改一頁不連動）", q.pageBackgroundGradient?.["0"] !== q.pageBackgroundGradient?.["1"]);
+
+  // 渲染：頁面底色＝1:1 那張漸層；改漸層（快取鑰匙要變）畫面就變
+  const r = (pp: Project) => renderPageCanvas(pp, 0).getContext("2d")!.getImageData(540, 675, 1, 1).data;
+  const plain: Project = { ...structuredClone(proj), blocks: [] };
+  const px = r(plain);
+  const ref = gradientPixels(pg, 1080, 1350), o = (675 * 1080 + 540) * 4;
+  check("漸層：頁面底色像素＝漸層烤圖（1:1）", [0, 1, 2].every((i) => Math.abs(px[i] - ref[o + i]) <= 1),
+        `畫=${px[0]},${px[1]},${px[2]} 烤=${ref[o]},${ref[o + 1]},${ref[o + 2]}`);
+  plain.pageBackgroundGradient = { "0": { ...pg, hue: 150 } };
+  const px2 = r(plain);
+  check("漸層：改漸層後整頁快取失效（畫面跟著變）", px2[0] !== px[0] || px2[1] !== px[1] || px2[2] !== px[2],
+        `前=${px[0]},${px[1]},${px[2]} 後=${px2[0]},${px2[1]},${px2[2]}`);
+
+  // 圖形：框內是漸層、框外不是
+  const shp: Project = { ...structuredClone(proj), pageBackgroundGradient: undefined, pageBackgroundHex: { "0": "FFFFFF" },
+    blocks: [structuredClone(proj.blocks[0])] };
+  const sx = renderPageCanvas(shp, 0).getContext("2d")!;
+  const inL = sx.getImageData(110, 200, 1, 1).data, inR = sx.getImageData(390, 200, 1, 1).data, out = sx.getImageData(50, 50, 1, 1).data;
+  check("漸層：圖形框內鋪漸層（綠側光左灰右綠）、框外仍是頁底",
+        inR[1] > inR[0] + 40 && Math.abs(inL[0] - inL[1]) < 20 && out[0] === 255 && out[1] === 255,
+        `左=${inL[0]},${inL[1]},${inL[2]} 右=${inR[0]},${inR[1]},${inR[2]} 外=${out[0]},${out[1]},${out[2]}`);
+
+  // 文字：字形吃漸層、陰影維持原色（紅影不能被藍漸層染到）
+  const txp: Project = { ...structuredClone(proj), pageBackgroundGradient: undefined, pageBackgroundHex: { "0": "FFFFFF" },
+    blocks: [{ id: "t2", frame: { x: 100, y: 300, w: 800, h: 400 }, rotation: 0, zIndex: 0, locked: false, opacity: 1,
+      content: { type: "text", text: { text: "■■", alignment: "leading", manualWidth: 800, fontSize: 300, colorHex: "000000",
+        shadowStyle: "strong", shadowColorHex: "FF0000", gradient: { ...GRADIENT_PRESETS[1].gradient, grain: 0 } } } }] };
+  const td = renderPageCanvas(txp, 0).getContext("2d")!.getImageData(0, 0, 1080, 1350).data;
+  let blueInk = 0, blackInk = 0, redShadow = 0, tinted = 0;
+  for (let i = 0; i < td.length; i += 4) {
+    const R = td[i], G = td[i + 1], Bc = td[i + 2];
+    if (Bc > 180 && R < 200 && Bc > R + 25) blueInk++;
+    if (R < 40 && G < 40 && Bc < 40) blackInk++;
+    if (R > 200 && G < 150 && Bc < 150 && Math.abs(G - Bc) < 12) redShadow++;
+    if (R > 150 && Bc > G + 30 && R > G + 30) tinted++;   // 紫＝紅影被藍染
+  }
+  check("漸層：文字字形鋪漸層、陰影維持原色",
+        blueInk > 2000 && blackInk < 50 && redShadow > 200 && tinted < redShadow * 0.05,
+        `藍墨=${blueInk} 黑墨=${blackInk} 紅影=${redShadow} 紫=${tinted}`);
 }
 
 function block(id: string, frame: Rect, rotation = 0): Block {
@@ -975,9 +1087,10 @@ async function run(): Promise<void> {
       const paper = control<HTMLSelectElement>("紙張", "select");
       paper!.value = "c4";
       paper!.dispatchEvent(new Event("change"));
-      // 頁底色 2026-09-05 起是紙色色票（不再是原生選色器）：點一顆不是白的
-      const row1 = [...host.querySelectorAll(".row")].find((r) => r.querySelector("label")?.textContent === "第 1 頁");
-      const sw = [...(row1?.querySelectorAll<HTMLButtonElement>("button.texsw:not(.plain)") ?? [])]
+      // 頁底色 2026-09-05 起是紙色色票（不再是原生選色器）：點一顆不是白的。
+      // 2026-10-12 起「第 N 頁」那列是純色／漸層分頁，色票在同一區段的下一列
+      const bgSec = [...host.querySelectorAll(".sec")].find((x) => x.querySelector("h3")?.textContent === "頁面背景");
+      const sw = [...(bgSec?.querySelectorAll<HTMLButtonElement>("button.texsw:not(.plain)") ?? [])]
         .find((k) => k.title.toUpperCase() !== "#FFFFFF");
       const pickHex = sw?.title.replace("#", "").toUpperCase() ?? "";
       sw?.click();
