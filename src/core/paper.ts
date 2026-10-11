@@ -162,7 +162,7 @@ export function applyPaper(key: string | null | undefined, img: ImageData, a: Fi
 // （b=32,s=200,α=1 它給 48、規格是 64），而且 Chrome 又是另一套＝跨引擎不一致。
 // 手抄紙（h1/h2）三層全是原生可精確表達的操作（multiply／screen／source-over），
 // 走 2D 原生合成就好，實測 |Δ|≤2/255 只在捨入。
-// 實測（WKWebView 1080×1350）：CPU 30–210ms／頁 → GPU ≤3ms／頁。
+// 實測（WKWebView 1080×1350）：CPU 30–210ms／頁 → GPU ≤3ms／頁（2026-10-12 預乘化後，編輯畫布兩頁播放 12.4→4.8ms／格）。
 
 // WebGL 單例（lazy）：一張玻璃畫布重複用，換頁只換紋理與 uniform
 interface PaperGL {
@@ -178,8 +178,11 @@ function initPaperGL(): PaperGL | null {
   if (paperGL !== undefined) return paperGL;
   try {
     const canvas = document.createElement("canvas");
-    // premultipliedAlpha:false＝drawImage 拿到的就是著色器寫的直通 alpha 值
-    const gl = canvas.getContext("webgl", { premultipliedAlpha: false, alpha: true,
+    // premultipliedAlpha:true（2026-10-12 卡頓輪）：WebKit 的 2D 畫布底層本來就是預乘，
+    // 上傳時要它「還原直通 alpha」、畫回時再預乘一次，這兩趟格式轉換佔一頁 9ms 的大半。
+    // 改成兩端都吃預乘、著色器自己除回直通算紙再乘回去：WKWebView 實測一頁 9.3→4.0ms，
+    // 不透明像素數學逐位相同（a=1），只有反鋸齒邊緣差捨入。
+    const gl = canvas.getContext("webgl", { premultipliedAlpha: true, alpha: true,
                                             antialias: false, depth: false, stencil: false })!;
     // 🔴 context lost 一定要處理：丟了之後每個 GL 呼叫都靜靜 no-op，畫布變全透明，
     // 而下面是用 `copy` 把它整張蓋回頁面——結果是**整頁被擦成空白，還存進快取**。
@@ -208,8 +211,9 @@ void main(){
   // 統一用「頂端起算」的像素座標：跟 CPU 的 (x,y) 與 (x&255,y&255) 一一對齊。
   // gl_FragCoord 原點在左下，翻 y 一次；紋理不翻著上傳（v=0＝影像第一列）。
   vec2 px = vec2(gl_FragCoord.x, uSize.y - gl_FragCoord.y);
-  vec4 page = texture2D(uPage, px / uSize);
-  vec3 v = page.rgb * uTint;                       // multiply 紙色（無 tint＝(1,1,1)）
+  vec4 page = texture2D(uPage, px / uSize);        // 預乘進來
+  vec3 v = page.a > 0. ? page.rgb / page.a : vec3(0.);
+  v = v * uTint;                       // multiply 紙色（無 tint＝(1,1,1)）
   v = 1. - (1. - v) * (1. - uLift);                // screen 抬黑
   vec4 f = texture2D(uFiber, px / uFiberSize);     // 貼片 REPEAT＝CPU 的 x&255
   vec3 outc;
@@ -219,7 +223,7 @@ void main(){
   } else {
     outc = mix(v, f.rgb, f.a * uFiberAlpha);       // 手抄紙：CPU 的直接 alpha 合成同式
   }
-  gl_FragColor = vec4(outc, page.a);
+  gl_FragColor = vec4(outc * page.a, page.a);     // 預乘出去（context 是 premultipliedAlpha）
 }`);
     gl.compileShader(fs);
     const pr = gl.createProgram()!;
@@ -269,6 +273,8 @@ function fiberTexture(g: PaperGL, key: string, a: FilterAssets): WebGLTexture | 
   const { gl } = g;
   const tex = gl.createTexture()!;
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tex);
+  // 頁面上傳開著預乘（applyPaperGPU），這張是 r＝灰階、a＝強度的資料，不能被乘掉
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, px);
   for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST],
                         [gl.TEXTURE_WRAP_S, gl.REPEAT], [gl.TEXTURE_WRAP_T, gl.REPEAT]] as const) {
@@ -352,7 +358,7 @@ export function applyPaperGPU(ctx: CanvasRenderingContext2D, key: string | null 
   gl.uniform1f(g.uFiberAlpha, hm ? hm.alpha : 1);
   gl.uniform2f(g.uFiberSize, hm ? W : 256, hm ? H : 256);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);   // 不翻：著色器自己以頂端起算 y
-  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);    // 照 2D 畫布原樣（預乘）上傳，免轉換
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ctx.canvas);
   gl.uniform3f(g.uTint, p.tint?.[0] ?? 1, p.tint?.[1] ?? 1, p.tint?.[2] ?? 1);
   gl.uniform1f(g.uLift, p.lift);
@@ -360,7 +366,7 @@ export function applyPaperGPU(ctx: CanvasRenderingContext2D, key: string | null 
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   // 這一趟中途丟掉的話 g.canvas 是全透明的，蓋上去＝整頁被擦白，寧可退 CPU 重畫
   if (gl.isContextLost()) { paperGL = ++paperGLLost >= 3 ? null : undefined; return false; }
-  // 畫回 2D：copy＝整張置換（連 alpha），著色器已保留原 alpha 通道
+  // 畫回 2D：copy＝整張置換（連 alpha），著色器已保留原 alpha 通道（預乘對預乘，免轉換）
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = "copy";

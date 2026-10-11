@@ -768,9 +768,9 @@ export function naturalSize(img: CanvasImageSource): { w: number; h: number } {
  * 回 null＝這個 block 沒有遮罩／沒有外框。
  */
 export function maskAndStrokeCanvases(
-  m: MediaBlock, w: number, h: number,
-): { mask: HTMLCanvasElement | null; stroke: HTMLCanvasElement | null } {
-  const has = m.maskShape != null || (m.maskCornerRadius ?? 0) > 0;
+  m: MediaBlock, w: number, h: number, matte?: CanvasImageSource,
+): { mask: HTMLCanvasElement | null; stroke: HTMLCanvasElement | null; sil: HTMLCanvasElement | null } {
+  const has = m.maskShape != null || (m.maskCornerRadius ?? 0) > 0 || !!matte;
   // 與 drawFrameStroke 同一條 1px 下限——同一道描邊，畫布上看得見、匯出的影片裡
   // 就不能變成半畫素淡線（兩處要一致，改一邊必改另一邊）
   const rawSw = (m.strokeWidth ?? 0) * Math.min(w, h);
@@ -784,6 +784,24 @@ export function maskAndStrokeCanvases(
     c.fillStyle = "#ffffff";
     maskPath(c, m, w, h);
     c.fill();
+    if (matte) {
+      // 去背（2026-10-12 補）：畫布上 drawMedia 對影片即時影格也套同一張遮罩，匯出以前漏了。
+      // 裁切對齊同 drawMedia：哨兵值對遮罩自己 aspect-fill，手動裁過就套同一個 cropRect。
+      const { w: mw, h: mh } = naturalSize(matte);
+      const mc = (m.cropRect.x === 0 && m.cropRect.y === 0 && m.cropRect.w === 1 && m.cropRect.h === 1)
+        ? aspectFillCrop(mw, mh, w, h)
+        : m.cropRect;
+      c.globalCompositeOperation = "destination-in";
+      c.drawImage(matte, mc.x * mw, mc.y * mh, mc.w * mw, mc.h * mh, 0, 0, mask.width, mask.height);
+      c.globalCompositeOperation = "source-over";
+    }
+  }
+  // 貼紙邊的剪影取**撕紙邊之前**（同 drawMedia）：先留一份
+  let sil: HTMLCanvasElement | null = null;
+  if (mask) {
+    sil = document.createElement("canvas");
+    sil.width = mask.width; sil.height = mask.height;
+    sil.getContext("2d")!.drawImage(mask, 0, 0);
   }
   if (sw > 0 && m.strokeHex) {
     stroke = document.createElement("canvas");
@@ -824,7 +842,26 @@ export function maskAndStrokeCanvases(
       sc.globalCompositeOperation = "source-over";
     }
   }
-  return { mask, stroke };
+  return { mask, stroke, sil };
+}
+
+/** 影片匯出用的貼紙邊（2026-10-12）：剪影 w×h（白＝留；null＝整個框）→ 邊／浮雕兩張烤圖，
+ *  各比框大 pad。畫布那條（stickerEdge）同一套做法，只是直接照匯出尺寸烤、不進快取。 */
+export function stickerEdgeCanvases(
+  m: MediaBlock, sil: HTMLCanvasElement | null, w: number, h: number,
+): { edge: HTMLCanvasElement; bevel: HTMLCanvasElement | null; pad: number } | null {
+  if (!((m.matteEdgeWidth ?? 0) > 0)) return null;
+  let src = sil;
+  if (!src) {
+    src = document.createElement("canvas");
+    src.width = Math.round(w); src.height = Math.round(h);
+    const g = src.getContext("2d")!;
+    g.fillStyle = "#fff"; g.fillRect(0, 0, src.width, src.height);
+  }
+  const r = (m.matteEdgeWidth ?? 0) * Math.min(w, h);
+  const stk = stickerEdge(src, Math.round(w), Math.round(h), r, hex(m.matteEdgeHex, "FFFFFF"),
+                          m.matteEdgeBevel ?? 0, null);
+  return { ...stk, pad: Math.ceil(r) + 2 };
 }
 
 /** 大圖的中解析度替身（2026-09-05 第二批卡頓「Mac 不去背大圖每幀縮整張」）：12MP 原圖每次重切
@@ -1027,11 +1064,11 @@ function bevelLayer(E: HTMLCanvasElement, band: number, strength: number): HTMLC
  */
 function stickerEdge(
   sil: CanvasImageSource, w: number, h: number, r: number, color: string,
-  bevel: number, key: string,
+  bevel: number, key: string | null,   // null＝一次性（影片匯出），不進快取
 ): Sticker {
-  const cached = _edgeCache.get(key);
+  const cached = key ? _edgeCache.get(key) : undefined;
   if (cached) {
-    _edgeCache.delete(key); _edgeCache.set(key, cached);   // 命中移到尾端＝LRU
+    _edgeCache.delete(key!); _edgeCache.set(key!, cached);   // 命中移到尾端＝LRU
     renderCounters.edgeHit++;
     return cached;
   }
@@ -1076,6 +1113,7 @@ function stickerEdge(
     bevel: bevel > 0 ? bevelLayer(out, Math.max(1, r * 0.15), bevel) : null,
   };
   // 8 張＝與 iOS 的 countLimit 一致；一組（邊＋浮雕）約 9 MB，天花板 70 MB 上下
+  if (!key) return made;
   if (_edgeCache.size >= 8) _edgeCache.delete(_edgeCache.keys().next().value as string);
   _edgeCache.set(key, made);
   return made;

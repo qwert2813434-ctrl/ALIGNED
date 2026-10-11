@@ -7,7 +7,7 @@
 import { Editor } from "./editor";
 import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema";
 import { renderAllPages } from "./core/export";
-import { autoFitText, justifiedGlyphX, maskAndStrokeCanvases, renderCounters, renderPageCanvas, renderStage, snugTextWidth, textPrintLines } from "./core/render";
+import { autoFitText, justifiedGlyphX, maskAndStrokeCanvases, renderCounters, renderPageCanvas, renderStage, snugTextWidth, stickerEdgeCanvases, textPrintLines } from "./core/render";
 import { doodleCounters, drawDoodle, drawDoodleUncached, rotatedStrokeHit, type DoodleBlock } from "./core/doodle";
 import { applyRiso, filterSig, parseRisoSig, RISO_DEFAULTS, splitSig, applyAdjust, isParamSig } from "./core/filters";
 import { tornCanvases, tornOf, tornCanvasSides, tornLocalSide } from "./core/tornedge";
@@ -3203,6 +3203,20 @@ async function run(): Promise<void> {
     check("撕紙邊：影片 mask 角落也是撕掉的",
           vg.getImageData(0, 0, 1, 1).data[3] === 0
           && vg.getImageData(vm!.width >> 1, vm!.height >> 1, 1, 1).data[3] === 255);
+    // 影片匯出的去背（2026-10-12）：遮罩併進 mask——遮罩左半留、右半去，mask 照樣
+    const half = document.createElement("canvas"); half.width = 60; half.height = 40;
+    { const hg = half.getContext("2d")!; hg.fillStyle = "#fff"; hg.fillRect(0, 0, 30, 40); }
+    const { mask: mm, sil: ms } = maskAndStrokeCanvases(bare, 300, 200, half);
+    const mg = mm!.getContext("2d")!;
+    check("去背：影片匯出 mask 吃去背（左留右去）、剪影同形",
+          mg.getImageData(60, 100, 1, 1).data[3] === 255 && mg.getImageData(240, 100, 1, 1).data[3] === 0
+          && !!ms && ms.getContext("2d")!.getImageData(240, 100, 1, 1).data[3] === 0);
+    // 影片匯出的貼紙邊：邊比框大 pad、框外一圈有色；沒開就是 null
+    const se = stickerEdgeCanvases({ ...bare, matteEdgeWidth: 0.04, matteEdgeBevel: 0.6 }, null, 300, 200);
+    check("貼紙邊：影片匯出烤出邊＋浮雕、框外有邊",
+          !!se && !!se.bevel && se.edge.width === 300 + se.pad * 2
+          && se.edge.getContext("2d")!.getImageData(se.pad - 3, se.pad + 100, 1, 1).data[3] > 200
+          && stickerEdgeCanvases(bare, null, 300, 200) === null);
     // 存檔 round-trip：riso/torn 欄位原樣穿透
     const proj = project([]);
     proj.blocks.push({ id: "x", frame: { x: 0, y: 0, w: 100, h: 100 }, rotation: 0, zIndex: 1, locked: false, opacity: 1,

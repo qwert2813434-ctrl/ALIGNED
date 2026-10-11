@@ -11,7 +11,7 @@ import type { Block, Project } from "./core/schema";
 import { ANIM_STAGGER, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import { pageRect } from "./core/geometry";
 import { applyFilter , filterSig } from "./core/filters";
-import { maskAndStrokeCanvases, renderPageCanvas, shadowOf, type RenderOptions } from "./core/render";
+import { maskAndStrokeCanvases, renderPageCanvas, shadowOf, stickerEdgeCanvases, type RenderOptions } from "./core/render";
 import { toBlob } from "./core/export";
 import { hiddenHost } from "./videopool";
 
@@ -245,7 +245,28 @@ export async function buildPageSpec(
     if (b.content.type !== "video") continue;
     const m = b.content.media;
     const w = roundEven(b.frame.w * S), h = roundEven(b.frame.h * S);
-    const { mask, stroke } = maskAndStrokeCanvases(m, w, h);
+    // 去背遮罩（2026-10-12）：畫布對影片每格套同一張靜態遮罩，匯出併進 mask 一起交給合成器
+    const matte = m.matteFileName
+      ? deps.renderOpts.mattes?.get(`matte:${m.matteFileName}${m.matteInverted ? "!" : ""}`)
+      : undefined;
+    const { mask, stroke, sil } = maskAndStrokeCanvases(m, w, h, matte);
+    // 貼紙邊（2026-10-12，1.3.7 起漏的）：邊墊影片下、浮雕疊影片上（同 drawWithEdge）。
+    // 剪影是靜的，所以照陰影的做法烤成整頁透明 still——合成器零改動。
+    const stk = stickerEdgeCanvases(m, sil, w, h);
+    const x0 = (b.frame.x - page.x) * S, y0 = (b.frame.y - page.y) * S;
+    const pw = Math.round(page.w * S), ph = Math.round(page.h * S);
+    /** 以物件中心為軸、帶旋轉，把一張比框大 pad 的烤圖畫成整頁 still */
+    const pageStill = async (img: HTMLCanvasElement, pad: number, name: string): Promise<void> => {
+      const c = document.createElement("canvas");
+      c.width = pw; c.height = ph;
+      const g = c.getContext("2d")!;
+      g.translate(x0 + w / 2, y0 + h / 2);
+      if (b.rotation) g.rotate((b.rotation * Math.PI) / 180);
+      g.drawImage(img, -w / 2 - pad, -h / 2 - pad, w + pad * 2, h + pad * 2);
+      const path = `${dir}/${name}-${file++}.png`;
+      await deps.savePng(path, await pngBase64(c));
+      layers.push({ type: "still", path });
+    };
     const layer: VideoLayerSpec = {
       type: "video",
       path: deps.assetPath(m.assetFileName),
@@ -261,18 +282,18 @@ export async function buildPageSpec(
     // alignvideo 只認 still／video 兩種圖層，這樣一張 PNG 就把事情做完，合成器零改動。
     const sh = shadowOf(m);
     if (sh) {
-      const pw = Math.round(page.w * S), ph = Math.round(page.h * S);
       const sc = document.createElement("canvas");
       sc.width = pw; sc.height = ph;
       const g = sc.getContext("2d")!;
-      const x0 = (b.frame.x - page.x) * S, y0 = (b.frame.y - page.y) * S;
       const minSide = Math.min(w, h);
       const ch = (i: number) => parseInt(sh.hex.slice(i, i + 2), 16);
-      // 剪影：有遮罩畫遮罩（白＝留），沒有就是整個框
-      const sil = document.createElement("canvas");
-      sil.width = w; sil.height = h;
-      const sg = sil.getContext("2d")!;
-      if (mask) sg.drawImage(mask, 0, 0, w, h);
+      // 剪影：有貼紙邊就照邊落（同畫布 drawWithEdge，只落一次）；否則有遮罩畫遮罩（白＝留），沒有就是整個框
+      const ep = stk ? stk.pad : 0;
+      const shSil = document.createElement("canvas");
+      shSil.width = w + ep * 2; shSil.height = h + ep * 2;
+      const sg = shSil.getContext("2d")!;
+      if (stk) sg.drawImage(stk.edge, 0, 0, shSil.width, shSil.height);
+      else if (mask) sg.drawImage(mask, 0, 0, w, h);
       else { sg.fillStyle = "#fff"; sg.fillRect(0, 0, w, h); }
       g.save();
       g.translate(x0 + w / 2, y0 + h / 2);
@@ -280,20 +301,23 @@ export async function buildPageSpec(
       g.shadowColor = `rgba(${ch(1)},${ch(3)},${ch(5)},${sh.opacity})`;
       g.shadowBlur = sh.blur * minSide * 2;
       g.shadowOffsetX = sh.dx * minSide; g.shadowOffsetY = sh.dy * minSide;
-      g.drawImage(sil, -w / 2, -h / 2);
+      g.drawImage(shSil, -w / 2 - ep, -h / 2 - ep);
       g.shadowColor = "transparent";
       g.globalCompositeOperation = "destination-out";
-      g.drawImage(sil, -w / 2, -h / 2);
+      g.drawImage(shSil, -w / 2 - ep, -h / 2 - ep);
       g.restore();
       const path = `${dir}/shadow-${file++}.png`;
       await deps.savePng(path, await pngBase64(sc));
       layers.push({ type: "still", path });
     }
+    if (stk) await pageStill(stk.edge, stk.pad, "edge");
     if (stroke) {
       layer.stroke = `${dir}/stroke-${file++}.png`;
       await deps.savePng(layer.stroke, await pngBase64(stroke));
     }
     layers.push(layer);
+    // 浮雕是整張貼紙的厚度，蓋在影片上面（同畫布 drawWithEdge）
+    if (stk?.bevel) await pageStill(stk.bevel, stk.pad, "bevel");
     prev = idx;
   }
   await still(prev, onPage.length, false);

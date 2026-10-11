@@ -205,8 +205,7 @@ func composePage(spec: Spec, baked: [(url: URL, layer: LayerSpecJSON)]) async th
                              filterKey: spec0.filter,
                              // 陰影（2026-09-05）：Mac 端由 videoexport.ts 烤成整頁 still 墊在影片底下，這裡不帶
                              shadow: nil, shadowPad: 0,
-                             // 貼紙邊（2026-09-18 iOS 在合成器裡加的）：Mac 的 videoexport.ts 還沒送這層，
-                             // 所以 Mac 輸出 mp4 仍沒有影片的貼紙邊（1.3.7 起同樣）——下一版補，走 still 圖層即可
+                             // 貼紙邊：Mac 端由 videoexport.ts 烤成整頁 still（邊在影片下、浮雕在上，2026-10-12），這裡不帶
                              sticker: nil))
         sourceTrackIDs.append(NSNumber(value: ct.trackID))
 
