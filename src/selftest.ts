@@ -5,6 +5,7 @@
 // devicePixelRatio、view 變換），純函式測試完全碰不到。這頁跑 headless Chrome 也能過。
 
 import { Editor } from "./editor";
+import { animStateAt, collageApply, collagePermutation, collagePlan, collageTail, timelineCycle, type AnimState, type CollagePlan } from "./core/anim";
 import type { Block, MediaBlock, Project, Rect, TextBlock } from "./core/schema";
 import { renderAllPages } from "./core/export";
 import { autoFitText, justifiedGlyphX, maskAndStrokeCanvases, renderCounters, renderPageCanvas, renderStage, snugTextWidth, stickerEdgeCanvases, textPrintLines } from "./core/render";
@@ -24,7 +25,7 @@ import { videoCullBounds } from "./videopool";
 import { rotatedBounds } from "./core/align";
 import { nextRange } from "./trim";
 import { isNewer } from "./updatecheck";
-import { intersects } from "./core/geometry";
+import { intersects, pageRect } from "./core/geometry";
 import { Gallery } from "./gallery";
 import { GRADIENT_PRESETS, averageHex, effectiveStops, gradientCanvas, gradientCounters, gradientPixels, type PageGradient } from "./core/gradient";
 
@@ -3383,6 +3384,56 @@ async function run(): Promise<void> {
     check("貼紙邊：存檔 round-trip 欄位原樣",
           em?.matteEdgeWidth === 0.05 && em?.matteEdgeHex === "FF0000" && em?.matteEdgeBevel === 0.6,
           JSON.stringify({ w: em?.matteEdgeWidth, x: em?.matteEdgeHex, b: em?.matteEdgeBevel }));
+  }
+
+  // ── 拼貼出場（2026-10-17）：切入硬切＋尾段（隨機換位→回原位→倒序退場）────────
+  {
+    const mk = (): Project => ({
+      ...newProject("拼貼", "4:5", false, 1, "collage-1"), animStagger: 0.2, animHold: 1, animShuffle: 2, animExit: "reverse",
+      blocks: ["a", "b", "c"].map((id, i): Block => ({
+        id, frame: { x: 100 + i * 300, y: 200 + i * 100, w: 200, h: 100 }, rotation: 0, zIndex: i, opacity: 1, locked: false,
+        anim: { kind: "cut", dur: 0, delay: i * 0.2 },
+        content: { type: "shape", shape: { kind: "rectangle", colorHex: "000000" } },
+      })),
+    });
+    const p = mk();
+    const page = pageRect(p, 0);
+    const st = (id: string, t: number, c?: CollagePlan): AnimState => {
+      const b = p.blocks.find((k) => k.id === id)!;
+      const s = animStateAt(b.anim, t, b.frame, page);
+      return c ? collageApply(c, s, b.id, b.frame, t) : s;
+    };
+    check("切入：到 delay 前完全不見、到點整個出現（秒數 0 也要等 delay）",
+          st("b", 0.1).opacity === 0 && st("b", 0.2).opacity === 1 && st("b", -0.5).opacity === 0,
+          `0.1→${st("b", 0.1).opacity}　0.2→${st("b", 0.2).opacity}`);
+    const c = collagePlan(p)!;
+    check("拼貼：尾段長度＝換位 2×2 拍＋回原位 2 拍＋退場 3 拍（0.2 秒一拍）",
+          near(collageTail(c), (4 + 2 + 3) * 0.2), `tail=${collageTail(c)}`);
+    const tl = timelineCycle(p.blocks.map((b) => b.anim!), [], 1, 0.2, 0, collageTail(c));
+    check("拼貼：時間軸＝進場 0.4＋停留 1＋尾段 1.8＋空拍 0.2", near(tl.cycle, 3.4) && near(tl.tailStart, 1.4),
+          `cycle=${tl.cycle} tailStart=${tl.tailStart}`);
+    c.tailStart = tl.tailStart;
+    const perm = collagePermutation(3, 1), perm2 = collagePermutation(3, 1), perm3 = collagePermutation(3, 2);
+    check("拼貼：洗牌固定雜湊（同 seed 同結果、不准原位、是排列）",
+          JSON.stringify(perm) === JSON.stringify(perm2) && !perm.every((v, i) => v === i)
+          && [...perm].sort().join() === "0,1,2" && [...perm3].sort().join() === "0,1,2", `${perm} / ${perm3}`);
+    const sA = st("a", 1.5, c), sB = st("b", 1.5, c);
+    const moved = (sA.dx !== 0 || sA.dy !== 0 || sB.dx !== 0 || sB.dy !== 0);
+    const landing = p.blocks.map((b) => { const q = st(b.id, 1.5, c); return `${b.frame.x + 100 + q.dx},${b.frame.y + 50 + q.dy}`; }).sort().join("|");
+    const homes = p.blocks.map((b) => `${b.frame.x + 100},${b.frame.y + 50}`).sort().join("|");
+    check("拼貼：換位拍＝物件互換到彼此的中心（落點集合不變、至少有人動）", moved && landing === homes, landing);
+    check("拼貼：停留期間不動、回原位拍回到原位",
+          st("a", 1.0, c).dx === 0 && st("a", 2.3, c).dx === 0 && st("a", 2.3, c).opacity === 1, `dx@2.3=${st("a", 2.3, c).dx}`);
+    // 退場從 1.4+0.8+0.4=2.6 起：c（最後進）先走，再 b，再 a
+    check("拼貼：倒序退場＝後進先走",
+          st("c", 2.61, c).opacity === 0 && st("b", 2.61, c).opacity === 1 && st("c", 2.59, c).opacity === 1
+          && st("b", 2.81, c).opacity === 0 && st("a", 2.81, c).opacity === 1 && st("a", 3.01, c).opacity === 0,
+          `c@2.61=${st("c", 2.61, c).opacity} b@2.81=${st("b", 2.81, c).opacity} a@3.01=${st("a", 3.01, c).opacity}`);
+    const off = mk(); delete off.animShuffle; delete off.animExit;
+    check("拼貼：沒開＝沒有計畫、時間軸與從前一樣",
+          collagePlan(off) === undefined && near(timelineCycle(off.blocks.map((b) => b.anim!), [], 1, 0.2).cycle, 1.6));
+    check("拼貼：存檔 round-trip 欄位原樣",
+          (() => { const r = decodeProject(JSON.parse(JSON.stringify(encodeProject(p)))); return r.animShuffle === 2 && r.animExit === "reverse"; })());
   }
 
   const pass = results.filter((r) => r.ok).length;

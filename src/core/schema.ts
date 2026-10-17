@@ -203,6 +203,10 @@ export interface Project {
   animHold?: number;
   /** 「陸續出現」排順序時，每個元件之間的間隔秒數（未設＝ANIM_STAGGER）。 */
   animStagger?: number;
+  /** 拼貼尾段（2026-10-17）：疊滿停留後「隨機換位」的次數（未設／0＝不換）。iOS 同欄位。 */
+  animShuffle?: number;
+  /** 拼貼尾段："reverse"＝最後照進場相反順序一個一個切掉（未設＝不退場）。iOS 同欄位。 */
+  animExit?: string;
   name: string;
   createdAt: string;
   updatedAt: string;

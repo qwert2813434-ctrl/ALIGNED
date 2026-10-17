@@ -1506,6 +1506,7 @@ const inspector = new Inspector($<HTMLElement>("#inspector"), {
   // 出場動畫——面板選了效果就在畫布上循環播放，不必匯出
   playAnim: (b) => editor.playAnim(b),
   sequenceAll: (b) => editor.sequenceCurrentPage(b),
+  collageAll: (b) => editor.collageCurrentPage(b),
   clearAnims: (b) => editor.clearCurrentPageAnims(b),
   reorder: (b, dir) => {
     if (!current) return;

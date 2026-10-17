@@ -156,6 +156,8 @@ export interface InspectorHooks {
   sequenceAll?: (from?: Block) => void;
   /** 一鍵把整頁的出場動畫清掉（陸續出現的反操作）。 */
   clearAnims?: (from?: Block) => void;
+  /** 一鍵拼貼出場（切入＋隨機換位＋倒序退場），排完自動播一次。 */
+  collageAll?: (from?: Block) => void;
   remove: (block: Block) => void;
   /** 空欄位填圖／既有媒體換檔（開選檔框、複製進 assets、必要時轉型 image↔video）。 */
   fillMedia: (block: Block) => void;
@@ -699,6 +701,7 @@ export class Inspector {
     const a = this.section(__("出場動畫"));
     this.row(a, "").append(
       this.btn(__("陸續出現"), () => { this.hooks.sequenceAll?.(); this.rebuild(); this.emit(); }),
+      this.btn(__("拼貼出場"), () => { this.hooks.collageAll?.(); this.rebuild(); this.emit(); }),
       this.btn(__("移除動畫"), () => { this.hooks.clearAnims?.(); this.rebuild(); this.emit(); }),
     );
     this.row(a, __("間隔")).append(
@@ -706,6 +709,13 @@ export class Inspector {
                (v) => { p.animStagger = v; this.emit(); }),
     );
     this.holdRow(a);
+    // 拼貼尾段（2026-10-17）：疊滿停留後同一頁物件隨機互換位置幾拍，最後照相反順序一個一個切掉
+    this.row(a, __("隨機換位")).append(this.select(
+      [["0", __("無")], ["2", "2×"], ["3", "3×"], ["5", "5×"]], String(p.animShuffle ?? 0),
+      (v) => { const n = Number(v); if (n > 0) p.animShuffle = n; else delete p.animShuffle; this.emit(); this.hooks.playAnim?.(); }));
+    this.row(a, __("退場")).append(this.select(
+      [["", __("無")], ["reverse", __("倒序切掉")]], p.animExit ?? "",
+      (v) => { if (v) p.animExit = v; else delete p.animExit; this.emit(); this.hooks.playAnim?.(); }));
     const i = this.hooks.layers.currentPage();
     const bgSec = this.section(__("頁面背景"));
     // ⚠️ 按下去的當下**重新問一次是第幾頁**，不能用建面板時捕捉的 i：
@@ -1221,10 +1231,10 @@ export class Inspector {
     const isText = b.content.type === "text" || b.content.type === "textFlow";
     const isDoodle = b.content.type === "doodle";
     const kinds: [string, string][] = isText
-      ? [["", __("無")], ["typewriter", __("打字")], ["textPhrase", __("逐句")],
+      ? [["", __("無")], ["cut", __("切入")], ["typewriter", __("打字")], ["textPhrase", __("逐句")],
          ["textSlide", __("位移")], ["textFlicker", __("隨機閃現")]]
       : [["", __("無")], ...(isDoodle ? [["draw", __("生長")] as [string, string]] : []),
-         ["slide", __("位移")], ["fade", __("淡入")],
+         ["cut", __("切入")], ["slide", __("位移")], ["fade", __("淡入")],
          ["scale", __("縮放")], ["maskWipe", __("遮罩")]];
     const play = (): void => this.hooks.playAnim?.(b);
 

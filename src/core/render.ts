@@ -18,7 +18,7 @@ import type { FilterAssets } from "./filters";
 import { filterSig } from "./filters";
 import { tornOf, tornCanvases } from "./tornedge";
 import { applyPaper, applyPaperGPU } from "./paper";
-import { animStateAt, carouselAt, maskWipeState, revealText, type BlockAnim } from "./anim";
+import { animStateAt, carouselAt, collageApply, maskWipeState, revealText, type BlockAnim, type CollagePlan } from "./anim";
 import { doodleCacheGeneration, drawDoodle } from "./doodle";
 import { freeIntervals, wrapHoles } from "./textwrap";
 import { blockGradientSize, gradientCanvas, gradientInteractive, type PageGradient } from "./gradient";
@@ -52,6 +52,8 @@ export interface RenderOptions {
   /** 出場動畫：時間（秒）與每個 block 的設定。未給＝靜態（舊行為，零變動）。 */
   time?: number;
   anims?: Map<string, BlockAnim>;
+  /** 拼貼尾段（隨機換位＋倒序退場）。未給＝不套（舊行為零變動）。 */
+  collage?: CollagePlan;
   /** 輸出倍率（只有 renderPageCanvas 吃）：2＝畫布兩倍像素，16:9 畫布即 4K。
    *  文字與形狀是向量重畫所以是真解析度，不是放大圖。 */
   scale?: number;
@@ -383,7 +385,8 @@ export function renderPage(
     const a = opts.anims?.get(b.id);
     if (a && opts.time !== undefined) {
       const vert = b.content.type === "text" && !!b.content.text.vertical;
-      const st = animStateAt(a, opts.time, b.frame, page, vert);
+      let st = animStateAt(a, opts.time, b.frame, page, vert);
+      if (opts.collage) st = collageApply(opts.collage, st, b.id, b.frame, opts.time);
       if (st.opacity <= 0) continue;
       ctx.save();
       if (st.clip) {

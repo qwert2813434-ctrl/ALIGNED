@@ -8,7 +8,7 @@
 // 之後每一段只有「上一支影片與這一支影片之間」的 block，最後一段是最上面那支影片之上的全部。
 
 import type { Block, Project } from "./core/schema";
-import { ANIM_STAGGER, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
+import { ANIM_STAGGER, collagePlan, collageTail, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
 import { pageRect } from "./core/geometry";
 import { applyFilter , filterSig } from "./core/filters";
 import { maskAndStrokeCanvases, renderPageCanvas, shadowOf, stickerEdgeCanvases, type RenderOptions } from "./core/render";
@@ -148,8 +148,11 @@ export async function buildAnimFrames(
     const d = vids.get(file)?.el.duration;
     return Number.isFinite(d) ? d : undefined;
   });
-  const { lead, cycle } = timelineCycle(anims.values(), tempo.periods,
-    effectiveHold(tempo, project.animHold), project.animStagger ?? ANIM_STAGGER, tempo.minEnd);
+  const collage = collagePlan(project);
+  const { lead, cycle, tailStart } = timelineCycle(anims.values(), tempo.periods,
+    effectiveHold(tempo, project.animHold), project.animStagger ?? ANIM_STAGGER, tempo.minEnd,
+    collage ? collageTail(collage, index) : 0);
+  if (collage) collage.tailStart = tailStart;
 
   const videos = new Map<string, CanvasImageSource>();
   const total = Math.round(cycle * opts.fps);
@@ -187,7 +190,7 @@ export async function buildAnimFrames(
         }
       }
       const c = renderPageCanvas(project, index, {
-        ...deps.renderOpts, videos, anims, time: t,
+        ...deps.renderOpts, videos, anims, time: t, collage,
         placeholderForMissingMedia: false,
       });
       await deps.saveJpg(`${dir}/f-${String(f).padStart(6, "0")}.jpg`,

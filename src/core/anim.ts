@@ -12,7 +12,7 @@
 //
 // ⚠️ 尚未接上專案存檔與 UI（Stage 2）。目前設定由呼叫端以 Map 餵入。
 
-import type { Rect } from "./schema";
+import type { Block, Rect } from "./schema";
 import { DOODLE_TRAVEL_DUR } from "./doodle";
 
 /** 停留秒數的**預設值**——規格是 5 秒，但長文入場 30 秒配 5 秒停留就走味了，
@@ -47,6 +47,7 @@ export const isTextReveal = (k: AnimKind): boolean =>
  */
 export function defaultDur(kind: AnimKind, text = ""): number {
   switch (kind) {
+    case "cut": return 0;                                // 切入＝到點直接出現，沒有過程（拼貼／定格語彙）
     case "typewriter": return textRevealDur(text, 8);    // 逐字，讀得完的速度
     case "textPhrase": return textRevealDur(text, 12);   // 逐句整塊落地，可以快一點
     case "textFlicker": return textRevealDur(text, 14);  // 質感效果，不必等它讀完
@@ -78,6 +79,7 @@ export type Stage2 = "scale" | "fullscreen";
 
 /** 文字四種、物件四種。文字的方向是固定的（開頭→尾端），所以沒有 dir。 */
 export type AnimKind =
+  | "cut"           // 切入：到點硬切出現（文字、物件都能用；拼貼／定格語彙，2026-10-17）
   | "typewriter"    // 打字效果（逐字）
   | "textPhrase"    // 逐句出場（依空白／逗點／換行切段，一段一段出現）
   | "textSlide"     // 位移出場
@@ -166,15 +168,114 @@ export function timelineCycle(
   hold = ANIM_HOLD, stagger = ANIM_STAGGER,
   /** 額外的「至少要演完」秒數——3D 快轉煞停的總長走這裡（它不是 BlockAnim）。 */
   minEnd = 0,
-): { lead: number; cycle: number } {
+  /** 拼貼尾段（隨機換位＋倒序退場）的總長，接在停留之後（CollagePlan.tail）。 */
+  tail = 0,
+): { lead: number; cycle: number; tailStart: number } {
   let end = minEnd, n = 0;
   for (const a of anims) { end = Math.max(end, animEnd(a)); n++; }
   const lead = n ? stagger : 0;
-  let cycle = Math.max(end + hold, 1) + lead;
+  let cycle = Math.max(end + hold + tail, 1) + lead;
   let longest = 0;
   for (const p of carouselPeriods) longest = Math.max(longest, p);
   if (longest > 0) cycle = Math.ceil(cycle / longest) * longest;
-  return { lead, cycle };
+  return { lead, cycle, tailStart: end + hold };
+}
+
+// ── 拼貼尾段（2026-10-17，照 Joseph Alessio「Technical Collage」拆的節奏：一秒五格、硬切）──
+// 疊滿停留之後：同一頁的物件**隨機互換位置**幾拍（硬切、每拍兩個間隔）→ 回原位兩拍 →
+// 照進場**相反順序**一個一個切掉。全在頁內完成、不碰版面；
+// 專案欄位 animShuffle／animExit 沒設＝尾段長度 0、每條路徑零變動。
+// 與 iOS AnimEngine.CollagePlan 同一個算式（同一份專案兩邊播起來一樣、匯出一樣）。
+
+export interface CollagePlan {
+  beat: number;
+  shuffle: number;
+  exit: boolean;
+  /** 尾段從時間軸哪一秒起（timelineCycle 的 tailStart）。 */
+  tailStart: number;
+  canvasWidth: number;
+  pageCount: number;
+  /** 頁 → block id → 進場序（delay 小的先、同 delay 照圖層） */
+  members: Map<number, Map<string, number>>;
+  /** 頁 → 照進場序排的中心點（換位的目標） */
+  centers: Map<number, { x: number; y: number }[]>;
+}
+
+/** nil＝這份專案沒開拼貼尾段。 */
+export function collagePlan(
+  p: { blocks: Block[]; canvasWidth: number; pageCount: number; animShuffle?: number; animExit?: string; animStagger?: number },
+  tailStart = 0,
+): CollagePlan | undefined {
+  const shuffle = Math.max(0, p.animShuffle ?? 0);
+  const exit = p.animExit === "reverse";
+  if (!shuffle && !exit) return undefined;
+  const byPage = new Map<number, { idx: number; delay: number; b: Block }[]>();
+  p.blocks.forEach((b, idx) => {
+    if (!b.anim) return;
+    const page = collagePageOf(p, b.frame);
+    let list = byPage.get(page);
+    if (!list) byPage.set(page, (list = []));
+    list.push({ idx, delay: b.anim.delay ?? 0, b });
+  });
+  const members = new Map<number, Map<string, number>>();
+  const centers = new Map<number, { x: number; y: number }[]>();
+  for (const [page, list] of byPage) {
+    list.sort((a, b) => (a.delay !== b.delay ? a.delay - b.delay : a.idx - b.idx));
+    members.set(page, new Map(list.map((e, r) => [e.b.id, r])));
+    centers.set(page, list.map((e) => ({ x: e.b.frame.x + e.b.frame.w / 2, y: e.b.frame.y + e.b.frame.h / 2 })));
+  }
+  return { beat: Math.max(0.1, p.animStagger ?? ANIM_STAGGER), shuffle, exit, tailStart,
+           canvasWidth: p.canvasWidth, pageCount: p.pageCount, members, centers };
+}
+
+function collagePageOf(p: { canvasWidth: number; pageCount: number }, f: Rect): number {
+  return Math.min(Math.max(Math.floor((f.x + f.w / 2) / p.canvasWidth), 0), p.pageCount - 1);
+}
+
+export const collageShuffleDur = (c: CollagePlan): number => c.shuffle * 2 * c.beat;
+export const collageReturnDur = (c: CollagePlan): number => (c.shuffle > 0 ? 2 * c.beat : 0);
+
+/** 尾段總長。pageIndex 未給＝全專案一起播（取退場最長的那頁）。 */
+export function collageTail(c: CollagePlan, pageIndex?: number): number {
+  let n = 0;
+  if (pageIndex === undefined) { for (const cs of c.centers.values()) n = Math.max(n, cs.length); }
+  else n = c.centers.get(pageIndex)?.length ?? 0;
+  if (!n) return 0;
+  return collageShuffleDur(c) + collageReturnDur(c) + (c.exit ? n * c.beat : 0);
+}
+
+/** 固定雜湊的洗牌（同一頁、同一拍每次一樣，影片可重現；iOS 同一條 LCG）。n ≥ 2 時不准原位。 */
+export function collagePermutation(n: number, seed: number): number[] {
+  const p = Array.from({ length: n }, (_, i) => i);
+  let h = (Math.imul(seed >>> 0, 2654435761) + 12345) >>> 0;
+  const rnd = (): number => { h = (Math.imul(h, 1664525) + 1013904223) >>> 0; return h >>> 8; };
+  if (n >= 2) for (let i = n - 1; i > 0; i--) { const j = rnd() % (i + 1); [p[i], p[j]] = [p[j], p[i]]; }
+  if (n >= 2 && p.every((v, i) => v === i)) { p.push(p.shift()!); }
+  return p;
+}
+
+/** 把尾段疊到入場狀態上。t 還沒到尾段、或這塊不在名單裡＝原樣回傳。 */
+export function collageApply(c: CollagePlan, st: AnimState, blockId: string, frame: Rect, t: number): AnimState {
+  if (t < c.tailStart) return st;
+  const page = collagePageOf(c, frame);
+  const rank = c.members.get(page)?.get(blockId);
+  const cs = c.centers.get(page);
+  if (rank === undefined || !cs) return st;
+  const n = cs.length;
+  let tt = t - c.tailStart;
+  const sd = collageShuffleDur(c);
+  if (tt < sd) {
+    const k = Math.floor(tt / (2 * c.beat));
+    const perm = collagePermutation(n, page * 1000 + k + 1);
+    const target = cs[perm[rank]];
+    return { ...st, dx: st.dx + target.x - (frame.x + frame.w / 2), dy: st.dy + target.y - (frame.y + frame.h / 2) };
+  }
+  tt -= sd;
+  const rd = collageReturnDur(c);
+  if (tt < rd) return st;
+  tt -= rd;
+  if (c.exit && tt >= (n - 1 - rank) * c.beat) return { ...st, opacity: 0 };
+  return st;
 }
 
 /** 收集會影響時間軸的「非 BlockAnim」節奏：輪播與 3D 慢轉的週期（循環要進位到整數倍）、
@@ -239,7 +340,7 @@ export function animStateAt(
   // 認得的第二段才走兩段式；其餘（含舊試驗值）一律當單段，不炸檔
   const s2 = a.stage2 === "scale" || a.stage2 === "fullscreen" ? a.stage2 : undefined;
   const t1 = t - delay;
-  const p1 = dur <= 0 ? 1 : t1 / dur;
+  const p1 = t1 < 0 ? 0 : dur <= 0 ? 1 : t1 / dur;   // 秒數 0 也要等 delay（切入靠這個排拍子；iOS 同）
   if (p1 < 1) {
     if (s2) {
       // 兩段式＝縮放語彙：第一段就是 0→100（在版面位置從無放大到原尺寸）。
@@ -287,6 +388,9 @@ function atProgress(
       return { ...REST, reveal: p, revealMode: "flicker" };
     case "draw":
       return { ...REST, reveal: p, revealMode: "draw" };
+    // 切入（文字、物件共用）：沒到點完全不見，到點整個出現
+    case "cut":
+      return { ...REST, opacity: p >= 1 ? 1 : 0 };
 
     // ── 物件：方向可自訂 ──
     case "slide": {

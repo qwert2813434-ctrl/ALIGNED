@@ -14,7 +14,7 @@ import { hex, resolvedFontSize, resolvedKerning } from "./core/schema";
 import { aspectFillCrop, intersects, pageIndexForX, pageRect, stageBounds } from "./core/geometry";
 import { cssFont } from "./core/fonts";
 import { verticalColumnHeightFitting, autoFitText, columnHeight, naturalSize, naturalTextSize, renderStage, textPrintLines, type StageOverlay } from "./core/render";
-import { ANIM_STAGGER, defaultDur, effectiveHold, motionTempo, timelineCycle, type BlockAnim } from "./core/anim";
+import { ANIM_HOLD, ANIM_STAGGER, collagePlan, collageTail, defaultDur, effectiveHold, motionTempo, timelineCycle, type BlockAnim, type CollagePlan } from "./core/anim";
 import type { FilterAssets } from "./core/filters";
 import { drawDoodle, doodleGrowDur, speedPress, streamlinePts, packStrokes, rotatedStrokeHit, strokeHit, thinPoints, unpackStrokes, type BrushKind, type DoodleBlock , getSoftPrefs, softSnapshot } from "./core/doodle";
 import { resolvePosition, rotatedBounds, equalSpacingBadges, snapGuide, snapResizingEdge, resizeEdges, snapFreeResize, snapLockedResize, type GuideLine, type SnapStrength, type SpacingBadge } from "./core/align";
@@ -1785,7 +1785,7 @@ export class Editor {
 
   /** 出場動畫試播。null＝沒在播（畫布走靜態路徑，與加動畫前完全一致）。
    *  rAF 迴圈本來就一直在跑，這裡只是在播放期間餵 time 進渲染選項。 */
-  private animPlay: { t0: number; dur: number; lead: number; anims: Map<string, BlockAnim> } | null = null;
+  private animPlay: { t0: number; dur: number; lead: number; anims: Map<string, BlockAnim>; collage?: CollagePlan } | null = null;
   /** 播放狀態變了就吼一聲——工具列 icon 與影片的播放／暫停都靠它連動。 */
   onAnimPlayChange?: (playing: boolean) => void;
   /**
@@ -1820,9 +1820,13 @@ export class Editor {
     // 空拍的理由：delay 0 的第一個元件在循環繞回的瞬間立刻重新入場，
     // 看起來就是「永遠都在」（2026-08-16 使用者定案：循環＝0、1、2、3）。
     const tempo = motionTempo(this.project?.blocks ?? [], this.videoDur);
-    const { lead, cycle } = timelineCycle(anims.values(), tempo.periods,
-      effectiveHold(tempo, this.project?.animHold), this.project?.animStagger ?? ANIM_STAGGER, tempo.minEnd);
-    this.animPlay = { t0: performance.now(), dur: cycle, lead, anims };
+    // 拼貼尾段（隨機換位＋倒序退場）接在停留後；只播單一元件（面板即時回饋）時不套
+    const collage = only || !this.project ? undefined : collagePlan(this.project);
+    const { lead, cycle, tailStart } = timelineCycle(anims.values(), tempo.periods,
+      effectiveHold(tempo, this.project?.animHold), this.project?.animStagger ?? ANIM_STAGGER, tempo.minEnd,
+      collage ? collageTail(collage) : 0);
+    if (collage) collage.tailStart = tailStart;
+    this.animPlay = { t0: performance.now(), dur: cycle, lead, anims, collage };
     this.playing = true;
     this.dirty = true;
     this.onAnimPlayChange?.(true);
@@ -1871,6 +1875,28 @@ export class Editor {
     });
     this.dirty = true;
     this.playAnim();          // 排完立刻放一次給他看
+  }
+
+  /**
+   * 一鍵拼貼（2026-10-17）：這一頁的元件照**圖層順序**（陣列順序＝由下往上）每隔一個間隔「切入」，
+   * 停留縮到 1 秒，開隨機換位 3 次＋倒序退場。節奏照 Technical Collage：一秒五格的定格感。
+   */
+  collageCurrentPage(from?: Block): void {
+    const proj = this.project;
+    if (!proj) return;
+    const page = pageRect(proj, this.currentPageIndex(from));
+    const gap = proj.animStagger ?? ANIM_STAGGER;
+    let i = 0;
+    for (const b of proj.blocks) {
+      if (!intersects(b.frame, page)) continue;
+      b.anim = { kind: "cut", dur: 0, delay: i === 0 ? 0 : Math.round(i * gap * 100) / 100 };
+      i++;
+    }
+    if ((proj.animHold ?? ANIM_HOLD) > 1.5) proj.animHold = 1;   // 疊滿看一眼就換位，5 秒太長
+    if (!(proj.animShuffle ?? 0)) proj.animShuffle = 3;
+    if (!proj.animExit) proj.animExit = "reverse";
+    this.dirty = true;
+    this.playAnim();
   }
 
   /** 一鍵移除：把這一頁所有元件的出場動畫清掉（「陸續出現」的反操作）。 */
@@ -1987,12 +2013,12 @@ export class Editor {
 
     const m = this.marquee;
     // 播放中就餵 time 進去；播完自動歸零，畫布回靜態
-    let animOpts: { time?: number; anims?: Map<string, BlockAnim> } = {};
+    let animOpts: { time?: number; anims?: Map<string, BlockAnim>; collage?: CollagePlan } = {};
     if (this.animPlay) {
       const el = (performance.now() - this.animPlay.t0) / 1000;
       // 循環。時間軸從 -lead 起跑：負的那段＝「0 狀態」，所有帶動畫的元件都停在
       // 起點（畫面外／全透明），畫布是空的，然後才輪到第一個元件入場。
-      animOpts = { time: (el % this.animPlay.dur) - this.animPlay.lead, anims: this.animPlay.anims };
+      animOpts = { time: (el % this.animPlay.dur) - this.animPlay.lead, anims: this.animPlay.anims, collage: this.animPlay.collage };
     }
     renderStage(ctx, this.project,
       { placeholderForMissingMedia: true, images: this.images, mattes: this.images, videos: this.videos, models: this.models,
